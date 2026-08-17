@@ -1,0 +1,16 @@
+[Unit]
+Description=Paddock E2E .test responder
+PartOf=paddock-e2e.target
+After=network.target
+StartLimitIntervalSec=10s
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/dnsmasq --no-daemon --conf-file=/etc/paddock-e2e-dnsmasq.conf
+Restart=on-failure
+RestartSec=500ms
+NoNewPrivileges=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes

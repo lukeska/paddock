@@ -1,0 +1,8 @@
+[Unit]
+Description=Paddock lifecycle experiment
+Wants=paddock-lifecycle-php84.service paddock-lifecycle-php85.service paddock-lifecycle-caddy.service
+After=network-online.target
+
+[Install]
+WantedBy=multi-user.target
+

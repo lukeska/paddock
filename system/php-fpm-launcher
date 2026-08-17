@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+runtime=${1:?runtime root required}
+config=${2:?FPM config required}
+exec "$runtime/bin/php-fpm" -d "extension_dir=$runtime/modules" --nodaemonize --fpm-config "$config"

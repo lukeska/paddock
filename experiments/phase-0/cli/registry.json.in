@@ -1,0 +1,13 @@
+{
+  "default_php": "8.5",
+  "composer": "@COMPOSER@",
+  "runtimes": {
+    "8.4": "@PHP_84@",
+    "8.5": "@PHP_85@"
+  },
+  "sites": [
+    {"root": "@PROJECT_A@", "php": "8.4"},
+    {"root": "@PROJECT_B@", "php": "8.5"}
+  ]
+}
+

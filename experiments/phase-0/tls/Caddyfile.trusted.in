@@ -1,0 +1,10 @@
+{
+	admin off
+	auto_https off
+}
+
+:18443 {
+	tls @CERTIFICATE@ @PRIVATE_KEY@
+	respond "paddock trusted tls ok"
+}
+

@@ -1,0 +1,28 @@
+[Unit]
+Description=Paddock E2E Caddy
+PartOf=paddock-e2e.target
+Wants=paddock-e2e-php84.service paddock-e2e-php85.service paddock-e2e-dns-route.service
+After=paddock-e2e-php84.service paddock-e2e-php85.service paddock-e2e-dns-route.service
+StartLimitIntervalSec=10s
+StartLimitBurst=3
+
+[Service]
+Type=notify
+User=@USER@
+Group=@GROUP@
+Environment=XDG_DATA_HOME=@STATE_DIR@/caddy-data
+Environment=XDG_CONFIG_HOME=@STATE_DIR@/caddy-config
+ExecStartPre=+/usr/local/lib/paddock-e2e-check-ports
+ExecStartPre=/usr/bin/caddy validate --config @CADDY_CONFIG@ --adapter caddyfile
+ExecStart=/usr/bin/caddy run --config @CADDY_CONFIG@ --adapter caddyfile
+ExecReload=/usr/bin/caddy reload --config @CADDY_CONFIG@ --adapter caddyfile --address 127.0.0.1:20195
+Restart=on-failure
+RestartSec=500ms
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@STATE_DIR@
+

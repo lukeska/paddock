@@ -1,0 +1,8 @@
+[Unit]
+Description=Paddock Phase 0 end-to-end rehearsal
+Wants=paddock-e2e-dns.service paddock-e2e-dns-route.service paddock-e2e-php84.service paddock-e2e-php85.service paddock-e2e-caddy.service
+After=network-online.target
+
+[Install]
+WantedBy=multi-user.target
+

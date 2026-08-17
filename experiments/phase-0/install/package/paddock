@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+version=0.0.2
+case ${1:-help} in
+  version | --version)
+    printf 'paddock %s\n' "$version"
+    ;;
+  doctor)
+    printf 'paddock=%s caddy=%s dnsmasq=%s mkcert=%s\n' \
+      "$version" \
+      "$(command -v caddy >/dev/null && printf present || printf missing)" \
+      "$(command -v dnsmasq >/dev/null && printf present || printf missing)" \
+      "$(command -v mkcert >/dev/null && printf present || printf missing)"
+    ;;
+  channel)
+    printf 'phase0-rehearsal\n'
+    ;;
+  help | --help)
+    printf 'Usage: paddock <version|doctor|channel>\n'
+    ;;
+  *)
+    printf 'paddock: unknown command: %s\n' "$1" >&2
+    exit 2
+    ;;
+esac

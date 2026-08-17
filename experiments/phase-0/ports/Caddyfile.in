@@ -1,0 +1,15 @@
+{
+	admin off
+	auto_https off
+}
+
+http://app-a.test {
+	bind 127.0.0.1
+	redir https://app-a.test{uri} permanent
+}
+
+https://app-a.test {
+	bind 127.0.0.1
+	tls @CERTIFICATE@ @PRIVATE_KEY@
+	respond "paddock standard ports ok"
+}

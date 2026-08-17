@@ -1,0 +1,21 @@
+[Unit]
+Description=Paddock E2E PHP @VERSION@
+PartOf=paddock-e2e.target
+After=network-online.target
+StartLimitIntervalSec=10s
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=@USER@
+Group=@GROUP@
+ExecStart=@PHP_FPM@ -d opcache.lockfile_path=@STATE_DIR@ --nodaemonize --fpm-config @FPM_CONFIG@
+ExecStartPost=/usr/local/lib/paddock-e2e-wait-socket @SOCKET@
+Restart=on-failure
+RestartSec=500ms
+NoNewPrivileges=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@STATE_DIR@
+

@@ -1,0 +1,16 @@
+pkgname=paddock-phase0
+pkgver=0.0.2
+pkgrel=1
+pkgdesc='Phase 0 package-boundary rehearsal for Paddock'
+arch=('x86_64')
+url='https://example.invalid/paddock'
+license=('MIT')
+depends=('bash' 'caddy' 'dnsmasq' 'mkcert')
+provides=('paddock')
+conflicts=('paddock')
+source=('paddock')
+sha256sums=('5df43d9f4667f8f0b6377c3befdb4b781896963bd221eae439a34e8db2f65fcc')
+
+package() {
+  install -Dm755 "$srcdir/paddock" "$pkgdir/usr/bin/paddock"
+}

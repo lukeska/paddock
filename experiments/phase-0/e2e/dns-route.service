@@ -1,0 +1,11 @@
+[Unit]
+Description=Paddock E2E route-only .test DNS
+PartOf=paddock-e2e.target
+Requires=paddock-e2e-dns.service NetworkManager.service
+After=paddock-e2e-dns.service NetworkManager.service systemd-resolved.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/nmcli connection up paddock-e2e-dns
+RemainAfterExit=yes
+

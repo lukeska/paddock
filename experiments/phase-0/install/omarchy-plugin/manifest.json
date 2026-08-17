@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "dev.paddock.status",
+  "name": "Paddock status",
+  "version": "0.0.1",
+  "author": "Paddock",
+  "description": "Optional status launcher for the Paddock CLI",
+  "kinds": ["bar-widget"],
+  "entryPoints": {"barWidget": "PaddockStatus.qml"},
+  "barWidget": {
+    "displayName": "Paddock",
+    "description": "Runs the Paddock doctor command",
+    "category": "Development",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
+

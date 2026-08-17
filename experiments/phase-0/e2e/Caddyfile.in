@@ -1,0 +1,32 @@
+{
+	admin 127.0.0.1:20195
+	auto_https off
+}
+
+http://app-a.test, http://app-b.test {
+	bind 127.0.0.1
+	redir https://{host}{uri} permanent
+}
+
+https://app-a.test {
+	bind 127.0.0.1
+	tls @CERTIFICATE@ @PRIVATE_KEY@
+	root * @APP_A_ROOT@
+	log {
+		output file @ACCESS_A@
+	}
+	php_fastcgi unix/@SOCKET_A@
+	file_server
+}
+
+https://app-b.test {
+	bind 127.0.0.1
+	tls @CERTIFICATE@ @PRIVATE_KEY@
+	root * @APP_B_ROOT@
+	log {
+		output file @ACCESS_B@
+	}
+	php_fastcgi unix/@SOCKET_B@
+	file_server
+}
+

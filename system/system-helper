@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import pwd
+import shutil
+import subprocess
+import sys
+
+
+OWNED = (
+    "/etc/paddock/dnsmasq.conf",
+    "/etc/systemd/system/paddock.target",
+    "/etc/systemd/system/paddock-dns.service",
+    "/etc/systemd/system/paddock-dns-route.service",
+    "/etc/systemd/system/paddock-caddy.service",
+    "/etc/systemd/system/paddock-php@.service",
+    "/etc/polkit-1/rules.d/49-paddock.rules",
+)
+
+
+def run(command: list[str], *, user: str | None = None, check: bool = True) -> None:
+    if user:
+        command = ["runuser", "--user", user, "--", *command]
+    subprocess.run(command, check=check)
+
+
+def write(path: str, value: str, mode: int = 0o644) -> None:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.paddock-new")
+    temporary.write_text(value, encoding="utf-8")
+    temporary.chmod(mode)
+    os.replace(temporary, destination)
+
+
+def directories(user: str, data_value: str, state_value: str) -> tuple[pwd.struct_passwd, Path, Path]:
+    account = pwd.getpwnam(user)
+    if account.pw_uid == 0:
+        raise SystemExit("refusing to configure root as the desktop user")
+    data = Path(data_value)
+    state = Path(state_value)
+    for label, path in (("data", data), ("state", state)):
+        if not path.is_absolute() or not path.is_dir() or path.stat().st_uid != account.pw_uid:
+            raise SystemExit(f"{label} directory must be absolute, existing, and owned by {user}: {path}")
+    return account, data, state
+
+
+def install(user: str, data_value: str, state_value: str) -> None:
+    account, data, state = directories(user, data_value, state_value)
+    home = Path(account.pw_dir)
+    runtime = Path(f"/run/user/{account.pw_uid}/paddock")
+    ca = data / "pki/rootCA.pem"
+    if not ca.is_file():
+        raise SystemExit(f"public CA does not exist: {ca}")
+    for path in OWNED:
+        if Path(path).exists():
+            raise SystemExit(f"refusing to replace existing path: {path}")
+    existing_connections = subprocess.run(
+        ["nmcli", "-t", "-f", "NAME", "connection", "show"],
+        check=True, text=True, capture_output=True,
+    ).stdout.splitlines()
+    if "paddock-dns" in existing_connections:
+        raise SystemExit("refusing to replace existing NetworkManager connection: paddock-dns")
+
+    write("/etc/paddock/dnsmasq.conf", "port=53\nlisten-address=127.0.0.1\nbind-interfaces\nno-hosts\nno-resolv\ndomain-needed\nlocal=/test/\naddress=/.test/127.0.0.1\n")
+    write("/etc/systemd/system/paddock.target", """[Unit]\nDescription=Paddock local development stack\nWants=paddock-dns.service paddock-dns-route.service paddock-caddy.service\nAfter=network-online.target\n[Install]\nWantedBy=multi-user.target\n""")
+    write("/etc/systemd/system/paddock-dns.service", """[Unit]\nDescription=Paddock .test DNS\nPartOf=paddock.target\n[Service]\nExecStart=/usr/bin/dnsmasq --no-daemon --conf-file=/etc/paddock/dnsmasq.conf\nRestart=on-failure\nNoNewPrivileges=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=yes\n""")
+    write("/etc/systemd/system/paddock-dns-route.service", """[Unit]\nDescription=Paddock route-only DNS\nPartOf=paddock.target\nRequires=paddock-dns.service NetworkManager.service\nAfter=paddock-dns.service NetworkManager.service systemd-resolved.service\n[Service]\nType=oneshot\nExecStart=/usr/bin/nmcli connection up paddock-dns\nRemainAfterExit=yes\n""")
+    write("/etc/systemd/system/paddock-caddy.service", f"""[Unit]\nDescription=Paddock Caddy\nPartOf=paddock.target\nAfter=paddock-dns-route.service\n[Service]\nType=notify\nUser={user}\nGroup={account.pw_gid}\nEnvironment=XDG_DATA_HOME={state}/caddy-data\nEnvironment=XDG_CONFIG_HOME={state}/caddy-config\nExecStartPre=+/usr/lib/paddock/check-ports\nExecStartPre=/usr/bin/caddy validate --config={state}/caddy/Caddyfile --adapter=caddyfile\nExecStart=/usr/bin/caddy run --config={state}/caddy/Caddyfile --adapter=caddyfile\nExecReload=/usr/bin/caddy reload --config={state}/caddy/Caddyfile --adapter=caddyfile --address=127.0.0.1:20195\nRestart=on-failure\nAmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\nNoNewPrivileges=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=read-only\nReadWritePaths={state} {data}\n""")
+    write("/etc/systemd/system/paddock-php@.service", f"""[Unit]\nDescription=Paddock PHP %i\nPartOf=paddock.target\nRequires=user-runtime-dir@{account.pw_uid}.service\nAfter=user-runtime-dir@{account.pw_uid}.service\n[Service]\nUser={user}\nGroup={account.pw_gid}\nEnvironment=PHPRC={data}/runtimes/active/%i/etc/php.ini\nEnvironment=PHP_INI_SCAN_DIR={data}/runtimes/active/%i/etc/conf.d\nExecStart=/usr/lib/paddock/php-fpm-launcher {data}/runtimes/active/%i {state}/fpm/php-%i.conf\nRestart=on-failure\nNoNewPrivileges=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=read-only\nReadWritePaths={state} {runtime}\n""")
+    allowed = json.dumps(user)
+    write("/etc/polkit-1/rules.d/49-paddock.rules", f"""polkit.addRule(function(action, subject) {{\n  var unit = action.lookup('unit') || '';\n  if (action.id == 'org.freedesktop.systemd1.manage-units' && subject.user == {allowed} && (unit == 'paddock.target' || unit.indexOf('paddock-') == 0)) return polkit.Result.YES;\n}});\n""")
+    run(["nmcli", "connection", "add", "type", "dummy", "ifname", "paddock0", "con-name", "paddock-dns", "ipv4.method", "manual", "ipv4.addresses", "192.0.2.10/32", "ipv4.dns", "127.0.0.1", "ipv4.dns-search", "~test", "ipv4.never-default", "yes", "ipv6.method", "disabled", "connection.autoconnect", "yes"])
+    nss = home / ".pki/nssdb"
+    nss.mkdir(parents=True, exist_ok=True)
+    shutil.chown(nss.parent, user=user)
+    if not (nss / "cert9.db").exists():
+        run(["certutil", "-N", "--empty-password", "-d", f"sql:{nss}"], user=user)
+    run(["trust", "anchor", str(ca)])
+    run(["certutil", "-A", "-d", f"sql:{nss}", "-n", "Paddock Local CA", "-t", "C,,", "-i", str(ca)], user=user)
+    run(["systemctl", "daemon-reload"])
+    run(["systemctl", "enable", "--now", "paddock.target"])
+
+
+def uninstall(user: str, data_value: str, state_value: str) -> None:
+    account, data, _state = directories(user, data_value, state_value)
+    home = Path(account.pw_dir)
+    ca = data / "pki/rootCA.pem"
+    run(["systemctl", "disable", "--now", "paddock.target"], check=False)
+    run(["nmcli", "connection", "delete", "paddock-dns"], check=False)
+    run(["trust", "anchor", "--remove", str(ca)], check=False)
+    run(["certutil", "-D", "-d", f"sql:{home / '.pki/nssdb'}", "-n", "Paddock Local CA"], user=user, check=False)
+    for path in OWNED:
+        Path(path).unlink(missing_ok=True)
+    run(["systemctl", "daemon-reload"])
+
+
+def main() -> int:
+    if os.geteuid() != 0:
+        raise SystemExit("system-helper must run as root")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("action", choices=("install", "uninstall"))
+    parser.add_argument("--user", required=True)
+    parser.add_argument("--data-dir", required=True)
+    parser.add_argument("--state-dir", required=True)
+    args = parser.parse_args()
+    if args.action == "install":
+        try:
+            install(args.user, args.data_dir, args.state_dir)
+        except Exception:
+            uninstall(args.user, args.data_dir, args.state_dir)
+            raise
+    else:
+        uninstall(args.user, args.data_dir, args.state_dir)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

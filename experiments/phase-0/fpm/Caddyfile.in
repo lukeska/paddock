@@ -1,0 +1,26 @@
+{
+	admin 127.0.0.1:@ADMIN_PORT@
+	auto_https off
+}
+
+http://app-a.test:@HTTP_PORT@ {
+	header X-Paddock-Config @GENERATION@
+	root * @APP_A_ROOT@
+	php_fastcgi unix/@SOCKET_A@
+	file_server
+	log {
+		output file @ACCESS_A@
+		format json
+	}
+}
+
+http://app-b.test:@HTTP_PORT@ {
+	header X-Paddock-Config @GENERATION@
+	root * @APP_B_ROOT@
+	php_fastcgi unix/@SOCKET_B@
+	file_server
+	log {
+		output file @ACCESS_B@
+		format json
+	}
+}

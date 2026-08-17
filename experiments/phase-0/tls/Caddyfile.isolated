@@ -1,0 +1,10 @@
+{
+	admin off
+	auto_https disable_redirects
+	skip_install_trust
+}
+
+https://app-a.test:18443 {
+	tls internal
+	respond "caddy internal tls ok"
+}

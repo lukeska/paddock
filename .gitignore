@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.pkg.tar.*
+packaging/arch/pkg/
+packaging/arch/src/
+packaging/arch/*.tar.gz
+experiments/phase-0/install/package/pkg/
+experiments/phase-0/install/package/src/
+release/dist/
+release/work/
+.spc.cache.php
+log/
+/plans/

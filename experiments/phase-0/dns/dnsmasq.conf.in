@@ -1,0 +1,13 @@
+port=@PORT@
+listen-address=127.0.0.1
+bind-interfaces
+no-daemon
+no-hosts
+no-resolv
+domain-needed
+local=/test/
+address=/.test/127.0.0.1
+log-queries
+log-facility=@LOG@
+pid-file=@PID@
+

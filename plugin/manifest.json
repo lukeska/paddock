@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "dev.paddock.status",
+  "name": "Paddock status",
+  "version": "0.1.0",
+  "author": "Paddock",
+  "description": "Optional status and diagnostics launcher for Paddock",
+  "kinds": ["bar-widget"],
+  "entryPoints": {"barWidget": "PaddockStatus.qml"},
+  "barWidget": {
+    "displayName": "Paddock",
+    "description": "Open Paddock status and diagnostics",
+    "category": "Development",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
