@@ -3,8 +3,8 @@ post_install() {
 }
 
 pre_remove() {
-  if systemctl is-enabled --quiet paddock.target 2>/dev/null; then
-    echo 'error: run "paddock uninstall" as the configured desktop user before removing the package.' >&2
-    return 1
+  if ! /usr/lib/paddock/system-helper package-remove; then
+    echo 'warning: Paddock package removal could not fully clean system integration.' >&2
+    echo 'warning: reinstall Paddock and run "paddock uninstall --yes" to retry.' >&2
   fi
 }

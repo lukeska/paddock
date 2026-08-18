@@ -13,6 +13,8 @@ import sys
 
 OWNED = (
     "/etc/paddock/dnsmasq.conf",
+    "/etc/paddock/integration.json",
+    "/etc/paddock/rootCA.pem",
     "/etc/systemd/system/paddock.target",
     "/etc/systemd/system/paddock-dns.service",
     "/etc/systemd/system/paddock-dns-route.service",
@@ -20,6 +22,9 @@ OWNED = (
     "/etc/systemd/system/paddock-php@.service",
     "/etc/polkit-1/rules.d/49-paddock.rules",
 )
+
+INSTALLATION = Path("/etc/paddock/integration.json")
+SYSTEM_CA = Path("/etc/paddock/rootCA.pem")
 
 
 def run(command: list[str], *, user: str | None = None, check: bool = True) -> None:
@@ -74,22 +79,38 @@ def install(user: str, data_value: str, state_value: str) -> None:
     write("/etc/systemd/system/paddock-php@.service", f"""[Unit]\nDescription=Paddock PHP %i\nPartOf=paddock.target\nRequires=user-runtime-dir@{account.pw_uid}.service\nAfter=user-runtime-dir@{account.pw_uid}.service\nConditionFileIsExecutable={data}/runtimes/active/%i/bin/php-fpm\nConditionPathExists={state}/fpm/php-%i.conf\n[Service]\nUser={user}\nGroup={account.pw_gid}\nEnvironment=PHPRC={data}/runtimes/active/%i/etc/php.ini\nEnvironment=PHP_INI_SCAN_DIR={data}/runtimes/active/%i/etc/conf.d\nExecStart=/usr/lib/paddock/php-fpm-launcher {data}/runtimes/active/%i {state}/fpm/php-%i.conf\nRestart=on-failure\nNoNewPrivileges=yes\nPrivateDevices=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=read-only\nReadWritePaths={state} {runtime}\n""")
     allowed = json.dumps(user)
     write("/etc/polkit-1/rules.d/49-paddock.rules", f"""polkit.addRule(function(action, subject) {{\n  var unit = action.lookup('unit') || '';\n  if (action.id == 'org.freedesktop.systemd1.manage-units' && subject.user == {allowed} && (unit == 'paddock.target' || unit.indexOf('paddock-') == 0)) return polkit.Result.YES;\n}});\n""")
+    shutil.copyfile(ca, SYSTEM_CA)
+    SYSTEM_CA.chmod(0o644)
+    write(
+        str(INSTALLATION),
+        json.dumps(
+            {
+                "version": 1,
+                "user": user,
+                "data_dir": str(data),
+                "state_dir": str(state),
+            },
+            sort_keys=True,
+        ) + "\n",
+        0o600,
+    )
     run(["nmcli", "connection", "add", "type", "dummy", "ifname", "paddock0", "con-name", "paddock-dns", "ipv4.method", "manual", "ipv4.addresses", "192.0.2.10/32", "ipv4.dns", "127.0.0.1", "ipv4.dns-search", "~test", "ipv4.never-default", "yes", "ipv6.method", "disabled", "connection.autoconnect", "yes"])
     nss = home / ".pki/nssdb"
     nss.mkdir(parents=True, exist_ok=True)
     shutil.chown(nss.parent, user=user)
     if not (nss / "cert9.db").exists():
         run(["certutil", "-N", "--empty-password", "-d", f"sql:{nss}"], user=user)
-    run(["trust", "anchor", str(ca)])
+    run(["trust", "anchor", str(SYSTEM_CA)])
     run(["certutil", "-A", "-d", f"sql:{nss}", "-n", "Paddock Local CA", "-t", "C,,", "-i", str(ca)], user=user)
     run(["systemctl", "daemon-reload"])
     run(["systemctl", "enable", "--now", "paddock.target"])
 
 
 def uninstall(user: str, data_value: str, state_value: str) -> None:
-    account, data, _state = directories(user, data_value, state_value)
+    account = pwd.getpwnam(user)
+    data = Path(data_value)
     home = Path(account.pw_dir)
-    ca = data / "pki/rootCA.pem"
+    ca = SYSTEM_CA if SYSTEM_CA.is_file() else data / "pki/rootCA.pem"
     run(["systemctl", "disable", "--now", "paddock.target"], check=False)
     run(["nmcli", "connection", "delete", "paddock-dns"], check=False)
     run(["trust", "anchor", "--remove", str(ca)], check=False)
@@ -99,16 +120,43 @@ def uninstall(user: str, data_value: str, state_value: str) -> None:
     run(["systemctl", "daemon-reload"])
 
 
+def package_remove() -> None:
+    """Remove machine integration without deleting any user-owned state."""
+    if INSTALLATION.is_file():
+        try:
+            record = json.loads(INSTALLATION.read_text(encoding="utf-8"))
+            if record.get("version") != 1:
+                raise ValueError("unsupported installation record")
+            uninstall(record["user"], record["data_dir"], record["state_dir"])
+            return
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            print(f"warning: invalid Paddock installation record: {error}", file=sys.stderr)
+
+    # Older packages have no installation record. Still remove every resource
+    # whose global name is exclusively reserved for Paddock.
+    run(["systemctl", "disable", "--now", "paddock.target"], check=False)
+    run(["nmcli", "connection", "delete", "paddock-dns"], check=False)
+    if SYSTEM_CA.is_file():
+        run(["trust", "anchor", "--remove", str(SYSTEM_CA)], check=False)
+    for path in OWNED:
+        Path(path).unlink(missing_ok=True)
+    run(["systemctl", "daemon-reload"])
+
+
 def main() -> int:
     if os.geteuid() != 0:
         raise SystemExit("system-helper must run as root")
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("install", "uninstall"))
-    parser.add_argument("--user", required=True)
-    parser.add_argument("--data-dir", required=True)
-    parser.add_argument("--state-dir", required=True)
+    parser.add_argument("action", choices=("install", "uninstall", "package-remove"))
+    parser.add_argument("--user")
+    parser.add_argument("--data-dir")
+    parser.add_argument("--state-dir")
     args = parser.parse_args()
-    if args.action == "install":
+    if args.action == "package-remove":
+        package_remove()
+    elif not all((args.user, args.data_dir, args.state_dir)):
+        parser.error("install and uninstall require --user, --data-dir, and --state-dir")
+    elif args.action == "install":
         try:
             install(args.user, args.data_dir, args.state_dir)
         except Exception:

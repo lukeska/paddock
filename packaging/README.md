@@ -33,9 +33,12 @@ supported public release. Configure GitHub Actions attestations and the release
 GPG key, then sign the Arch package, repository database, source archive,
 artifact index, and PHP artifacts according to the release policy.
 
-Before the supported package release, package removal must also clean generated
-system integration reliably when a user skips `paddock uninstall`; Pacman's
-install-script failure handling is not sufficient as the only guard.
+Package removal automatically tears down generated system integration when a
+user skips `paddock uninstall`. It uses a root-owned installation record and
+preserves projects, configuration, runtimes, logs, cache, and the private CA.
+This path was exercised live with `pacman -R`: all reserved system resources
+were removed, PHP 8.4 and 8.5 remained executable, and reinstall plus setup
+restored a fully healthy stack without recreating user state.
 
 Public StaticPHP artifacts are not an acceptable shortcut because the tested
 artifacts omitted `intl` and lack the selected Paddock provenance chain.
