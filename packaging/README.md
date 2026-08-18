@@ -12,6 +12,12 @@
 - Setup/uninstall/setup regenerated system integration without losing user data.
 - The optional Omarchy plugin passes `omarchy plugin validate` and owns no
   canonical state.
+- The installed package downloads PHP 8.4.23 and 8.5.8 from the public GitHub
+  prerelease, starts both FPM instances, and restores both with new processes
+  after a full target restart.
+- Two linked fixtures returned their exact selected PHP versions through
+  trusted HTTPS before and after restart; temporary sites and leaf certificates
+  were then removed cleanly.
 
 ## Published runtime prerelease
 
@@ -26,6 +32,10 @@ The local Arch package remains intentionally unsigned and is not yet a
 supported public release. Configure GitHub Actions attestations and the release
 GPG key, then sign the Arch package, repository database, source archive,
 artifact index, and PHP artifacts according to the release policy.
+
+Before the supported package release, package removal must also clean generated
+system integration reliably when a user skips `paddock uninstall`; Pacman's
+install-script failure handling is not sufficient as the only guard.
 
 Public StaticPHP artifacts are not an acceptable shortcut because the tested
 artifacts omitted `intl` and lack the selected Paddock provenance chain.

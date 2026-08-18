@@ -10,7 +10,7 @@ conflicts=('laramachy')
 replaces=('laramachy')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz")
-sha256sums=('6a1dd1e9c282c8b8aff890761792f0f302dc9f1048f8d7859471635871240452')
+sha256sums=('c528d55c9013f1b456760a9b2c3f7da6588facdfe5cb21b9b0cd17e2661c5441')
 
 check() {
   cd "$srcdir/$pkgname-$pkgver"
