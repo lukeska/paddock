@@ -90,7 +90,7 @@ for index in "${!versions[@]}"; do
     | gzip -n -9 >"$artifact"
   python "$script_dir/metadata.py" \
     --artifact "$artifact" \
-    --runtime "$runtime" \
+    --runtime "$assembly/runtime" \
     --php "$php_version" \
     --architecture "$architecture" \
     --builder-sha256 "$expected_builder" \

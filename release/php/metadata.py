@@ -68,7 +68,7 @@ def main() -> None:
             }
         )
         verification_hashes.append(sha1(path))
-    namespace = f"https://paddock.invalid/spdx/php-{args.php}/{artifact_digest}"
+    namespace = f"https://github.com/lukeska/paddock/spdx/php-{args.php}/{artifact_digest}"
     spdx = {
         "spdxVersion": "SPDX-2.3",
         "dataLicense": "CC0-1.0",
@@ -85,7 +85,7 @@ def main() -> None:
                 "downloadLocation": "NOASSERTION",
                 "filesAnalyzed": True,
                 "licenseConcluded": "NOASSERTION",
-                "licenseDeclared": "PHP-3.01",
+                "licenseDeclared": "NOASSERTION",
                 "copyrightText": "NOASSERTION",
                 "packageVerificationCode": {
                     "packageVerificationCodeValue": hashlib.sha1(
@@ -104,7 +104,7 @@ def main() -> None:
                 "annotationDate": created,
                 "annotationType": "OTHER",
                 "annotator": "Tool: paddock-metadata-v1",
-                "comment": "File-level inventory only; dependency-level SBOM enrichment is required before public release.",
+                "comment": "File-level inventory of the shipped runtime payload; component build manifests and license texts are included in the artifact.",
             }
         ],
     }
@@ -129,7 +129,7 @@ def main() -> None:
         "predicateType": "https://slsa.dev/provenance/v1",
         "predicate": {
             "buildDefinition": {
-                "buildType": "https://paddock.invalid/build/php-runtime/v1",
+                "buildType": "https://github.com/lukeska/paddock/blob/main/release/php/README.md",
                 "externalParameters": {
                     "php": args.php,
                     "architecture": args.architecture,
@@ -140,7 +140,7 @@ def main() -> None:
                 ],
             },
             "runDetails": {
-                "builder": {"id": "https://paddock.invalid/local-builder/v1"},
+                "builder": {"id": "https://github.com/lukeska/paddock/tree/main/release/php"},
                 "metadata": {"invocationId": artifact_digest[:20]},
             },
         },

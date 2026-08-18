@@ -1,4 +1,19 @@
 {
   "schema_version": 1,
-  "artifacts": []
+  "artifacts": [
+    {
+      "php": "8.4.23",
+      "minor": "8.4",
+      "architecture": "x86_64",
+      "url": "https://github.com/lukeska/paddock/releases/download/php-2026.08.18/paddock-php-8.4.23-linux-x86_64.tar.gz",
+      "sha256": "663a6f5650c131d937df96f14b4066bdefbf66d6fd1d1114498367123369cafe"
+    },
+    {
+      "php": "8.5.8",
+      "minor": "8.5",
+      "architecture": "x86_64",
+      "url": "https://github.com/lukeska/paddock/releases/download/php-2026.08.18/paddock-php-8.5.8-linux-x86_64.tar.gz",
+      "sha256": "bf91cdf608466b68adc513808888b9ffd9ae40b8565369bbd43df547c9d592f6"
+    }
+  ]
 }
