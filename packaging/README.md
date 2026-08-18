@@ -29,8 +29,9 @@ fresh production-installer download test.
 ## Remaining publication gates
 
 The local Arch package remains intentionally unsigned and is not yet a
-supported public release. Configure GitHub Actions attestations and the release
-GPG key, then sign the Arch package, repository database, source archive,
+supported public release. CI now creates GitHub-attested PHP release candidates
+without publishing them. Configure the release GPG key and protected promotion
+environment, then sign the Arch package, repository database, source archive,
 artifact index, and PHP artifacts according to the release policy.
 
 Package removal automatically tears down generated system integration when a

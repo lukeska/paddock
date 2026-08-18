@@ -1,0 +1,71 @@
+name: Runtime release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime:
+        description: PHP runtime to build
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - "8.4"
+          - "8.5"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-release-${{ inputs.runtime }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build PHP ${{ inputs.runtime }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes cmake gperf jq re2c
+
+      - name: Build and probe runtimes
+        env:
+          SOURCE_DATE_EPOCH: "1786924800"
+        run: ./release/php/build.sh "${{ inputs.runtime }}"
+
+      - name: Verify release bundle
+        run: |
+          cd release/dist
+          sha256sum --check paddock-php-*.tar.gz.sha256
+          python -m json.tool artifacts.local.json >/dev/null
+          for metadata in *.compatibility.json *.provenance.json *.spdx.json; do
+            python -m json.tool "$metadata" >/dev/null
+          done
+
+      - name: Attest runtime archives
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: release/dist/paddock-php-*.tar.gz
+
+      - name: Upload release candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: paddock-php-${{ inputs.runtime }}-x86_64
+          path: release/dist/
+          if-no-files-found: error
+          retention-days: 14

@@ -31,3 +31,15 @@ separately without making every runtime installation carry them.
 The local index uses `file://` URLs and must never replace the packaged index.
 For publication, rerun `index.py` with `--base-url` and sign every artifact,
 metadata file, index, source archive, package, and repository database.
+
+## GitHub release candidates
+
+The manually dispatched `Runtime release candidate` workflow builds either
+supported minor or the full matrix on Ubuntu 22.04, repeats all runtime probes,
+checks every archive digest and JSON document, and creates a GitHub build
+attestation for each runtime archive. The complete candidate bundle is retained
+as a workflow artifact for 14 days.
+
+The workflow deliberately cannot create a release. Promotion remains blocked
+until the signing identity, protected GitHub environment, and public release
+index update have been configured and reviewed.
