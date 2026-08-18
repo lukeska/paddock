@@ -13,17 +13,19 @@
 - The optional Omarchy plugin passes `omarchy plugin validate` and owns no
   canonical state.
 
-## Publication gates
+## Published runtime prerelease
 
-The local package is intentionally unsigned and the installed artifact index is
-intentionally empty. It is not a publishable release until both gates close:
+The package artifact index points to the `php-2026.08.18` GitHub prerelease.
+Paddock-owned PHP 8.4.23 and 8.5.8 x86_64 archives, checksums, file-level SPDX
+inventories, ABI records, and unsigned provenance are public and have passed a
+fresh production-installer download test.
 
-1. Build and host Paddock-owned PHP artifacts for every advertised
-   minor/architecture, including the accepted baseline extensions and release
-   metadata (SHA-256, SBOM, build log, and attestation).
-2. Configure the release GPG key and sign the Arch package, repository database,
-   source archive, artifact index, and PHP artifacts according to the release
-   policy.
+## Remaining publication gates
+
+The local Arch package remains intentionally unsigned and is not yet a
+supported public release. Configure GitHub Actions attestations and the release
+GPG key, then sign the Arch package, repository database, source archive,
+artifact index, and PHP artifacts according to the release policy.
 
 Public StaticPHP artifacts are not an acceptable shortcut because the tested
 artifacts omitted `intl` and lack the selected Paddock provenance chain.

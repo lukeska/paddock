@@ -15,8 +15,9 @@ paddock secure
 
 Paddock is in active development and does not have a supported public release
 yet. The CLI, system integration, Arch package, PHP 8.4/8.5 runtime pipeline,
-and optional Omarchy plugin have passed local acceptance testing. Release
-hosting, signing, and automated publication are still being completed.
+and optional Omarchy plugin have passed local acceptance testing. The accepted
+x86_64 PHP runtimes are available as an unsigned GitHub prerelease. Package
+signing, CI attestations, and automated publication are still being completed.
 
 ## Architecture
 
