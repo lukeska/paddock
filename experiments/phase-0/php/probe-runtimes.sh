@@ -42,8 +42,8 @@ stop_process() {
 
 trap cleanup EXIT
 
-if (( $# < 2 )); then
-  printf 'Usage: %s <runtime-root> <runtime-root> [...]\n' "$0" >&2
+if (( $# < 1 )); then
+  printf 'Usage: %s <runtime-root> [...]\n' "$0" >&2
   exit 2
 fi
 
@@ -127,4 +127,4 @@ for pid in "${fpm_pids[@]}"; do
   fi
 done
 
-printf '%s runtimes passed simultaneous CLI/FPM checks.\n' "$#"
+printf '%s runtime(s) passed CLI/FPM checks.\n' "$#"
