@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+
+      - name: Run tests
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -v
+
+      - name: Check executable scripts
+        run: |
+          python -m py_compile system/system-helper
+          bash -n system/check-ports system/php-fpm-launcher
+          bash -n packaging/arch/build-local.sh packaging/arch/paddock.install
+          bash -n release/php/build.sh
+
+  arch-package:
+    name: Arch package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container: archlinux:base-devel
+    steps:
+      - name: Install package dependencies
+        run: >-
+          pacman -Syu --needed --noconfirm
+          git python caddy dnsmasq mkcert nss p11-kit networkmanager polkit
+
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Build package as an unprivileged user
+        run: |
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser --user builder -- ./packaging/arch/build-local.sh
+
+      - name: Upload unsigned package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: paddock-arch-x86_64
+          path: packaging/arch/paddock-*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 7

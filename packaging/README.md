@@ -2,7 +2,7 @@
 
 ## Completed locally
 
-- Arch package `paddock 0.1.0-4` builds with `makepkg`.
+- Arch package `paddock 0.1.0-5` builds with `makepkg`.
 - The package runs all 36 tests during `check()`.
 - Extracted-package CLI and package ownership manifests were inspected.
 - Clean install of `0.1.0-1`, upgrade to `0.1.0-2`, rollback to `0.1.0-1`,

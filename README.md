@@ -1,5 +1,7 @@
 # Paddock
 
+[![CI](https://github.com/lukeska/paddock/actions/workflows/ci.yml/badge.svg)](https://github.com/lukeska/paddock/actions/workflows/ci.yml)
+
 Paddock is a native local Laravel development environment for
 [Omarchy](https://omarchy.org/). It provides managed PHP runtimes, `.test`
 domains, HTTPS, Caddy routing, and project-specific PHP selection through one
