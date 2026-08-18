@@ -19,8 +19,10 @@ class FakeRuntimeRunner:
     def __init__(self, version: str = "8.4.23", missing: str | None = None):
         self.version = version
         self.missing = missing
+        self.calls = []
 
     def __call__(self, command, **kwargs):
+        self.calls.append(command)
         if "-v" in command:
             return subprocess.CompletedProcess(command, 0, f"PHP {self.version} (fpm-fcgi)\n", "")
         if "echo PHP_VERSION" in command[-1]:
@@ -85,7 +87,8 @@ class RuntimeInstallTests(unittest.TestCase):
         )
 
     def test_verified_install_activates_registers_and_projects_fpm(self) -> None:
-        installer = RuntimeInstaller(self.store, FakeRuntimeRunner())
+        runner = FakeRuntimeRunner()
+        installer = RuntimeInstaller(self.store, runner)
         destination = installer.install(
             "8.4", ArtifactManifest.load(self.manifest_path)
         )
@@ -98,6 +101,9 @@ class RuntimeInstallTests(unittest.TestCase):
         self.assertIn("fpm.sock", config.read_text(encoding="utf-8"))
         self.assertTrue((self.store.paths.runtime / "php" / "8.4").is_dir())
         self.assertTrue((self.store.paths.state / "logs" / "php" / "8.4").is_dir())
+        self.assertIn(
+            ["systemctl", "restart", "paddock-php@8.4.service"], runner.calls
+        )
 
     def test_checksum_mismatch_never_activates(self) -> None:
         self._write_manifest("0" * 64)
@@ -113,7 +119,8 @@ class RuntimeInstallTests(unittest.TestCase):
         self.assertEqual(self.store.read("runtimes")["runtimes"], {})
 
     def test_remove_refuses_runtime_used_by_site(self) -> None:
-        installer = RuntimeInstaller(self.store, FakeRuntimeRunner())
+        runner = FakeRuntimeRunner()
+        installer = RuntimeInstaller(self.store, runner)
         installer.install("8.4", ArtifactManifest.load(self.manifest_path))
         project = self.base / "app"
         project.mkdir()
@@ -130,6 +137,19 @@ class RuntimeInstallTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(RuntimeInstallError, "demo.test"):
             installer.remove("8.4")
+        self.assertNotIn(
+            ["systemctl", "stop", "paddock-php@8.4.service"], runner.calls
+        )
+
+    def test_remove_stops_service_before_discarding_runtime(self) -> None:
+        runner = FakeRuntimeRunner()
+        installer = RuntimeInstaller(self.store, runner)
+        installer.install("8.4", ArtifactManifest.load(self.manifest_path))
+        installer.remove("8.4")
+        self.assertIn(
+            ["systemctl", "stop", "paddock-php@8.4.service"], runner.calls
+        )
+        self.assertEqual(self.store.read("runtimes")["runtimes"], {})
 
     def test_manifest_selects_highest_patch_and_rejects_bad_shape(self) -> None:
         value = json.loads(self.manifest_path.read_text(encoding="utf-8"))

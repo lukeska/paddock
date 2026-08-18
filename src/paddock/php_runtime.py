@@ -59,6 +59,7 @@ class RuntimeInstaller:
                 self._validate(destination, artifact)
             self._activate(artifact.minor, destination, active)
             self._write_fpm_config(artifact.minor, destination)
+            self._control_service("restart", artifact.minor)
             self.registry.register(
                 artifact.minor, destination / "bin" / "php", artifact.sha256
             )
@@ -73,6 +74,7 @@ class RuntimeInstaller:
                 f"PHP {version} is used by: {', '.join(name + '.test' for name in users)}"
             )
         with exclusive_lock(self.lock):
+            self._control_service("stop", version)
             link = self.paths.data / "runtimes" / "active" / version
             release = link.resolve(strict=False) if link.is_symlink() else None
             link.unlink(missing_ok=True)
@@ -229,3 +231,14 @@ class RuntimeInstaller:
             detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
             raise RuntimeInstallError(f"runtime validation failed: {detail}")
         return result
+
+    def _control_service(self, action: str, minor: str) -> None:
+        result = self.runner(
+            ["systemctl", action, f"paddock-php@{minor}.service"],
+            text=True, capture_output=True, check=False,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
+            raise RuntimeInstallError(
+                f"cannot {action} PHP {minor} service: {detail}"
+            )
