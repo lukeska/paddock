@@ -1,6 +1,6 @@
 pkgname=paddock
 pkgver=0.1.0
-pkgrel=6
+pkgrel=8
 pkgdesc='Local Laravel development environment for Omarchy'
 arch=('x86_64' 'aarch64')
 url='https://github.com/lukeska/paddock'
@@ -10,7 +10,7 @@ conflicts=('laramachy')
 replaces=('laramachy')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz")
-sha256sums=('57c7205275b14825a5f32f84c04d460e44599240e218c519cd471ff574d31b4f')
+sha256sums=('ad6984a1f3392ee92d7029a0160a1b0e27e8e1a3796d62987d54d906a4b6dda7')
 
 check() {
   cd "$srcdir/$pkgname-$pkgver"
@@ -28,6 +28,7 @@ package() {
   install -Dm755 system/system-helper "$pkgdir/usr/lib/paddock/system-helper"
   install -Dm755 system/php-fpm-launcher "$pkgdir/usr/lib/paddock/php-fpm-launcher"
   install -Dm755 system/check-ports "$pkgdir/usr/lib/paddock/check-ports"
+  install -Dm755 system/wait-for-socket "$pkgdir/usr/lib/paddock/wait-for-socket"
   install -Dm644 resources/artifacts.json "$pkgdir/usr/share/paddock/artifacts.json"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 docs/state-schema-v1.md "$pkgdir/usr/share/doc/$pkgname/state-schema-v1.md"

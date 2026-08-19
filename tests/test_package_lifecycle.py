@@ -1,21 +1,23 @@
 from __future__ import annotations
 
-import importlib.machinery
-import importlib.util
 import json
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 import tempfile
 import unittest
 from unittest.mock import patch
 
 
 def load_helper():
+    # Compile from source text rather than SourceFileLoader: that loader
+    # caches bytecode under system/__pycache__, and a stale entry would make
+    # these tests read a previous revision of the helper. The version/digest
+    # guard exists to catch template edits, so it must never see cached source.
     path = Path(__file__).parents[1] / "system/system-helper"
-    loader = importlib.machinery.SourceFileLoader("paddock_system_helper", str(path))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
+    module = ModuleType("paddock_system_helper")
+    module.__file__ = str(path)
+    code = compile(path.read_text(encoding="utf-8"), str(path), "exec")
+    exec(code, module.__dict__)
     return module
 
 

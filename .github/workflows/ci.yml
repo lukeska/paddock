@@ -35,7 +35,7 @@ jobs:
       - name: Check executable scripts
         run: |
           python -m py_compile system/system-helper
-          bash -n system/check-ports system/php-fpm-launcher
+          bash -n system/check-ports system/php-fpm-launcher system/wait-for-socket
           bash -n packaging/arch/build-local.sh packaging/arch/paddock.install
           bash -n release/php/build.sh
 

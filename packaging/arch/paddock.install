@@ -3,10 +3,20 @@ post_install() {
 }
 
 post_upgrade() {
+  # The PHP unit is written during `paddock setup`, not owned by pacman, so an
+  # upgrade that changes the template silently leaves the old unit installed
+  # and only fails at the next boot. Compare the stamped template version.
   local unit=/etc/systemd/system/paddock-php@.service
-  if [ -f "$unit" ] && ! grep -q '^RuntimeDirectory=' "$unit"; then
-    echo 'warning: the installed Paddock PHP unit predates the systemd-owned runtime directory.' >&2
-    echo 'warning: it fails at boot with 226/NAMESPACE. Regenerate it as your desktop user:' >&2
+  [ -f "$unit" ] || return 0
+
+  local expected installed
+  expected=$(/usr/lib/paddock/system-helper unit-version 2>/dev/null) || return 0
+  [ -n "$expected" ] || return 0
+  installed=$(sed -n 's/^X-Paddock-Unit-Version=//p' "$unit" | head -n 1)
+
+  if [ "$installed" != "$expected" ]; then
+    echo "warning: the installed Paddock systemd unit is out of date (found ${installed:-none}, expected $expected)." >&2
+    echo 'warning: it will not pick up this upgrade until you regenerate it:' >&2
     echo 'warning:   paddock uninstall --yes && paddock setup --yes' >&2
   fi
 }

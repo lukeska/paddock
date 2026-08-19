@@ -29,6 +29,14 @@ SYSTEM_CA = Path("/etc/paddock/rootCA.pem")
 # Must stay equal to paddock.paths.SYSTEM_RUNTIME_ROOT.
 RUNTIME_ROOT = "paddock"
 
+# Bump whenever php_unit() changes. The generated unit carries this as an
+# `X-` key, which systemd ignores, and the package post_upgrade scriptlet
+# compares it against the installed unit. Without it an upgrade that changes
+# the template leaves the old unit in place and only breaks at the next boot,
+# because the unit is written during integration and is not owned by pacman.
+# A test pins the template digest to this number so it cannot drift.
+UNIT_VERSION = 1
+
 
 def php_unit(user: str, group: int, data: Path, state: Path) -> str:
     """Render the templated PHP-FPM unit.
@@ -40,9 +48,18 @@ def php_unit(user: str, group: int, data: Path, state: Path) -> str:
     `ReadWritePaths=` instead aborts startup with 226/NAMESPACE, and a
     `/run/user/<uid>` path additionally ties a system unit to a login session
     that does not exist at boot and disappears on logout without linger.
+
+    php-fpm is Type=simple, so the unit counts as started before the master
+    listens. `ExecStartPost=` blocks on the socket and `Before=` orders Caddy
+    after that gate, which is the readiness edge ADR 0005 specifies. The
+    ordering carries no requirement, so a later FPM failure yields a 502 for
+    that version only instead of taking Caddy down.
     """
     return (
         f"""[Unit]\nDescription=Paddock PHP %i\nPartOf=paddock.target\n"""
+        f"""X-Paddock-Unit-Version={UNIT_VERSION}\n"""
+        f"""Before=paddock-caddy.service\n"""
+        f"""StartLimitIntervalSec=10s\nStartLimitBurst=3\n"""
         f"""ConditionFileIsExecutable={data}/runtimes/active/%i/bin/php-fpm\n"""
         f"""ConditionPathExists={state}/fpm/php-%i.conf\n"""
         f"""[Service]\nUser={user}\nGroup={group}\n"""
@@ -50,7 +67,9 @@ def php_unit(user: str, group: int, data: Path, state: Path) -> str:
         f"""Environment=PHP_INI_SCAN_DIR={data}/runtimes/active/%i/etc/conf.d\n"""
         f"""RuntimeDirectory={RUNTIME_ROOT}/php/%i\nRuntimeDirectoryMode=0700\n"""
         f"""ExecStart=/usr/lib/paddock/php-fpm-launcher {data}/runtimes/active/%i {state}/fpm/php-%i.conf\n"""
-        f"""Restart=on-failure\nNoNewPrivileges=yes\nPrivateDevices=yes\nPrivateTmp=yes\n"""
+        f"""ExecStartPost=/usr/lib/paddock/wait-for-socket /run/{RUNTIME_ROOT}/php/%i/fpm.sock\n"""
+        f"""Restart=on-failure\nRestartSec=500ms\n"""
+        f"""NoNewPrivileges=yes\nPrivateDevices=yes\nPrivateTmp=yes\n"""
         f"""ProtectSystem=strict\nProtectHome=read-only\nReadWritePaths={state}\n"""
     )
 
@@ -171,14 +190,19 @@ def package_remove() -> None:
 
 
 def main() -> int:
-    if os.geteuid() != 0:
-        raise SystemExit("system-helper must run as root")
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("install", "uninstall", "package-remove"))
+    parser.add_argument(
+        "action", choices=("install", "uninstall", "package-remove", "unit-version")
+    )
     parser.add_argument("--user")
     parser.add_argument("--data-dir")
     parser.add_argument("--state-dir")
     args = parser.parse_args()
+    if args.action == "unit-version":
+        print(UNIT_VERSION)
+        return 0
+    if os.geteuid() != 0:
+        raise SystemExit("system-helper must run as root")
     if args.action == "package-remove":
         package_remove()
     elif not all((args.user, args.data_dir, args.state_dir)):

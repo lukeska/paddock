@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Block until an FPM master has bound its Unix socket.
+#
+# php-fpm is Type=simple, so systemd considers the unit started the moment the
+# process is forked, well before it listens. Without this gate Caddy's After=
+# ordering is satisfied against a socket that does not exist yet, which shows
+# up as a burst of 502s during boot. Failing here is deliberate: a master that
+# never binds within the bound is broken, and Restart=on-failure should see it.
+set -euo pipefail
+
+socket=${1:?socket path required}
+attempts=${2:-200}
+
+for _ in $(seq "$attempts"); do
+  [[ -S "$socket" ]] && exit 0
+  sleep 0.05
+done
+
+printf 'Timed out waiting for FPM socket: %s\n' "$socket" >&2
+exit 1
