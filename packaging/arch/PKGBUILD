@@ -1,6 +1,6 @@
 pkgname=paddock
 pkgver=0.1.0
-pkgrel=5
+pkgrel=6
 pkgdesc='Local Laravel development environment for Omarchy'
 arch=('x86_64' 'aarch64')
 url='https://github.com/lukeska/paddock'
@@ -10,7 +10,7 @@ conflicts=('laramachy')
 replaces=('laramachy')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz")
-sha256sums=('0c92c7f9da007157d92c2878ceb99691ec16234a6cafcae629cc0ab919f86ff7')
+sha256sums=('57c7205275b14825a5f32f84c04d460e44599240e218c519cd471ff574d31b4f')
 
 check() {
   cd "$srcdir/$pkgname-$pkgver"

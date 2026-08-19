@@ -43,8 +43,8 @@ class RuntimeInstallTests(unittest.TestCase):
                 "XDG_DATA_HOME": str(self.base / "data"),
                 "XDG_STATE_HOME": str(self.base / "state"),
                 "XDG_CACHE_HOME": str(self.base / "cache"),
-                "XDG_RUNTIME_DIR": str(self.base / "runtime"),
-            }
+            },
+            runtime_root=self.base / "run" / "paddock",
         )
         self.store = StateStore(paths)
         self.store.initialize()
@@ -99,7 +99,12 @@ class RuntimeInstallTests(unittest.TestCase):
         config = self.store.paths.state / "fpm" / "php-8.4.conf"
         self.assertIn("clear_env = yes", config.read_text(encoding="utf-8"))
         self.assertIn("fpm.sock", config.read_text(encoding="utf-8"))
-        self.assertTrue((self.store.paths.runtime / "php" / "8.4").is_dir())
+        self.assertIn(
+            f"listen = {self.store.paths.runtime / 'php' / '8.4' / 'fpm.sock'}",
+            config.read_text(encoding="utf-8"),
+        )
+        # The socket directory belongs to the unit's RuntimeDirectory=.
+        self.assertFalse((self.store.paths.runtime / "php" / "8.4").exists())
         self.assertTrue((self.store.paths.state / "logs" / "php" / "8.4").is_dir())
         self.assertIn(
             ["systemctl", "restart", "paddock-php@8.4.service"], runner.calls

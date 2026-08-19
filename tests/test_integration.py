@@ -38,8 +38,8 @@ class IntegrationTests(unittest.TestCase):
                 "XDG_DATA_HOME": str(base / "data"),
                 "XDG_STATE_HOME": str(base / "state"),
                 "XDG_CACHE_HOME": str(base / "cache"),
-                "XDG_RUNTIME_DIR": str(base / "runtime"),
-            }
+            },
+            runtime_root=base / "run" / "paddock",
         )
         self.store = StateStore(paths)
         self.store.initialize()
@@ -56,6 +56,15 @@ class IntegrationTests(unittest.TestCase):
         self.assertTrue((self.store.paths.state / "caddy/Caddyfile").is_file())
         self.assertTrue((self.store.paths.state / "caddy-data").is_dir())
         self.assertTrue((self.store.paths.state / "caddy-config").is_dir())
+
+    def test_prepare_replaces_a_stale_projection(self):
+        # A Caddyfile generated before the socket layout changed must not
+        # survive setup, or Caddy dials a socket no unit binds.
+        projection = self.store.paths.state / "caddy/Caddyfile"
+        projection.parent.mkdir(parents=True, exist_ok=True)
+        projection.write_text("stale unix//run/user/1000/paddock", encoding="utf-8")
+        Integration(self.store, self.fake).prepare()
+        self.assertNotIn("stale", projection.read_text(encoding="utf-8"))
 
     def test_helper_invocations_are_fixed_and_user_scoped(self):
         integration = Integration(self.store, self.fake)

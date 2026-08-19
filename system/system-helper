@@ -26,6 +26,34 @@ OWNED = (
 INSTALLATION = Path("/etc/paddock/integration.json")
 SYSTEM_CA = Path("/etc/paddock/rootCA.pem")
 
+# Must stay equal to paddock.paths.SYSTEM_RUNTIME_ROOT.
+RUNTIME_ROOT = "paddock"
+
+
+def php_unit(user: str, group: int, data: Path, state: Path) -> str:
+    """Render the templated PHP-FPM unit.
+
+    systemd owns the runtime directory. `RuntimeDirectory=` creates
+    `/run/paddock/php/<minor>` with the unit's own user and mode before the
+    mount namespace is built, and removes it on stop without touching a
+    sibling version's socket. Naming a not-yet-existing `/run` path in
+    `ReadWritePaths=` instead aborts startup with 226/NAMESPACE, and a
+    `/run/user/<uid>` path additionally ties a system unit to a login session
+    that does not exist at boot and disappears on logout without linger.
+    """
+    return (
+        f"""[Unit]\nDescription=Paddock PHP %i\nPartOf=paddock.target\n"""
+        f"""ConditionFileIsExecutable={data}/runtimes/active/%i/bin/php-fpm\n"""
+        f"""ConditionPathExists={state}/fpm/php-%i.conf\n"""
+        f"""[Service]\nUser={user}\nGroup={group}\n"""
+        f"""Environment=PHPRC={data}/runtimes/active/%i/etc/php.ini\n"""
+        f"""Environment=PHP_INI_SCAN_DIR={data}/runtimes/active/%i/etc/conf.d\n"""
+        f"""RuntimeDirectory={RUNTIME_ROOT}/php/%i\nRuntimeDirectoryMode=0700\n"""
+        f"""ExecStart=/usr/lib/paddock/php-fpm-launcher {data}/runtimes/active/%i {state}/fpm/php-%i.conf\n"""
+        f"""Restart=on-failure\nNoNewPrivileges=yes\nPrivateDevices=yes\nPrivateTmp=yes\n"""
+        f"""ProtectSystem=strict\nProtectHome=read-only\nReadWritePaths={state}\n"""
+    )
+
 
 def run(command: list[str], *, user: str | None = None, check: bool = True) -> None:
     if user:
@@ -57,7 +85,6 @@ def directories(user: str, data_value: str, state_value: str) -> tuple[pwd.struc
 def install(user: str, data_value: str, state_value: str) -> None:
     account, data, state = directories(user, data_value, state_value)
     home = Path(account.pw_dir)
-    runtime = Path(f"/run/user/{account.pw_uid}/paddock")
     ca = data / "pki/rootCA.pem"
     if not ca.is_file():
         raise SystemExit(f"public CA does not exist: {ca}")
@@ -76,7 +103,7 @@ def install(user: str, data_value: str, state_value: str) -> None:
     write("/etc/systemd/system/paddock-dns.service", """[Unit]\nDescription=Paddock .test DNS\nPartOf=paddock.target\n[Service]\nExecStart=/usr/bin/dnsmasq --no-daemon --conf-file=/etc/paddock/dnsmasq.conf\nRestart=on-failure\nNoNewPrivileges=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=yes\n""")
     write("/etc/systemd/system/paddock-dns-route.service", """[Unit]\nDescription=Paddock route-only DNS\nPartOf=paddock.target\nRequires=paddock-dns.service NetworkManager.service\nAfter=paddock-dns.service NetworkManager.service systemd-resolved.service\n[Service]\nType=oneshot\nExecStart=/usr/bin/nmcli connection up paddock-dns\nRemainAfterExit=yes\n""")
     write("/etc/systemd/system/paddock-caddy.service", f"""[Unit]\nDescription=Paddock Caddy\nPartOf=paddock.target\nAfter=paddock-dns-route.service\n[Service]\nType=notify\nUser={user}\nGroup={account.pw_gid}\nEnvironment=XDG_DATA_HOME={state}/caddy-data\nEnvironment=XDG_CONFIG_HOME={state}/caddy-config\nExecStartPre=+/usr/lib/paddock/check-ports\nExecStartPre=/usr/bin/caddy validate --config={state}/caddy/Caddyfile --adapter=caddyfile\nExecStart=/usr/bin/caddy run --config={state}/caddy/Caddyfile --adapter=caddyfile\nExecReload=/usr/bin/caddy reload --config={state}/caddy/Caddyfile --adapter=caddyfile --address=127.0.0.1:20195\nRestart=on-failure\nAmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\nNoNewPrivileges=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=read-only\nReadWritePaths={state} {data}\n""")
-    write("/etc/systemd/system/paddock-php@.service", f"""[Unit]\nDescription=Paddock PHP %i\nPartOf=paddock.target\nRequires=user-runtime-dir@{account.pw_uid}.service\nAfter=user-runtime-dir@{account.pw_uid}.service\nConditionFileIsExecutable={data}/runtimes/active/%i/bin/php-fpm\nConditionPathExists={state}/fpm/php-%i.conf\n[Service]\nUser={user}\nGroup={account.pw_gid}\nEnvironment=PHPRC={data}/runtimes/active/%i/etc/php.ini\nEnvironment=PHP_INI_SCAN_DIR={data}/runtimes/active/%i/etc/conf.d\nExecStart=/usr/lib/paddock/php-fpm-launcher {data}/runtimes/active/%i {state}/fpm/php-%i.conf\nRestart=on-failure\nNoNewPrivileges=yes\nPrivateDevices=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=read-only\nReadWritePaths={state} {runtime}\n""")
+    write("/etc/systemd/system/paddock-php@.service", php_unit(user, account.pw_gid, data, state))
     allowed = json.dumps(user)
     write("/etc/polkit-1/rules.d/49-paddock.rules", f"""polkit.addRule(function(action, subject) {{\n  var unit = action.lookup('unit') || '';\n  if (action.id == 'org.freedesktop.systemd1.manage-units' && subject.user == {allowed} && (unit == 'paddock.target' || unit.indexOf('paddock-') == 0)) return polkit.Result.YES;\n}});\n""")
     shutil.copyfile(ca, SYSTEM_CA)

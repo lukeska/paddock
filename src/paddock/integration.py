@@ -6,6 +6,7 @@ import subprocess
 from typing import Callable
 
 from .caddy import CaddyProjector
+from .php_runtime import RuntimeInstaller
 from .state import StateStore
 
 
@@ -49,10 +50,15 @@ class Integration:
         ):
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             directory.chmod(0o700)
+        # Always reproject. The Caddyfile is derived from durable site records
+        # and the socket layout, so keeping a stale generation would point
+        # Caddy at sockets the current units never bind. Validation still runs
+        # first, so an invalid render never replaces the last-known-good file.
         projector = CaddyProjector(self.store.paths, self.runner)
-        if not projector.path.exists():
-            projector.validate(projector.render(self.store.read("sites")["sites"]))
-            projector.write(projector.render(self.store.read("sites")["sites"]))
+        candidate = projector.render(self.store.read("sites")["sites"])
+        projector.validate(candidate)
+        projector.write(candidate)
+        RuntimeInstaller(self.store, self.runner).reproject()
         self._ensure_ca()
 
     def install(self) -> None:

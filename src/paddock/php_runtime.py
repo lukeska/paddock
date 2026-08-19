@@ -65,6 +65,25 @@ class RuntimeInstaller:
             )
             return destination
 
+    def reproject(self) -> list[str]:
+        """Rewrite the FPM configuration of every registered runtime.
+
+        The configuration is derived from the runtime record and the socket
+        layout, so a generation written before the layout changed would make
+        FPM bind a path its unit no longer grants. Returns the versions
+        reprojected.
+        """
+        active = self.paths.data / "runtimes" / "active"
+        reprojected = []
+        with exclusive_lock(self.lock):
+            for runtime in self.registry.list():
+                root = active / runtime.version
+                if not (root / "bin" / "php-fpm").is_file():
+                    continue
+                self._write_fpm_config(runtime.version, root)
+                reprojected.append(runtime.version)
+        return reprojected
+
     def remove(self, minor: str) -> None:
         version = normalize_minor(minor)
         sites = self.store.read("sites")["sites"]
@@ -170,12 +189,11 @@ class RuntimeInstaller:
             )
 
     def _write_fpm_config(self, minor: str, runtime: Path) -> None:
-        if self.paths.runtime is None:
-            raise RuntimeInstallError("XDG_RUNTIME_DIR is required for FPM projection")
+        # `run` is created by the unit's RuntimeDirectory=, not here: it lives
+        # under root-owned /run and must be absent until the service starts.
         run = self.paths.runtime / "php" / minor
         log = self.paths.state / "logs" / "php" / minor
         config = self.paths.state / "fpm" / f"php-{minor}.conf"
-        run.mkdir(parents=True, exist_ok=True, mode=0o700)
         log.mkdir(parents=True, exist_ok=True, mode=0o700)
         value = (
             "[global]\n"

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from paddock.paths import PathConfigurationError, Paths
+from paddock.paths import SYSTEM_RUNTIME_ROOT, PathConfigurationError, Paths
 from paddock.schemas import SchemaError, validate_sites
 from paddock.state import StateError, StateStore
 
@@ -22,9 +22,10 @@ class StateTests(unittest.TestCase):
             "XDG_DATA_HOME": str(base / "Data ü"),
             "XDG_STATE_HOME": str(base / "State space"),
             "XDG_CACHE_HOME": str(base / "Cache ü"),
-            "XDG_RUNTIME_DIR": str(base / "Runtime space"),
         }
-        self.paths = Paths.from_environment(self.environment)
+        self.paths = Paths.from_environment(
+            self.environment, runtime_root=base / "Run space" / "paddock"
+        )
         self.store = StateStore(self.paths)
 
     def tearDown(self) -> None:
@@ -76,12 +77,20 @@ class StateTests(unittest.TestCase):
                 }
             )
 
-    def test_runtime_scope_is_required_only_when_requested(self) -> None:
-        environment = {"HOME": self.environment["HOME"]}
-        paths = Paths.from_environment(environment)
-        self.assertIsNone(paths.runtime)
+    def test_runtime_scope_is_systemd_owned_and_ignores_the_session(self) -> None:
+        # A login session's XDG_RUNTIME_DIR must never move the sockets: the
+        # PHP units are system units and would then disagree with the CLI.
+        environment = {
+            "HOME": self.environment["HOME"],
+            "XDG_RUNTIME_DIR": "/run/user/4242",
+        }
+        self.assertEqual(
+            SYSTEM_RUNTIME_ROOT, Paths.from_environment(environment).runtime
+        )
+
+    def test_missing_home_is_rejected(self) -> None:
         with self.assertRaises(PathConfigurationError):
-            Paths.from_environment(environment, require_runtime=True)
+            Paths.from_environment({})
 
     def test_initialize_preserves_existing_valid_state(self) -> None:
         self.store.initialize()

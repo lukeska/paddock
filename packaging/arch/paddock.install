@@ -2,6 +2,15 @@ post_install() {
   echo 'Run "paddock setup" as your desktop user to preview and install system integration.'
 }
 
+post_upgrade() {
+  local unit=/etc/systemd/system/paddock-php@.service
+  if [ -f "$unit" ] && ! grep -q '^RuntimeDirectory=' "$unit"; then
+    echo 'warning: the installed Paddock PHP unit predates the systemd-owned runtime directory.' >&2
+    echo 'warning: it fails at boot with 226/NAMESPACE. Regenerate it as your desktop user:' >&2
+    echo 'warning:   paddock uninstall --yes && paddock setup --yes' >&2
+  fi
+}
+
 pre_remove() {
   if ! /usr/lib/paddock/system-helper package-remove; then
     echo 'warning: Paddock package removal could not fully clean system integration.' >&2

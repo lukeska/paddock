@@ -42,8 +42,8 @@ class TlsDiagnosticTests(unittest.TestCase):
                 "XDG_DATA_HOME": str(base / "data"),
                 "XDG_STATE_HOME": str(base / "state"),
                 "XDG_CACHE_HOME": str(base / "cache"),
-                "XDG_RUNTIME_DIR": str(base / "runtime"),
-            }
+            },
+            runtime_root=base / "run" / "paddock",
         )
         self.store = StateStore(paths)
         self.store.initialize()

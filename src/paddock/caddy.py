@@ -7,7 +7,7 @@ import tempfile
 from typing import Any, Callable
 
 from .atomic import atomic_write
-from .paths import PathConfigurationError, Paths
+from .paths import Paths
 
 
 class CaddyError(RuntimeError):
@@ -27,8 +27,6 @@ class CaddyProjector:
         return self.paths.state / "caddy" / "Caddyfile"
 
     def render(self, sites: dict[str, dict[str, Any]]) -> str:
-        if self.paths.runtime is None:
-            raise PathConfigurationError("XDG_RUNTIME_DIR is required for Caddy projection")
         lines = [
             "{",
             "\tadmin 127.0.0.1:20195",
