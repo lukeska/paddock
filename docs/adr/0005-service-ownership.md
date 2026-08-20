@@ -101,6 +101,42 @@ Uninstall performs the reverse order:
 4. Handle user-owned runtimes, logs, certificates, and CA material through
    separate explicit retention/removal choices.
 
+## Amendment: PHP-FPM writes inside the desktop user's home
+
+Dated 2026-08-20. The generated `paddock-php@.service` combined
+`ProtectSystem=strict`, `ProtectHome=read-only`, and a single
+`ReadWritePaths=` entry for Paddock's own state directory. That serves static
+PHP correctly and fails every real application: a framework writes inside its
+own project tree, so `laravel-13.test` returned 500 with
+`tempnam(): file created in the system's temporary directory`. PHP had fallen
+back to the private /tmp for `tempnam(dirname($path), ...)` and Laravel
+promoted the resulting notice to an `ErrorException`. Compiled views,
+real-time facades, application logs, SQLite files, and uploads were all
+unwritable. The phase-0 fixtures never caught it because they only echo
+`PHP_VERSION`.
+
+Granting each linked root its own `ReadWritePaths=` entry was rejected. The
+unit is root-owned, so re-rendering it would put a privilege prompt in
+`paddock link`, and this ADR keeps day-to-day commands unprivileged.
+
+The PHP unit therefore sets `ProtectHome=no` and lists the desktop user's home
+in `ReadWritePaths=`, alongside the state directory, which XDG variables may
+place outside the home. `ProtectSystem=strict` is unchanged, so `/usr` and
+`/etc` stay read-only, and `InaccessiblePaths=` hides `~/.ssh`, `~/.gnupg`, and
+Paddock's own `pki` directory holding the local CA private key. Each entry
+carries the `-` prefix, because naming a missing path aborts namespace setup.
+
+This is a deliberate reduction in confinement, not an oversight. php-fpm runs
+as the desktop user, so discretionary permissions were always the real
+boundary and a compromised application could reach the same files through any
+other process running as that user. The enumerated denials raise the cost of
+the most damaging writes; they are not a complete boundary. Caddy is
+unaffected and keeps the read-only home policy of ADR 0003, since it only
+reads what it serves.
+
+`UNIT_VERSION` moves to 2 so an upgrade detects an installed pre-fix unit; a
+test pins the version and template digest together.
+
 ## Consequences
 
 - Sites are available after boot without enabling user linger.

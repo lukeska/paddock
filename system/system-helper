@@ -35,10 +35,10 @@ RUNTIME_ROOT = "paddock"
 # the template leaves the old unit in place and only breaks at the next boot,
 # because the unit is written during integration and is not owned by pacman.
 # A test pins the template digest to this number so it cannot drift.
-UNIT_VERSION = 1
+UNIT_VERSION = 2
 
 
-def php_unit(user: str, group: int, data: Path, state: Path) -> str:
+def php_unit(user: str, group: int, home: Path, data: Path, state: Path) -> str:
     """Render the templated PHP-FPM unit.
 
     systemd owns the runtime directory. `RuntimeDirectory=` creates
@@ -54,6 +54,19 @@ def php_unit(user: str, group: int, data: Path, state: Path) -> str:
     after that gate, which is the readiness edge ADR 0005 specifies. The
     ordering carries no requirement, so a later FPM failure yields a 502 for
     that version only instead of taking Caddy down.
+
+    The home directory is writable because PHP applications write inside their
+    own project: Laravel needs `storage/` and `bootstrap/cache/`, and a
+    read-only project turns every such write into a 500. `ProtectHome=read-only`
+    made `tempnam(dirname($path), ...)` fall back to the private /tmp and emit
+    `file created in the system's temporary directory`, which Laravel promotes
+    to an ErrorException. Granting each linked root individually would instead
+    require root on every `paddock link`, so the writable unit is the whole
+    home minus explicit denials. `ProtectSystem=strict` still keeps /usr and
+    /etc read-only, and `InaccessiblePaths=` hides the user secrets a
+    compromised application would want most, including Paddock's own CA key.
+    Enumerated denials are not a complete boundary; php-fpm runs as the desktop
+    user, so DAC remains the real limit.
     """
     return (
         f"""[Unit]\nDescription=Paddock PHP %i\nPartOf=paddock.target\n"""
@@ -70,7 +83,9 @@ def php_unit(user: str, group: int, data: Path, state: Path) -> str:
         f"""ExecStartPost=/usr/lib/paddock/wait-for-socket /run/{RUNTIME_ROOT}/php/%i/fpm.sock\n"""
         f"""Restart=on-failure\nRestartSec=500ms\n"""
         f"""NoNewPrivileges=yes\nPrivateDevices=yes\nPrivateTmp=yes\n"""
-        f"""ProtectSystem=strict\nProtectHome=read-only\nReadWritePaths={state}\n"""
+        f"""ProtectSystem=strict\nProtectHome=no\n"""
+        f"""ReadWritePaths={home} {state}\n"""
+        f"""InaccessiblePaths=-{home}/.ssh -{home}/.gnupg -{data}/pki\n"""
     )
 
 
@@ -122,7 +137,7 @@ def install(user: str, data_value: str, state_value: str) -> None:
     write("/etc/systemd/system/paddock-dns.service", """[Unit]\nDescription=Paddock .test DNS\nPartOf=paddock.target\n[Service]\nExecStart=/usr/bin/dnsmasq --no-daemon --conf-file=/etc/paddock/dnsmasq.conf\nRestart=on-failure\nNoNewPrivileges=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=yes\n""")
     write("/etc/systemd/system/paddock-dns-route.service", """[Unit]\nDescription=Paddock route-only DNS\nPartOf=paddock.target\nRequires=paddock-dns.service NetworkManager.service\nAfter=paddock-dns.service NetworkManager.service systemd-resolved.service\n[Service]\nType=oneshot\nExecStart=/usr/bin/nmcli connection up paddock-dns\nRemainAfterExit=yes\n""")
     write("/etc/systemd/system/paddock-caddy.service", f"""[Unit]\nDescription=Paddock Caddy\nPartOf=paddock.target\nAfter=paddock-dns-route.service\n[Service]\nType=notify\nUser={user}\nGroup={account.pw_gid}\nEnvironment=XDG_DATA_HOME={state}/caddy-data\nEnvironment=XDG_CONFIG_HOME={state}/caddy-config\nExecStartPre=+/usr/lib/paddock/check-ports\nExecStartPre=/usr/bin/caddy validate --config={state}/caddy/Caddyfile --adapter=caddyfile\nExecStart=/usr/bin/caddy run --config={state}/caddy/Caddyfile --adapter=caddyfile\nExecReload=/usr/bin/caddy reload --config={state}/caddy/Caddyfile --adapter=caddyfile --address=127.0.0.1:20195\nRestart=on-failure\nAmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\nNoNewPrivileges=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=read-only\nReadWritePaths={state} {data}\n""")
-    write("/etc/systemd/system/paddock-php@.service", php_unit(user, account.pw_gid, data, state))
+    write("/etc/systemd/system/paddock-php@.service", php_unit(user, account.pw_gid, home, data, state))
     allowed = json.dumps(user)
     write("/etc/polkit-1/rules.d/49-paddock.rules", f"""polkit.addRule(function(action, subject) {{\n  var unit = action.lookup('unit') || '';\n  if (action.id == 'org.freedesktop.systemd1.manage-units' && subject.user == {allowed} && (unit == 'paddock.target' || unit.indexOf('paddock-') == 0)) return polkit.Result.YES;\n}});\n""")
     shutil.copyfile(ca, SYSTEM_CA)

@@ -60,7 +60,8 @@ class PhpUnitRuntimeDirectoryTests(unittest.TestCase):
     def setUp(self) -> None:
         helper = load_helper()
         self.unit = helper.php_unit(
-            "demo", 1000, Path("/home/demo/.local/share/paddock"),
+            "demo", 1000, Path("/home/demo"),
+            Path("/home/demo/.local/share/paddock"),
             Path("/home/demo/.local/state/paddock"),
         )
 
@@ -96,7 +97,8 @@ class PhpUnitReadinessTests(unittest.TestCase):
     def setUp(self) -> None:
         helper = load_helper()
         self.unit = helper.php_unit(
-            "demo", 1000, Path("/home/demo/.local/share/paddock"),
+            "demo", 1000, Path("/home/demo"),
+            Path("/home/demo/.local/share/paddock"),
             Path("/home/demo/.local/state/paddock"),
         )
 
@@ -231,19 +233,76 @@ class ReprojectionTests(unittest.TestCase):
         self.assertEqual([], installer.reproject())
 
 
+class PhpUnitWritableProjectTests(unittest.TestCase):
+    """A project served by Paddock must be writable by php-fpm.
+
+    `ProtectHome=read-only` served static PHP fine but made every Laravel
+    project a 500: the framework writes compiled views, real-time facades, and
+    logs inside its own tree, and `tempnam()` on a read-only directory falls
+    back to the private /tmp with a notice that Laravel turns into an
+    ErrorException. Granting one linked root at a time would need root on every
+    `paddock link`, which the CLI must not require.
+    """
+
+    def setUp(self) -> None:
+        helper = load_helper()
+        self.unit = helper.php_unit(
+            "demo", 1000, Path("/home/demo"),
+            Path("/home/demo/.local/share/paddock"),
+            Path("/home/demo/.local/state/paddock"),
+        )
+
+    def test_the_home_directory_is_writable(self) -> None:
+        writable = " ".join(directives(self.unit, "ReadWritePaths")).split()
+        self.assertIn("/home/demo", writable)
+
+    def test_home_is_not_shadowed_read_only(self) -> None:
+        # ReadWritePaths= cannot win back a home that ProtectHome= has hidden.
+        self.assertEqual(["no"], directives(self.unit, "ProtectHome"))
+
+    def test_state_stays_writable_when_xdg_moves_it_outside_home(self) -> None:
+        writable = " ".join(directives(self.unit, "ReadWritePaths")).split()
+        self.assertIn("/home/demo/.local/state/paddock", writable)
+
+    def test_system_directories_stay_read_only(self) -> None:
+        # Relaxing the home directory must not relax /usr and /etc.
+        self.assertEqual(["strict"], directives(self.unit, "ProtectSystem"))
+
+    def test_user_secrets_and_the_ca_key_are_hidden(self) -> None:
+        hidden = " ".join(directives(self.unit, "InaccessiblePaths")).split()
+        for entry in (
+            "-/home/demo/.ssh",
+            "-/home/demo/.gnupg",
+            "-/home/demo/.local/share/paddock/pki",
+        ):
+            self.assertIn(entry, hidden)
+
+    def test_hidden_paths_tolerate_absence(self) -> None:
+        # Without the `-` prefix a missing ~/.gnupg aborts namespace setup.
+        for entry in " ".join(directives(self.unit, "InaccessiblePaths")).split():
+            self.assertTrue(entry.startswith("-"), entry)
+
+    def test_runtimes_remain_reachable(self) -> None:
+        # The denial covers pki only; php-fpm loads its interpreter from a
+        # sibling directory under the same data root.
+        hidden = " ".join(directives(self.unit, "InaccessiblePaths")).split()
+        self.assertNotIn("-/home/demo/.local/share/paddock", hidden)
+
+
 class UnitVersionStampTests(unittest.TestCase):
     """The stamp is how an upgrade notices the installed unit is stale."""
 
     # Regenerate both together when php_unit() changes:
     #   ./system/system-helper unit-version
     #   python -c "import hashlib,pathlib;..."  (see the failure message)
-    EXPECTED_VERSION = 1
-    EXPECTED_DIGEST = "ed955783a7051db7bea103ca92cb221b3cf2530d6cf37caf7c1ed19db7895ae1"
+    EXPECTED_VERSION = 2
+    EXPECTED_DIGEST = "793a332e8970850fa40916501c997387e9a0776bcdb210419d80a96828daef4f"
 
     def setUp(self) -> None:
         self.helper = load_helper()
         self.unit = self.helper.php_unit(
-            "demo", 1000, Path("/home/demo/.local/share/paddock"),
+            "demo", 1000, Path("/home/demo"),
+            Path("/home/demo/.local/share/paddock"),
             Path("/home/demo/.local/state/paddock"),
         )
 
