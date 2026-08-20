@@ -20,38 +20,180 @@ from .sites import SiteManager
 from .tls import SecurityManager
 
 
-def parser() -> argparse.ArgumentParser:
-    result = argparse.ArgumentParser(prog="paddock")
+SUMMARY = "Serve Laravel projects on .test domains with managed PHP runtimes."
+
+# Grouped command list rendered by `paddock help` and `paddock --help`.
+# argparse would otherwise emit one flat alphabetical block, and it cannot
+# describe `php list`/`php use` at all, because `php` forwards everything
+# after itself through nargs=REMAINDER. A test pins this table against the
+# registered subcommands so the two cannot drift apart.
+OVERVIEW: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    ("Projects", (
+        ("link [NAME]", "Serve the current directory at NAME.test"),
+        ("unlink [NAME]", "Stop serving a linked project"),
+        ("secure [NAME]", "Serve a site over locally trusted HTTPS"),
+        ("unsecure [NAME]", "Serve a site over plain HTTP again"),
+    )),
+    ("PHP", (
+        ("php list", "List the installed PHP runtimes"),
+        ("php install VERSION", "Install a Paddock-built PHP runtime"),
+        ("php remove VERSION", "Remove an installed PHP runtime"),
+        ("php use VERSION", "Select the PHP version for this project"),
+        ("php -- ARGS", "Run PHP with the version selected here"),
+        ("composer -- ARGS", "Run Composer with the version selected here"),
+    )),
+    ("Services", (
+        ("status", "Report whether the Paddock services are running"),
+        ("start", "Start the Paddock services"),
+        ("stop", "Stop the Paddock services"),
+        ("restart", "Restart the Paddock services"),
+        ("logs", "Show the Paddock service journal"),
+        ("doctor", "Check the environment and report what to fix"),
+    )),
+    ("Installation", (
+        ("setup", "Install .test DNS, the local CA, and the systemd units"),
+        ("uninstall", "Remove the system integration, keeping your data"),
+    )),
+    ("Help", (
+        ("help [COMMAND]", "Show this list, or explain one command"),
+    )),
+)
+
+
+def overview() -> str:
+    """Render the grouped command list."""
+    width = max(len(invocation) for _, entries in OVERVIEW for invocation, _ in entries)
+    lines = [SUMMARY, ""]
+    for group, entries in OVERVIEW:
+        lines.append(f"{group}:")
+        for invocation, description in entries:
+            lines.append(f"  paddock {invocation.ljust(width)}  {description}")
+        lines.append("")
+    lines.append('Run "paddock help COMMAND" for one command in detail.')
+    return "\n".join(lines)
+
+
+PHP_DETAIL = """Subcommands:
+  paddock php list             List the installed runtimes and their paths
+  paddock php install VERSION  Install the Paddock-built runtime for VERSION
+  paddock php remove VERSION   Remove the installed runtime for VERSION
+  paddock php use VERSION      Record VERSION in ./.paddock.json
+  paddock php -- ARGS          Run ARGS with the PHP selected for this directory
+
+The selected PHP is the nearest .paddock.json found walking up from the
+current directory, otherwise the linked site that contains it. `--` is
+required when forwarding arguments, so `paddock php -- -v` reports the
+version of the PHP this directory resolves to."""
+
+
+def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
+    """Build the parser and a name-to-subparser map for `paddock help`."""
+    result = argparse.ArgumentParser(
+        prog="paddock",
+        # Suppressing the choices block below also drops COMMAND from the
+        # generated usage line, so state it here.
+        usage="paddock COMMAND [ARGUMENTS]",
+        description=overview(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     result.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    subcommands = result.add_subparsers(dest="command", required=True)
-    php = subcommands.add_parser("php")
-    php.add_argument("arguments", nargs=argparse.REMAINDER)
-    composer = subcommands.add_parser("composer")
-    composer.add_argument("arguments", nargs=argparse.REMAINDER)
-    link = subcommands.add_parser("link")
-    link.add_argument("name", nargs="?")
-    link.add_argument("--php")
-    unlink = subcommands.add_parser("unlink")
-    unlink.add_argument("name", nargs="?")
-    secure = subcommands.add_parser("secure")
-    secure.add_argument("name", nargs="?")
-    unsecure = subcommands.add_parser("unsecure")
-    unsecure.add_argument("name", nargs="?")
-    subcommands.add_parser("doctor")
-    subcommands.add_parser("status")
+    # The command list lives in the description above, grouped by task, so the
+    # flat choices block is suppressed. `required=False` lets a bare `paddock`
+    # print that list instead of only a usage line.
+    subcommands = result.add_subparsers(
+        dest="command", required=False, metavar="COMMAND", help=argparse.SUPPRESS
+    )
+    commands: dict[str, argparse.ArgumentParser] = {}
+
+    def command(name: str, description: str, **kwargs) -> argparse.ArgumentParser:
+        created = subcommands.add_parser(
+            name,
+            description=description,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            **kwargs,
+        )
+        commands[name] = created
+        return created
+
+    php = command(
+        "php",
+        "Run PHP, or manage the installed PHP runtimes.",
+        epilog=PHP_DETAIL,
+    )
+    # The epilog documents the forwarded arguments; the bare positional adds
+    # only an undescribed "arguments" line to the listing.
+    php.add_argument("arguments", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
+    composer = command(
+        "composer",
+        "Run Composer with the PHP selected for this directory.",
+        epilog="`--` is required: paddock composer -- install",
+    )
+    composer.add_argument("arguments", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
+    link = command(
+        "link",
+        "Serve the current directory at NAME.test over HTTP.",
+    )
+    link.add_argument("name", nargs="?", help="site name; defaults to the directory name")
+    link.add_argument("--php", help="PHP minor version to serve this project with")
+    unlink = command("unlink", "Stop serving a linked project.")
+    unlink.add_argument("name", nargs="?", help="site name; defaults to the site rooted here")
+    secure = command(
+        "secure",
+        "Issue a locally trusted certificate and serve the site over HTTPS.",
+    )
+    secure.add_argument("name", nargs="?", help="site name; defaults to the site rooted here")
+    unsecure = command("unsecure", "Serve the site over plain HTTP again.")
+    unsecure.add_argument("name", nargs="?", help="site name; defaults to the site rooted here")
+    command(
+        "doctor",
+        "Check runtimes, state, sites, and generated configuration.",
+        epilog="Exits 1 if any check fails.",
+    )
+    command(
+        "status",
+        "Report whether the Paddock services are running.",
+        epilog="Exits 3 if any service is inactive.",
+    )
     for action in ("start", "stop", "restart"):
-        subcommands.add_parser(action)
-    logs = subcommands.add_parser("logs")
-    logs.add_argument("--follow", action="store_true")
-    setup = subcommands.add_parser("setup")
-    setup.add_argument("--yes", action="store_true")
-    uninstall = subcommands.add_parser("uninstall")
-    uninstall.add_argument("--yes", action="store_true")
-    return result
+        command(action, f"{action.capitalize()} the Paddock services (paddock.target).")
+    logs = command("logs", "Show the journal for the Caddy, PHP-FPM, and DNS services.")
+    logs.add_argument("--follow", action="store_true", help="keep printing new entries")
+    setup = command(
+        "setup",
+        "Install system integration: .test DNS, the local CA, and the systemd units.",
+        epilog="The changes are printed for confirmation first. Requires sudo.",
+    )
+    setup.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    uninstall = command(
+        "uninstall",
+        "Remove the system integration installed by setup.",
+        epilog="Projects, runtimes, state, logs, and the private CA are preserved.",
+    )
+    uninstall.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    help_command = command("help", "List everything Paddock can do, or explain one command.")
+    help_command.add_argument("topic", nargs="?", help="command to explain")
+    return result, commands
+
+
+def parser() -> argparse.ArgumentParser:
+    return build()[0]
 
 
 def run(argv: list[str] | None = None) -> int:
-    arguments = parser().parse_args(argv)
+    root, commands = build()
+    arguments = root.parse_args(argv)
+    # Help must work before any state exists, so it answers ahead of the store.
+    if arguments.command is None:
+        root.print_help()
+        return 2
+    if arguments.command == "help":
+        if arguments.topic is None:
+            root.print_help()
+            return 0
+        if arguments.topic not in commands:
+            raise ValueError(f'unknown command: {arguments.topic}; run "paddock help"')
+        commands[arguments.topic].print_help()
+        return 0
     store = StateStore(Paths.from_environment())
     store.initialize()
     forwarded = getattr(arguments, "arguments", [])

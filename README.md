@@ -8,6 +8,7 @@ domains, HTTPS, Caddy routing, and project-specific PHP selection through one
 CLI, with an optional Omarchy status widget.
 
 ```bash
+paddock help
 paddock link
 paddock php use 8.5
 paddock secure
