@@ -116,6 +116,14 @@ def directories(user: str, data_value: str, state_value: str) -> tuple[pwd.struc
     return account, data, state
 
 
+def lingering(user: str) -> bool:
+    result = subprocess.run(
+        ["loginctl", "show-user", user, "--property=Linger", "--value"],
+        text=True, capture_output=True, check=False,
+    )
+    return result.stdout.strip() == "yes"
+
+
 def install(user: str, data_value: str, state_value: str) -> None:
     account, data, state = directories(user, data_value, state_value)
     home = Path(account.pw_dir)
@@ -142,6 +150,12 @@ def install(user: str, data_value: str, state_value: str) -> None:
     write("/etc/polkit-1/rules.d/49-paddock.rules", f"""polkit.addRule(function(action, subject) {{\n  var unit = action.lookup('unit') || '';\n  if (action.id == 'org.freedesktop.systemd1.manage-units' && subject.user == {allowed} && (unit == 'paddock.target' || unit.indexOf('paddock-') == 0)) return polkit.Result.YES;\n}});\n""")
     shutil.copyfile(ca, SYSTEM_CA)
     SYSTEM_CA.chmod(0o644)
+    # Enable lingering only if it was off, and record that, so uninstall can
+    # restore the previous state rather than switching off something the user
+    # relies on for their own units.
+    linger_was_enabled = lingering(user)
+    if not linger_was_enabled:
+        run(["loginctl", "enable-linger", user])
     write(
         str(INSTALLATION),
         json.dumps(
@@ -150,6 +164,7 @@ def install(user: str, data_value: str, state_value: str) -> None:
                 "user": user,
                 "data_dir": str(data),
                 "state_dir": str(state),
+                "linger_enabled_by_paddock": not linger_was_enabled,
             },
             sort_keys=True,
         ) + "\n",
@@ -176,6 +191,16 @@ def uninstall(user: str, data_value: str, state_value: str) -> None:
     run(["nmcli", "connection", "delete", "paddock-dns"], check=False)
     run(["trust", "anchor", "--remove", str(ca)], check=False)
     run(["certutil", "-D", "-d", f"sql:{home / '.pki/nssdb'}", "-n", "Paddock Local CA"], user=user, check=False)
+    # Only undo lingering if Paddock turned it on. An installation record from
+    # before this field existed says nothing either way, so leave it alone
+    # rather than switching off something the user's own units depend on.
+    if INSTALLATION.is_file():
+        try:
+            record = json.loads(INSTALLATION.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            record = {}
+        if record.get("linger_enabled_by_paddock") is True:
+            run(["loginctl", "disable-linger", user], check=False)
     for path in OWNED:
         Path(path).unlink(missing_ok=True)
     run(["systemctl", "daemon-reload"])

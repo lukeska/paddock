@@ -15,6 +15,7 @@ from .artifacts import ArtifactManifest
 from .php_runtime import RuntimeInstaller
 from .projects import write_project_selection
 from .runtimes import RuntimeRegistry
+from .services import ServiceManager
 from .state import StateError, StateStore
 from .sites import SiteManager
 from .tls import SecurityManager
@@ -41,6 +42,14 @@ OVERVIEW: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("php use VERSION", "Select the PHP version for this project"),
         ("php -- ARGS", "Run PHP with the version selected here"),
         ("composer -- ARGS", "Run Composer with the version selected here"),
+    )),
+    ("Supporting services", (
+        ("services", "List configured services and their state"),
+        ("service add NAME", "Configure a service, e.g. redis"),
+        ("service start NAME", "Start a configured service"),
+        ("service stop NAME", "Stop a configured service"),
+        ("service logs NAME", "Show one service's journal"),
+        ("service remove NAME", "Forget a service; data is kept unless asked"),
     )),
     ("Services", (
         ("status", "Report whether the Paddock services are running"),
@@ -156,6 +165,23 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
     )
     for action in ("start", "stop", "restart"):
         command(action, f"{action.capitalize()} the Paddock services (paddock.target).")
+    command("services", "List configured supporting services and their state.")
+    service = command(
+        "service",
+        "Configure and control a supporting service.",
+        epilog="Supported services: redis. Data outlives `remove` unless "
+               "--delete-data is given.",
+    )
+    service.add_argument(
+        "action", choices=("add", "start", "stop", "restart", "logs", "remove")
+    )
+    service.add_argument("name", help="service name, e.g. redis")
+    service.add_argument("--image", help="override the container image")
+    service.add_argument("--port", type=int, help="override the published loopback port")
+    service.add_argument("--follow", action="store_true", help="logs: keep printing new entries")
+    service.add_argument(
+        "--delete-data", action="store_true", help="remove: also delete the data volume"
+    )
     logs = command("logs", "Show the journal for the Caddy, PHP-FPM, and DNS services.")
     logs.add_argument("--follow", action="store_true", help="keep printing new entries")
     setup = command(
@@ -245,6 +271,34 @@ def run(argv: list[str] | None = None) -> int:
     if arguments.command == "unsecure":
         site = security.unsecure(arguments.name, Path.cwd())
         print(f"Unsecured http://{site.name}.test")
+    services = ServiceManager(store)
+    if arguments.command == "services":
+        for service in services.list():
+            print(f"{service.name}\t{services.state_of(service)}\t{service.address}\t{service.image}")
+        return 0
+    if arguments.command == "service":
+        if arguments.action == "add":
+            service = services.configure(arguments.name, arguments.image, arguments.port)
+            print(f"Configured {service.name} on {service.address} using {service.image}")
+            print(f'Start it with "paddock service start {service.name}"')
+            return 0
+        if arguments.action == "logs":
+            return services.logs(arguments.name, arguments.follow)
+        if arguments.action == "remove":
+            service = services.remove(arguments.name, delete_data=arguments.delete_data)
+            kept = "and its data volume was deleted" if arguments.delete_data else (
+                f"data volume {service.volume} was kept"
+            )
+            print(f"Removed {service.name}; {kept}")
+            return 0
+        # Re-project before starting so an edited image or port takes effect
+        # and a missing file cannot leave the unit inert via ConditionPathExists.
+        if arguments.action in {"start", "restart"}:
+            services.project(services.require(arguments.name))
+        services.control(arguments.action, arguments.name)
+        service = services.require(arguments.name)
+        print(f"{arguments.action.capitalize()}ed {service.name} on {service.address}")
+        return 0
     if arguments.command == "doctor":
         checks = doctor(store)
         for check in checks:

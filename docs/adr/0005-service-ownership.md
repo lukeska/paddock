@@ -137,6 +137,32 @@ reads what it serves.
 `UNIT_VERSION` moves to 2 so an upgrade detects an installed pre-fix unit; a
 test pins the version and template digest together.
 
+## Amendment: supporting services use the user manager
+
+Dated 2026-08-20. This ADR chose system units partly because "enabling linger
+for Paddock would also keep unrelated enabled user units alive". That reasoning
+still holds for the web stack and is narrowed, not reversed, here.
+
+Supporting services introduced by ADR 0010 run as rootless Podman containers,
+and rootless containers have no good home in a system unit: they need
+`XDG_RUNTIME_DIR`, which is the `/run/user/<uid>` coupling that caused the
+`226/NAMESPACE` boot failure recorded in ADR 0006's amendment. A rootful system
+unit avoids that but requires a root-owned unit to read a user-written config,
+which needs a privileged argument-building helper to be safe.
+
+So DNS, Caddy, and PHP-FPM stay system units, and services are user units with
+lingering enabled. The objection to lingering was that Paddock would impose it
+as a side effect; the answer is disclosure rather than avoidance. `paddock
+setup` already prints its privileged changes and waits for confirmation, so
+lingering is one more approved line in that list, and uninstall reverses it
+only when Paddock was the one that enabled it.
+
+The concern about implicit boot ordering does not apply to this split. Ordering
+matters between interdependent processes, and there is no dependency to order:
+Caddy never needs Redis, and PHP connects at request time, so a service that is
+slow or absent produces an application error rather than a broken stack. Both
+managers still start at boot without a login session.
+
 ## Consequences
 
 - Sites are available after boot without enabling user linger.

@@ -24,6 +24,10 @@ def default_sites() -> dict[str, Any]:
     return {"schema_version": SCHEMA_VERSION, "sites": {}}
 
 
+def default_services() -> dict[str, Any]:
+    return {"schema_version": SCHEMA_VERSION, "services": {}}
+
+
 def _object(value: Any, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise SchemaError(f"{label} must be an object")
@@ -98,15 +102,41 @@ def validate_sites(raw: Any) -> dict[str, Any]:
     return value
 
 
+def validate_services(raw: Any) -> dict[str, Any]:
+    value = _object(raw, "service registry")
+    _exact_keys(value, {"schema_version", "services"}, "service registry")
+    _version(value, "service registry")
+    services = _object(value["services"], "services")
+    for name, record_raw in services.items():
+        if not isinstance(name, str) or not name or name != name.lower():
+            raise SchemaError("service names must be non-empty lowercase strings")
+        record = _object(record_raw, f"service {name}")
+        _exact_keys(record, {"name", "image", "port", "volume"}, f"service {name}")
+        if record["name"] != name:
+            raise SchemaError(f"service {name} has a mismatched name field")
+        for field in ("image", "volume"):
+            if not isinstance(record[field], str) or not record[field]:
+                raise SchemaError(f"service {name}.{field} must be a non-empty string")
+        # A bool is an int in Python, and True would validate as port 1.
+        port = record["port"]
+        if isinstance(port, bool) or not isinstance(port, int):
+            raise SchemaError(f"service {name}.port must be an integer")
+        if not 1 <= port <= 65535:
+            raise SchemaError(f"service {name}.port must be between 1 and 65535")
+    return value
+
+
 VALIDATORS: dict[str, Callable[[Any], dict[str, Any]]] = {
     "settings": validate_settings,
     "runtimes": validate_runtimes,
     "sites": validate_sites,
+    "services": validate_services,
 }
 
 DEFAULTS: dict[str, Callable[[], dict[str, Any]]] = {
     "settings": default_settings,
     "runtimes": default_runtimes,
     "sites": default_sites,
+    "services": default_services,
 }
 

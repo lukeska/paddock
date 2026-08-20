@@ -20,7 +20,7 @@ class StateStore:
     def path_for(self, record: str) -> Path:
         if record == "runtimes":
             return self.paths.data / "runtimes.json"
-        if record in {"settings", "sites"}:
+        if record in {"settings", "sites", "services"}:
             return self.paths.config / f"{record}.json"
         raise StateError(f"unknown state record: {record}")
 

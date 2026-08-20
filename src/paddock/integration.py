@@ -7,6 +7,7 @@ from typing import Callable
 
 from .caddy import CaddyProjector
 from .php_runtime import RuntimeInstaller
+from .services import ServiceManager
 from .state import StateStore
 
 
@@ -26,6 +27,9 @@ INSTALL_CHANGES = (
     "trust the Paddock public CA in system and current-user NSS stores",
     "allow the desktop user to manage only Paddock systemd units",
     "enable and start paddock.target at boot",
+    "enable lingering for the desktop user, so supporting services start at "
+    "boot and survive logout; this also keeps your other enabled user units "
+    "running after logout",
 )
 
 REMOVE_CHANGES = (
@@ -33,6 +37,7 @@ REMOVE_CHANGES = (
     "remove the Paddock NetworkManager connection and systemd units",
     "remove only the matching Paddock CA trust entries",
     "remove the Paddock-specific policy rule and DNS configuration",
+    "disable lingering again, but only if Paddock was the one that enabled it",
     "preserve projects, configuration, runtimes, logs, cache, and private CA",
 )
 
@@ -59,6 +64,7 @@ class Integration:
         projector.validate(candidate)
         projector.write(candidate)
         RuntimeInstaller(self.store, self.runner).reproject()
+        ServiceManager(self.store, self.runner).reproject()
         self._ensure_ca()
 
     def install(self) -> None:

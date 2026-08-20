@@ -8,6 +8,7 @@ from typing import Callable
 
 from .caddy import CaddyProjector
 from .runtimes import RuntimeRegistry
+from .services import ENGINE, ENGINE_HINT, ServiceManager
 from .state import StateError, StateStore
 
 
@@ -26,7 +27,7 @@ def doctor(store: StateStore, runner: Runner = subprocess.run) -> list[Check]:
         Check(command, shutil.which(command) is not None, shutil.which(command) or "not found")
         for command in ("caddy", "dnsmasq", "mkcert")
     ]
-    for record in ("settings", "runtimes", "sites"):
+    for record in ("settings", "runtimes", "sites", "services"):
         try:
             store.read(record)
             checks.append(Check(f"state:{record}", True, str(store.path_for(record))))
@@ -47,6 +48,39 @@ def doctor(store: StateStore, runner: Runner = subprocess.run) -> list[Check]:
     for name, site in sites.items():
         public = Path(site["root"]) / "public"
         checks.append(Check(f"site:{name}", public.is_dir(), str(public)))
+    # Only report on the container engine once a service actually wants it,
+    # so a user who never configures one sees no failure for a missing podman.
+    manager = ServiceManager(store, runner)
+    try:
+        configured = manager.list()
+    except StateError as error:
+        configured = []
+        checks.append(Check("services", False, str(error)))
+    if configured:
+        engine = shutil.which(ENGINE)
+        checks.append(Check(ENGINE, engine is not None, engine or f"not found: {ENGINE_HINT}"))
+        # Without lingering the user manager stops at logout, so a service
+        # that looks healthy now would not return after a reboot.
+        lingering = manager.lingering()
+        checks.append(
+            Check(
+                "services:linger",
+                lingering,
+                "enabled" if lingering else
+                "disabled; services stop at logout. Re-run paddock setup",
+            )
+        )
+    for service in configured:
+        state = manager.state_of(service)
+        checks.append(
+            Check(
+                f"service:{service.name}",
+                state == "active",
+                f"{state} on {service.address}" if state != "active" else service.address,
+            )
+        )
+        unit = manager.unit_path(service.name)
+        checks.append(Check(f"service:{service.name}:unit", unit.is_file(), str(unit)))
     caddy = CaddyProjector(store.paths, runner)
     if caddy.path.exists():
         try:
