@@ -39,6 +39,9 @@ jobs:
           python-version: "3.13"
 
       - name: Install build dependencies
+        # A stalled Ubuntu mirror once hung this step for nearly two hours
+        # until the job timeout. Fail fast instead; re-dispatch is cheap.
+        timeout-minutes: 10
         run: |
           sudo apt-get update
           sudo apt-get install --yes cmake gperf jq re2c
@@ -46,6 +49,13 @@ jobs:
       - name: Build and probe runtimes
         env:
           SOURCE_DATE_EPOCH: "1786924800"
+          # The builder resolves dependency versions through the GitHub API.
+          # Unauthenticated, one runtime's ~46 lookups nearly exhaust the
+          # per-IP quota, so `runtime=all` always failed on the second
+          # runtime with `curl (22) 403`. This is the remedy upstream
+          # documents. The automatic per-run token is not key material and
+          # grants no more than the job's existing contents: read.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./release/php/build.sh "${{ inputs.runtime }}"
 
       - name: Verify release bundle

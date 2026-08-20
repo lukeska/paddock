@@ -15,9 +15,18 @@ gh workflow run runtime-release.yml --repo lukeska/paddock --ref main \
   --field runtime=8.5
 ```
 
-Uncached, a single runtime takes roughly 30 minutes. The step that installs
-apt dependencies has no retry, so a stalled Ubuntu mirror can hang the job
-until the 180-minute timeout; cancel and re-dispatch rather than waiting.
+Uncached, a single runtime takes roughly 30 minutes; `runtime=all` builds the
+two sequentially in one job, so budget about an hour.
+
+Two failure modes seen in practice, both environmental:
+
+- The apt step can stall on an Ubuntu mirror. It is now bounded to 10 minutes,
+  so it fails fast; re-dispatch.
+- The builder resolves dependency versions through the GitHub API. The step
+  passes `GITHUB_TOKEN` for this reason: unauthenticated, `runtime=all`
+  exhausted the per-IP quota partway through the second runtime and failed
+  with `curl (22) 403`. If 403s reappear, check the token is still being
+  passed before suspecting the mirrors.
 
 ## 2. Verify the candidate before it is published
 
