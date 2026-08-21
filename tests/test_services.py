@@ -10,6 +10,7 @@ tests replaced its attack coverage with the properties that still matter.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -261,13 +262,34 @@ class LingerTests(ServiceFixture, unittest.TestCase):
 
     def test_lingering_is_read_from_loginctl(self) -> None:
         manager = ServiceManager(
-            self.store, recording_runner([], out="yes"), which=lambda _: "/usr/bin/podman"
+            self.store, recording_runner(self.calls, out="yes"),
+            which=lambda _: "/usr/bin/podman",
         )
         self.assertTrue(manager.lingering())
 
     def test_a_disabled_linger_is_reported_as_such(self) -> None:
         manager = ServiceManager(
             self.store, recording_runner([], out="no"), which=lambda _: "/usr/bin/podman"
+        )
+        self.assertFalse(manager.lingering())
+
+    def test_the_query_names_a_user(self) -> None:
+        # `loginctl show-user --property=Linger --value` with no user exits 0
+        # and prints nothing, so an earlier version reported every machine as
+        # not lingering. Mocking stdout could not catch that; only the emitted
+        # command can.
+        manager = ServiceManager(
+            self.store, recording_runner(self.calls, out="yes"),
+            which=lambda _: "/usr/bin/podman",
+        )
+        manager.lingering()
+        command = self.calls[-1]
+        self.assertEqual(["loginctl", "show-user"], command[:2])
+        self.assertEqual(str(os.getuid()), command[2])
+
+    def test_an_empty_answer_is_not_read_as_enabled(self) -> None:
+        manager = ServiceManager(
+            self.store, recording_runner([], out=""), which=lambda _: "/usr/bin/podman"
         )
         self.assertFalse(manager.lingering())
 

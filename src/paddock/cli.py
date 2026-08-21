@@ -23,6 +23,9 @@ from .tls import SecurityManager
 
 SUMMARY = "Serve Laravel projects on .test domains with managed PHP runtimes."
 
+# `"stop".capitalize() + "ed"` spells "Stoped", so the past tense is spelled out.
+ACTION_DONE = {"start": "Started", "stop": "Stopped", "restart": "Restarted"}
+
 # Grouped command list rendered by `paddock help` and `paddock --help`.
 # argparse would otherwise emit one flat alphabetical block, and it cannot
 # describe `php list`/`php use` at all, because `php` forwards everything
@@ -297,7 +300,7 @@ def run(argv: list[str] | None = None) -> int:
             services.project(services.require(arguments.name))
         services.control(arguments.action, arguments.name)
         service = services.require(arguments.name)
-        print(f"{arguments.action.capitalize()}ed {service.name} on {service.address}")
+        print(f"{ACTION_DONE[arguments.action]} {service.name} on {service.address}")
         return 0
     if arguments.command == "doctor":
         checks = doctor(store)

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -253,9 +254,14 @@ class ServiceManager:
 
         Without this a service stops at logout and does not return at boot,
         which is the whole reason `paddock setup` enables it.
+
+        The uid is required. `loginctl show-user --property=Linger --value`
+        with no user exits 0 and prints nothing, so omitting it reported every
+        machine as not lingering. The uid is used rather than `$USER`, which a
+        sudo or cron context can disagree with.
         """
         result = self.runner(
-            ["loginctl", "show-user", "--property=Linger", "--value"],
+            ["loginctl", "show-user", str(os.getuid()), "--property=Linger", "--value"],
             text=True, capture_output=True, check=False,
         )
         return result.stdout.strip() == "yes"

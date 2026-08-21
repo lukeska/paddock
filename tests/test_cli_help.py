@@ -106,6 +106,31 @@ class HelpOutputTests(unittest.TestCase):
         self.assertIn("3", commands["status"].epilog or "")
 
 
+class ServiceMessageTests(unittest.TestCase):
+    """`"stop".capitalize() + "ed"` spells "Stoped"."""
+
+    def test_each_action_has_a_real_past_tense(self) -> None:
+        commands = cli.build()[1]
+        actions = commands["service"]._actions
+        choices = next(a.choices for a in actions if a.dest == "action")
+        for action in ("start", "stop", "restart"):
+            self.assertIn(action, choices)
+        self.assertEqual("Stopped", cli.ACTION_DONE["stop"])
+        self.assertEqual("Started", cli.ACTION_DONE["start"])
+        self.assertEqual("Restarted", cli.ACTION_DONE["restart"])
+
+    def test_every_controllable_action_can_be_reported(self) -> None:
+        # A new action without a past tense would raise KeyError at runtime.
+        commands = cli.build()[1]
+        choices = next(
+            a.choices for a in commands["service"]._actions if a.dest == "action"
+        )
+        for action in choices:
+            if action in {"add", "logs", "remove"}:
+                continue
+            self.assertIn(action, cli.ACTION_DONE, action)
+
+
 class HelpWithoutStateTests(unittest.TestCase):
     """Help must answer when the state directories cannot be created.
 
