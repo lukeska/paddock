@@ -23,6 +23,7 @@ from paddock.paths import Paths
 from paddock.state import StateStore
 
 from . import APPLICATION_ID
+from .components import PaddockHero, PaddockSection
 from .redis_form import (
     describe_apply_failure,
     describe_lifecycle_failure,
@@ -52,6 +53,7 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.theme.start()
 
         self.toast_overlay = Adw.ToastOverlay()
+        self.toast_overlay.add_css_class("paddock-shell")
         self.set_content(self.toast_overlay)
         self.split_view = Adw.NavigationSplitView()
         self.toast_overlay.set_child(self.split_view)
@@ -133,20 +135,38 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.redis_empty.set_child(self.redis_add)
         self.redis_view.add_named(self.redis_empty, "status")
 
-        page = Adw.PreferencesPage()
-        status_group = Adw.PreferencesGroup(title="Redis")
-        self.redis_state_row = Adw.ActionRow(
-            title="Loading…", subtitle="Checking the user systemd manager"
+        page = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
         )
-        self.redis_state_icon = Gtk.Image.new_from_icon_name("content-loading-symbolic")
-        self.redis_state_row.add_prefix(self.redis_state_icon)
-        self.redis_state_label = Gtk.Label(label="Loading")
-        self.redis_state_label.add_css_class("pill")
-        self.redis_state_row.add_suffix(self.redis_state_label)
-        status_group.add(self.redis_state_row)
-        page.add(status_group)
+        clamp = Adw.Clamp(maximum_size=760, tightening_threshold=600)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        content.add_css_class("paddock-page")
+        clamp.set_child(content)
+        page.set_child(clamp)
 
-        details = Adw.PreferencesGroup(title="Configuration")
+        self.redis_hero = PaddockHero(
+            "content-loading-symbolic", "Redis", "Shared service · loopback only"
+        )
+        content.append(self.redis_hero)
+
+        hero_actions = self.redis_hero.actions
+        self.redis_start = Gtk.Button(label="Start")
+        self.redis_start.add_css_class("suggested-action")
+        self.redis_start.set_tooltip_text("Start Redis and enable it at boot")
+        self.redis_start.connect("clicked", lambda _button: self._run_redis_action("start"))
+        self.redis_stop = Gtk.Button(label="Stop")
+        self.redis_stop.set_tooltip_text("Stop Redis temporarily without disabling it")
+        self.redis_stop.connect("clicked", lambda _button: self._run_redis_action("stop"))
+        self.redis_restart = Gtk.Button(label="Restart")
+        self.redis_restart.set_tooltip_text("Restart Redis and wait until it is ready")
+        self.redis_restart.connect(
+            "clicked", lambda _button: self._run_redis_action("restart")
+        )
+        for button in (self.redis_start, self.redis_stop, self.redis_restart):
+            hero_actions.append(button)
+
+        details = PaddockSection("Configuration")
         self.redis_address_row = Adw.ActionRow(title="Address")
         self.redis_container_port_row = Adw.ActionRow(title="Container port")
         self.redis_image_row = Adw.ActionRow(title="Container image")
@@ -163,9 +183,9 @@ class PaddockWindow(Adw.ApplicationWindow):
         ):
             row.set_subtitle_selectable(True)
             details.add(row)
-        page.add(details)
+        content.append(details)
 
-        actions = Adw.PreferencesGroup(title="Actions")
+        actions = PaddockSection("Manage")
         configuration = Adw.ActionRow(
             title="Redis configuration",
             subtitle="Change the pinned container image or loopback host port.",
@@ -174,28 +194,6 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.redis_configure.connect("clicked", self._open_redis_editor)
         configuration.add_suffix(self.redis_configure)
         actions.add(configuration)
-
-        lifecycle = Adw.ActionRow(
-            title="Lifecycle",
-            subtitle="Stop is temporary; an enabled Redis service returns after login or reboot.",
-        )
-        buttons = Gtk.Box(spacing=6)
-        self.redis_start = Gtk.Button(label="Start")
-        self.redis_start.add_css_class("suggested-action")
-        self.redis_start.set_tooltip_text("Start Redis and enable it at boot")
-        self.redis_start.connect("clicked", lambda _button: self._run_redis_action("start"))
-        self.redis_stop = Gtk.Button(label="Stop")
-        self.redis_stop.set_tooltip_text("Stop Redis temporarily without disabling it")
-        self.redis_stop.connect("clicked", lambda _button: self._run_redis_action("stop"))
-        self.redis_restart = Gtk.Button(label="Restart")
-        self.redis_restart.set_tooltip_text("Restart Redis and wait until it is ready")
-        self.redis_restart.connect(
-            "clicked", lambda _button: self._run_redis_action("restart")
-        )
-        for button in (self.redis_start, self.redis_stop, self.redis_restart):
-            buttons.append(button)
-        lifecycle.add_suffix(buttons)
-        actions.add(lifecycle)
 
         environment = Adw.ActionRow(
             title="Laravel environment",
@@ -215,7 +213,9 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.redis_logs_button.connect("clicked", self._load_redis_logs)
         logs.add_suffix(self.redis_logs_button)
         actions.add(logs)
+        content.append(actions)
 
+        danger = PaddockSection("Danger zone", danger=True)
         removal = Adw.ActionRow(
             title="Remove Redis",
             subtitle="Remove the service while preserving its data, or explicitly delete both.",
@@ -229,8 +229,8 @@ class PaddockWindow(Adw.ApplicationWindow):
         removal_buttons.append(self.redis_remove)
         removal_buttons.append(self.redis_delete)
         removal.add_suffix(removal_buttons)
-        actions.add(removal)
-        page.add(actions)
+        danger.add(removal)
+        content.append(danger)
 
         self.redis_view.add_named(page, "configured")
         return self.redis_view
@@ -271,14 +271,15 @@ class PaddockWindow(Adw.ApplicationWindow):
             return
 
         self.redis_view.set_visible_child_name("configured")
-        self.redis_state_row.set_title(presentation.title)
-        self.redis_state_row.set_subtitle(presentation.description)
-        self.redis_state_icon.set_from_icon_name(presentation.icon_name)
-        self.redis_state_label.set_label(presentation.title)
-        for tone in ("success", "warning", "error"):
-            self.redis_state_label.remove_css_class(tone)
-        if presentation.tone:
-            self.redis_state_label.add_css_class(presentation.tone)
+        self.redis_hero.set_presentation(
+            presentation.title,
+            presentation.description,
+            presentation.icon_name,
+            presentation.tone,
+        )
+        self.redis_hero.meta.set_label(
+            f"SHARED SERVICE · {snapshot.address} · LOOPBACK ONLY"
+        )
         self.redis_address_row.set_subtitle(snapshot.address or "Unavailable")
         self.redis_container_port_row.set_subtitle(str(snapshot.container_port))
         self.redis_image_row.set_subtitle(snapshot.image or "Unavailable")

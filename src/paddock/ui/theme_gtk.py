@@ -13,6 +13,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from .theme import OmarchyPalette, ThemeError, load_palette, palette_css
+from .components import design_css
 
 
 class OmarchyThemeAdapter:
@@ -54,7 +55,7 @@ class OmarchyThemeAdapter:
             self._report(str(error))
             return False
 
-        self.provider.load_from_string(palette_css(palette))
+        self.provider.load_from_string(palette_css(palette) + design_css())
         Gtk.StyleContext.add_provider_for_display(
             self.display,
             self.provider,
@@ -96,4 +97,3 @@ class OmarchyThemeAdapter:
     def _report(self, message: str) -> None:
         if self.on_error is not None:
             self.on_error(message)
-
