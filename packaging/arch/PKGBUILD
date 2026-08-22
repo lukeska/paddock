@@ -9,7 +9,7 @@ depends=('python' 'caddy' 'dnsmasq' 'mkcert' 'nss' 'p11-kit' 'networkmanager' 'p
          'podman')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz")
-sha256sums=('67aff1809c20a70d8b9b9143d5f344df43339ba96b52f578b8d905e43f3c7085')
+sha256sums=('acf02895fc9b8ea48b7279cf0f0688d8b5e27ccef933032f8881e71ffcf22d3b')
 
 check() {
   cd "$srcdir/$pkgname-$pkgver"
