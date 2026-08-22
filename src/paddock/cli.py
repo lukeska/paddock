@@ -183,8 +183,9 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
     service = command(
         "service",
         "Configure and control a supporting service.",
-        epilog="Supported services: redis. Data outlives `remove` unless "
-               "--delete-data is given.",
+        epilog="Supported services: mysql, postgres, redis. Data outlives "
+               "`remove` unless --delete-data is given. Pin a different "
+               "version with --image, e.g. --image docker.io/library/postgres:16.",
     )
     service.add_argument(
         "action", choices=("add", "start", "stop", "restart", "logs", "remove")
@@ -294,7 +295,14 @@ def run(argv: list[str] | None = None) -> int:
         if arguments.action == "add":
             service = services.configure(arguments.name, arguments.image, arguments.port)
             print(f"Configured {service.name} on {service.address} using {service.image}")
-            print(f'Start it with "paddock service start {service.name}"')
+            settings = services.connection_lines(service.name)
+            if settings:
+                # A database nobody can connect to is not much use, and the
+                # .env is the user's file to edit.
+                print("\nAdd to your .env:")
+                for line in settings:
+                    print(f"  {line}")
+            print(f'\nStart it with "paddock service start {service.name}"')
             return 0
         if arguments.action == "logs":
             return services.logs(arguments.name, arguments.follow)

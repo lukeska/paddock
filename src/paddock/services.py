@@ -41,6 +41,12 @@ Runner = Callable[..., subprocess.CompletedProcess[str]]
 ENGINE = "podman"
 ENGINE_HINT = f"sudo pacman -S --needed {ENGINE}"
 
+# How long to wait for a service to accept connections before giving up. A
+# first Postgres or MySQL start initialises its data directory, which is slow
+# on cold storage; systemd fails the unit if this elapses, which is the honest
+# outcome rather than reporting a database that is not listening.
+READY_TIMEOUT = 90
+
 
 @dataclass(frozen=True)
 class Catalog:
@@ -51,12 +57,27 @@ class Catalog:
     container_port: int
     data: str
     volume: str
+    # Container environment. Held here rather than in state on purpose: these
+    # are facts about an image, not user preferences, and a user-writable
+    # environment would be a way to reconfigure a container by editing JSON.
+    environment: tuple[tuple[str, str], ...] = ()
+    # What a stock Laravel `.env` should say to reach it, printed on `add`.
+    connection: tuple[tuple[str, str], ...] = ()
+    # Argv run inside the container to decide readiness. It must speak the
+    # service's own protocol over TCP; see `render` for why nothing simpler
+    # works.
+    ready: tuple[str, ...] = ()
 
 
 # Images are registry-qualified and tag-pinned: a bare `redis:8` resolves
 # through the caller's registry search list, which is not reproducible. Every
 # published port is above 1024, so rootless podman never needs a privileged
 # bind.
+#
+# The databases run without a password, which is the local-development
+# convention Herd, Valet and DBngin all follow, and is what an unedited
+# Laravel `.env` expects. It is defensible only because every port is
+# published on loopback alone; none of these is reachable from the network.
 CATALOG: dict[str, Catalog] = {
     "redis": Catalog(
         image="docker.io/library/redis:8",
@@ -64,6 +85,49 @@ CATALOG: dict[str, Catalog] = {
         container_port=6379,
         data="/data",
         volume="paddock-redis",
+        connection=(("REDIS_HOST", "127.0.0.1"), ("REDIS_PORT", "6379")),
+        ready=("redis-cli", "-h", "127.0.0.1", "ping"),
+    ),
+    "mysql": Catalog(
+        image="docker.io/library/mysql:8",
+        port=3306,
+        container_port=3306,
+        data="/var/lib/mysql",
+        volume="paddock-mysql",
+        environment=(
+            ("MYSQL_ALLOW_EMPTY_PASSWORD", "yes"),
+            ("MYSQL_DATABASE", "laravel"),
+        ),
+        connection=(
+            ("DB_CONNECTION", "mysql"), ("DB_HOST", "127.0.0.1"),
+            ("DB_PORT", "3306"), ("DB_DATABASE", "laravel"),
+            ("DB_USERNAME", "root"), ("DB_PASSWORD", ""),
+        ),
+        # Over TCP deliberately: the entrypoint runs a temporary server during
+        # first-run initialisation with networking disabled, so a socket ping
+        # would report ready while the database is still being built.
+        ready=("mysqladmin", "ping", "-h", "127.0.0.1", "--silent"),
+    ),
+    "postgres": Catalog(
+        image="docker.io/library/postgres:17",
+        port=5432,
+        container_port=5432,
+        data="/var/lib/postgresql/data",
+        volume="paddock-postgres",
+        environment=(
+            # The image refuses to start without one of these. `trust` is the
+            # password-free equivalent, and matches the MySQL entry above.
+            ("POSTGRES_HOST_AUTH_METHOD", "trust"),
+            ("POSTGRES_USER", "postgres"),
+            ("POSTGRES_DB", "laravel"),
+        ),
+        connection=(
+            ("DB_CONNECTION", "pgsql"), ("DB_HOST", "127.0.0.1"),
+            ("DB_PORT", "5432"), ("DB_DATABASE", "laravel"),
+            ("DB_USERNAME", "postgres"), ("DB_PASSWORD", ""),
+        ),
+        # Same reasoning as MySQL: initdb's temporary server is socket-only.
+        ready=("pg_isready", "-h", "127.0.0.1", "-U", "postgres"),
     ),
 }
 
@@ -120,6 +184,14 @@ class ServiceManager:
             )
         return found
 
+    def connection_lines(self, name: str) -> list[str]:
+        """The `.env` a stock Laravel needs to reach this service.
+
+        Printed rather than written. The file is the user's, and Paddock has
+        no way to know which of several connections a project wants.
+        """
+        return [f"{key}={value}" for key, value in self.known(name).connection]
+
     def known(self, name: str) -> Catalog:
         try:
             return CATALOG[name]
@@ -153,8 +225,26 @@ class ServiceManager:
         blocking the next start. The image is placed after `--` so a reference
         shaped like a flag cannot be read as one. `WantedBy=default.target`
         is what makes a lingering user manager start this at boot.
+
+        `--sdnotify=conmon` only reports that the container is running. A
+        database is not usable at that moment: Postgres and MySQL initialise a
+        data directory on first start and accept nothing for several seconds,
+        so `paddock service start postgres && php artisan migrate` fails.
+        `ExecStartPost=` therefore blocks until the service answers, which is
+        the readiness discipline ADR 0005 requires of PHP-FPM.
+
+        The probe runs *inside* the container and speaks the service's own
+        protocol. Connecting to the published port from the host does not
+        work: podman binds that port as soon as the container starts, so the
+        connection is accepted by the port forwarder while the database is
+        still initialising. Measured on a cold start, that false signal
+        returned in 0.6s against a Postgres that refused the next query.
         """
         catalog = self.known(service.name)
+        environment = "".join(
+            f"Environment={key}={value}\n" for key, value in catalog.environment
+        )
+        env_flags = "".join(f" --env {key}={value}" for key, value in catalog.environment)
         return (
             "[Unit]\n"
             f"Description=Paddock {service.name}\n"
@@ -162,11 +252,19 @@ class ServiceManager:
             "[Service]\n"
             "Type=notify\n"
             "NotifyAccess=all\n"
+            + environment +
             f"ExecStart=/usr/bin/{ENGINE} run --replace --rm --sdnotify=conmon"
             f" --name {service.container}"
             f" --publish 127.0.0.1:{service.port}:{catalog.container_port}"
             f" --volume {service.volume}:{catalog.data}"
+            f"{env_flags}"
             f" --pull missing -- {service.image}\n"
+            + (
+                f"ExecStartPost=/usr/bin/timeout {READY_TIMEOUT} /bin/sh -c"
+                f" 'until /usr/bin/{ENGINE} exec {service.container}"
+                f" {' '.join(catalog.ready)} >/dev/null 2>&1; do sleep 0.5; done'\n"
+                if catalog.ready else ""
+            ) +
             f"ExecStop=/usr/bin/{ENGINE} stop --ignore {service.container}\n"
             "Restart=on-failure\n"
             "RestartSec=500ms\n"

@@ -105,6 +105,19 @@ configuration already works.
   maintainer accepted this.
 - Image tags, not digests, are pinned. Runtime archives are checksum- and
   attestation-verified; container images are not yet held to that standard.
-- Only Redis is in the catalog. PostgreSQL, MySQL/MariaDB, and the
-  `paddock.yml` reconciliation in the roadmap build on this unit and state
-  record.
+- The catalog now holds Redis, MySQL and PostgreSQL. Adding one needs no
+  privileged action and no new architecture: an entry naming the image, port,
+  data path, environment, connection settings and readiness probe. MariaDB and
+  the `paddock.yml` reconciliation in the roadmap build on the same unit and
+  state record.
+- Databases run without a password, which is the local-development convention
+  Herd, Valet and DBngin follow, and is what an unedited Laravel `.env`
+  expects. It is defensible only because every port is published on loopback
+  alone. `paddock service add` prints the settings rather than writing the
+  `.env`, which stays the user's file.
+- Readiness cannot be measured from the host. Podman binds a published port as
+  soon as the container starts, so the forwarder accepts while the database is
+  still initialising: a cold Postgres reported ready in 0.6s and refused the
+  next query. The probe therefore runs inside the container and speaks the
+  service's protocol over TCP, since both entrypoints run a temporary
+  socket-only server during first-run initialisation.

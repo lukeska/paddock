@@ -65,6 +65,25 @@ class ServiceManagerTests(ServiceFixture, unittest.TestCase):
             self.assertTrue(entry.image.startswith("docker.io/"), name)
             self.assertIn(":", entry.image.rsplit("/", 1)[-1], name)
 
+    def test_the_catalog_covers_the_documented_services(self) -> None:
+        self.assertEqual({"mysql", "postgres", "redis"}, set(CATALOG))
+
+    def test_every_database_declares_how_to_connect_to_it(self) -> None:
+        # A database nobody can reach is not a feature.
+        for name in ("mysql", "postgres"):
+            settings = dict(CATALOG[name].connection)
+            self.assertEqual("127.0.0.1", settings["DB_HOST"], name)
+            self.assertEqual(str(CATALOG[name].port), settings["DB_PORT"], name)
+            self.assertIn("DB_USERNAME", settings, name)
+            self.assertIn("DB_DATABASE", settings, name)
+
+    def test_each_service_owns_a_distinct_port_and_volume(self) -> None:
+        # Two services sharing either would collide silently.
+        ports = [entry.port for entry in CATALOG.values()]
+        volumes = [entry.volume for entry in CATALOG.values()]
+        self.assertEqual(len(ports), len(set(ports)))
+        self.assertEqual(len(volumes), len(set(volumes)))
+
     def test_every_catalog_port_is_unprivileged(self) -> None:
         # Rootless podman cannot bind below 1024.
         for name, entry in CATALOG.items():
@@ -188,6 +207,56 @@ class ServiceManagerTests(ServiceFixture, unittest.TestCase):
         # systemd would otherwise keep serving the previous generation.
         self.manager.configure("redis")
         self.assertIn(["systemctl", "--user", "daemon-reload"], self.calls)
+
+
+class DatabaseUnitTests(ServiceFixture, unittest.TestCase):
+    """Databases need more from the unit than Redis does."""
+
+    def render(self, name: str) -> str:
+        return self.manager.render(self.manager.configure(name))
+
+    def test_the_image_environment_is_passed_to_the_container(self) -> None:
+        # Both images refuse to start without an auth decision.
+        self.assertIn("--env MYSQL_ALLOW_EMPTY_PASSWORD=yes", self.render("mysql"))
+        self.assertIn("--env POSTGRES_HOST_AUTH_METHOD=trust", self.render("postgres"))
+
+    def test_data_lands_where_the_image_expects_it(self) -> None:
+        self.assertIn("--volume paddock-mysql:/var/lib/mysql", self.render("mysql"))
+        self.assertIn(
+            "--volume paddock-postgres:/var/lib/postgresql/data", self.render("postgres")
+        )
+
+    def test_the_unit_waits_until_the_service_answers(self) -> None:
+        # A database is not usable when the container starts: it initialises a
+        # data directory first. Without this, `start && artisan migrate` fails.
+        for name, probe in (
+            ("mysql", "mysqladmin"), ("postgres", "pg_isready"), ("redis", "redis-cli"),
+        ):
+            unit = self.render(name)
+            self.assertIn("ExecStartPost=", unit, name)
+            self.assertIn(probe, unit, name)
+
+    def test_the_probe_runs_inside_the_container(self) -> None:
+        # Connecting to the published port from the host proves nothing:
+        # podman binds it as soon as the container starts, so the forwarder
+        # accepts while the database is still initialising. Measured at 0.6s
+        # against a Postgres that then refused the query.
+        unit = self.render("postgres")
+        self.assertIn("podman exec paddock-postgres", unit)
+        self.assertNotIn("/dev/tcp/", unit)
+
+    def test_the_probe_speaks_over_tcp_not_a_socket(self) -> None:
+        # Both entrypoints run a temporary socket-only server while building
+        # the data directory, which a socket ping would call ready.
+        for name in ("mysql", "postgres"):
+            self.assertIn("-h 127.0.0.1", self.render(name), name)
+
+    def test_the_wait_is_bounded(self) -> None:
+        # An unbounded wait would hang the user manager on a broken image.
+        self.assertIn("timeout 90", self.render("postgres"))
+
+    def test_redis_carries_no_environment(self) -> None:
+        self.assertNotIn("--env", self.render("redis"))
 
 
 class UnitRenderingTests(ServiceFixture, unittest.TestCase):

@@ -14,8 +14,9 @@ opens a panel with four sections:
 - **Status** — every unit the installation owns, including both PHP-FPM
   masters and the route-only DNS unit.
 - **PHP** — installed minors, their release, and which is the default.
-- **Services** — name, state, and loopback address, plus a warning when
-  lingering is disabled, because those services stop at logout.
+- **Services** — every configured service (Redis, MySQL, PostgreSQL) with its
+  state and loopback address, plus a warning when lingering is disabled,
+  because those services stop at logout.
 - **Sites** — host, PHP minor, whether TLS is on, and a button that opens the
   site in your browser.
 
