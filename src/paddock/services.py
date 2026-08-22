@@ -242,12 +242,19 @@ class ServiceManager:
             detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
             raise ServiceError(f"cannot {action} {name}: {detail}")
 
+    def states_of(self, services: list[Service]) -> dict[str, str]:
+        """One `systemctl` call for every service, not one per service.
+
+        `is-active` accepts many units and answers in the order given, so
+        listing N services costs one fork rather than N.
+        """
+        from .report import active_states
+
+        by_unit = active_states([s.unit for s in services], self.runner, user=True)
+        return {service.name: by_unit.get(service.unit, "unknown") for service in services}
+
     def state_of(self, service: Service) -> str:
-        result = self.runner(
-            ["systemctl", "--user", "is-active", service.unit],
-            text=True, capture_output=True, check=False,
-        )
-        return result.stdout.strip() or result.stderr.strip() or "unknown"
+        return self.states_of([service])[service.name]
 
     def lingering(self) -> bool:
         """Whether the user manager runs without a login session.
@@ -260,10 +267,15 @@ class ServiceManager:
         machine as not lingering. The uid is used rather than `$USER`, which a
         sudo or cron context can disagree with.
         """
-        result = self.runner(
-            ["loginctl", "show-user", str(os.getuid()), "--property=Linger", "--value"],
-            text=True, capture_output=True, check=False,
-        )
+        try:
+            result = self.runner(
+                ["loginctl", "show-user", str(os.getuid()), "--property=Linger", "--value"],
+                text=True, capture_output=True, check=False,
+            )
+        except OSError:
+            # No loginctl means no logind, so nothing lingers. Reporting that
+            # beats letting `doctor` and `report` die on a missing binary.
+            return False
         return result.stdout.strip() == "yes"
 
     def remove(self, name: str, *, delete_data: bool) -> Service:

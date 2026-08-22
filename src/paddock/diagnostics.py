@@ -7,8 +7,10 @@ import subprocess
 from typing import Callable
 
 from .caddy import CaddyProjector
+from .report import active_states, units_for
 from .runtimes import RuntimeRegistry
 from .services import ENGINE, ENGINE_HINT, ServiceManager
+from .sites import SiteManager
 from .state import StateError, StateStore
 
 
@@ -42,12 +44,12 @@ def doctor(store: StateStore, runner: Runner = subprocess.run) -> list[Check]:
         executable = runtime.path.is_file() and runtime.path.stat().st_mode & 0o111 != 0
         checks.append(Check(f"php:{runtime.version}", executable, str(runtime.path)))
     try:
-        sites = store.read("sites")["sites"]
-    except StateError:
-        sites = {}
-    for name, site in sites.items():
-        public = Path(site["root"]) / "public"
-        checks.append(Check(f"site:{name}", public.is_dir(), str(public)))
+        sites = SiteManager(store, CaddyProjector(store.paths, runner)).list()
+    except (StateError, ValueError):
+        sites = []
+    for site in sites:
+        public = site.root / "public"
+        checks.append(Check(f"site:{site.name}", public.is_dir(), str(public)))
     # Only report on the container engine once a service actually wants it,
     # so a user who never configures one sees no failure for a missing podman.
     manager = ServiceManager(store, runner)
@@ -93,20 +95,17 @@ def doctor(store: StateStore, runner: Runner = subprocess.run) -> list[Check]:
     return checks
 
 
-def service_status(runner: Runner = subprocess.run) -> list[Check]:
-    units = (
-        "paddock.target",
-        "paddock-dns.service",
-        "paddock-caddy.service",
-    )
-    checks = []
-    for unit in units:
-        result = runner(
-            ["systemctl", "is-active", unit],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        detail = result.stdout.strip() or result.stderr.strip() or "unknown"
-        checks.append(Check(unit, result.returncode == 0, detail))
-    return checks
+def service_status(store: StateStore, runner: Runner = subprocess.run) -> list[Check]:
+    """Report every unit the installation owns.
+
+    This used to name three units and omit PHP-FPM entirely, so both masters
+    could be dead while `paddock status` printed `active` for everything. The
+    list now comes from `report.units_for`, shared with `paddock report`, and
+    one batched `systemctl` call answers for all of them.
+    """
+    units = units_for(store)
+    states = active_states(units, runner)
+    return [
+        Check(unit, states.get(unit) == "active", states.get(unit, "unknown"))
+        for unit in units
+    ]

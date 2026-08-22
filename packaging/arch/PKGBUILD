@@ -1,6 +1,6 @@
 pkgname=paddock
 pkgver=0.1.0
-pkgrel=13
+pkgrel=14
 pkgdesc='Local Laravel development environment for Omarchy'
 arch=('x86_64' 'aarch64')
 url='https://github.com/lukeska/paddock'

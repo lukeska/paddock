@@ -28,6 +28,10 @@ class FakeCommands:
             Path(command[2]).write_text("certificate", encoding="utf-8")
             Path(command[4]).write_text("private key", encoding="utf-8")
         failed = self.fail_validate and "validate" in command
+        if "is-active" in command:
+            # systemctl answers one line per unit, in the order given.
+            units = command[command.index("is-active") + 1:]
+            return subprocess.CompletedProcess(command, 0, "active\n" * len(units), "")
         return subprocess.CompletedProcess(command, 1 if failed else 0, "active\n", "bad" if failed else "")
 
 
@@ -109,9 +113,16 @@ class TlsDiagnosticTests(unittest.TestCase):
         self.assertTrue(names["site:demo"])
         self.assertTrue(names["caddy:config"])
 
-    def test_status_and_lifecycle_use_fixed_units(self):
-        statuses = service_status(self.fake)
+    def test_status_covers_php_units_and_lifecycle_is_fixed(self):
+        statuses = service_status(self.store, self.fake)
         self.assertTrue(all(status.ok for status in statuses))
+        # The old list named three units and omitted PHP-FPM, so a dead master
+        # was invisible. The registered runtime must appear.
+        self.assertIn("paddock-php@8.4.service", [status.name for status in statuses])
+        self.assertIn("paddock-dns-route.service", [status.name for status in statuses])
+        # One batched call, not one per unit.
+        queries = [call for call in self.fake.calls if "is-active" in call]
+        self.assertEqual(1, len(queries), queries)
         Lifecycle(self.fake).control("restart")
         self.assertIn(["systemctl", "restart", "paddock.target"], self.fake.calls)
         with self.assertRaises(LifecycleError):

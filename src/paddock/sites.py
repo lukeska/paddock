@@ -32,6 +32,25 @@ class SiteManager:
         self.projector = projector
         self.transaction_lock = store.paths.state / "site-transaction.lock"
 
+    def list(self) -> list[Site]:
+        """Every linked site, sorted by name.
+
+        Consumers previously each read `sites.json` themselves, so the site set
+        had no single owner and nothing could present it to a user. Ordering is
+        explicit rather than relying on the file happening to be written with
+        sorted keys.
+        """
+        records = self.store.read("sites")["sites"]
+        return [
+            Site(
+                name=record["name"],
+                root=Path(record["root"]),
+                php=record["php"],
+                secured=record["secured"],
+            )
+            for _, record in sorted(records.items())
+        ]
+
     def link(
         self,
         root: Path,

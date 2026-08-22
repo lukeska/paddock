@@ -287,6 +287,14 @@ class LingerTests(ServiceFixture, unittest.TestCase):
         self.assertEqual(["loginctl", "show-user"], command[:2])
         self.assertEqual(str(os.getuid()), command[2])
 
+    def test_a_missing_loginctl_is_not_fatal(self) -> None:
+        # `doctor` and `report` both call this; neither may die on it.
+        def missing(command, **kwargs):
+            raise FileNotFoundError("loginctl")
+
+        manager = ServiceManager(self.store, missing, which=lambda _: "/usr/bin/podman")
+        self.assertFalse(manager.lingering())
+
     def test_an_empty_answer_is_not_read_as_enabled(self) -> None:
         manager = ServiceManager(
             self.store, recording_runner([], out=""), which=lambda _: "/usr/bin/podman"

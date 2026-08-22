@@ -131,6 +131,43 @@ class ServiceMessageTests(unittest.TestCase):
             self.assertIn(action, cli.ACTION_DONE, action)
 
 
+class ErrorHandlingTests(unittest.TestCase):
+    """Every deliberate failure is one line and exit 78.
+
+    LifecycleError, CaddyError, TlsError, IntegrationError and
+    RuntimeInstallError all subclass RuntimeError and used to escape main() as
+    a traceback, which tells a user nothing and breaks anyone parsing this CLI.
+    """
+
+    def _exit_code_for(self, error: Exception) -> tuple[int, str]:
+        stderr = io.StringIO()
+        with mock.patch.object(cli, "run", side_effect=error), \
+                contextlib.redirect_stderr(stderr):
+            code = cli.main()
+        return code, stderr.getvalue()
+
+    def test_runtime_errors_are_reported_not_raised(self) -> None:
+        from paddock.caddy import CaddyError
+        from paddock.integration import IntegrationError
+        from paddock.lifecycle import LifecycleError
+        from paddock.php_runtime import RuntimeInstallError
+        from paddock.tls import TlsError
+
+        for error_type in (
+            LifecycleError, CaddyError, TlsError, IntegrationError, RuntimeInstallError,
+        ):
+            code, message = self._exit_code_for(error_type("boom"))
+            self.assertEqual(78, code, error_type.__name__)
+            self.assertEqual("paddock: boom\n", message, error_type.__name__)
+
+    def test_an_unexpected_error_still_propagates(self) -> None:
+        # Only anticipated failures are flattened; a genuine bug must not be
+        # disguised as a tidy message.
+        with mock.patch.object(cli, "run", side_effect=KeyError("bug")):
+            with self.assertRaises(KeyError):
+                cli.main()
+
+
 class HelpWithoutStateTests(unittest.TestCase):
     """Help must answer when the state directories cannot be created.
 

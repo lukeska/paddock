@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import sys
 
@@ -14,9 +15,10 @@ from .paths import Paths
 from .artifacts import ArtifactManifest
 from .php_runtime import RuntimeInstaller
 from .projects import write_project_selection
+from .report import build as build_report
 from .runtimes import RuntimeRegistry
 from .services import ServiceManager
-from .state import StateError, StateStore
+from .state import StateStore
 from .sites import SiteManager
 from .tls import SecurityManager
 
@@ -37,6 +39,7 @@ OVERVIEW: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("unlink [NAME]", "Stop serving a linked project"),
         ("secure [NAME]", "Serve a site over locally trusted HTTPS"),
         ("unsecure [NAME]", "Serve a site over plain HTTP again"),
+        ("sites", "List linked sites, their PHP version and URL"),
     )),
     ("PHP", (
         ("php list", "List the installed PHP runtimes"),
@@ -61,6 +64,7 @@ OVERVIEW: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("restart", "Restart the Paddock services"),
         ("logs", "Show the Paddock service journal"),
         ("doctor", "Check the environment and report what to fix"),
+        ("report", "Print one JSON snapshot for scripts and the Omarchy plugin"),
     )),
     ("Installation", (
         ("setup", "Install .test DNS, the local CA, and the systemd units"),
@@ -160,6 +164,13 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
         "doctor",
         "Check runtimes, state, sites, and generated configuration.",
         epilog="Exits 1 if any check fails.",
+    )
+    command("sites", "List linked sites: name, PHP minor, scheme, and root.")
+    command(
+        "report",
+        "Print one JSON snapshot of units, PHP, services, and sites.",
+        epilog="The stable machine interface, carrying its own schema_version. "
+               "Used by the Omarchy plugin; safe to parse in scripts.",
     )
     command(
         "status",
@@ -302,13 +313,21 @@ def run(argv: list[str] | None = None) -> int:
         service = services.require(arguments.name)
         print(f"{ACTION_DONE[arguments.action]} {service.name} on {service.address}")
         return 0
+    if arguments.command == "sites":
+        for site in manager.list():
+            scheme = "https" if site.secured else "http"
+            print(f"{site.name}\t{site.php}\t{scheme}\t{site.root}")
+        return 0
+    if arguments.command == "report":
+        print(json.dumps(build_report(store), indent=2, sort_keys=True))
+        return 0
     if arguments.command == "doctor":
         checks = doctor(store)
         for check in checks:
             print(f"{'PASS' if check.ok else 'FAIL'}\t{check.name}\t{check.detail}")
         return 0 if all(check.ok for check in checks) else 1
     if arguments.command == "status":
-        checks = service_status()
+        checks = service_status(store)
         for check in checks:
             print(f"{'active' if check.ok else 'inactive'}\t{check.name}\t{check.detail}")
         return 0 if all(check.ok for check in checks) else 3
@@ -338,7 +357,11 @@ def run(argv: list[str] | None = None) -> int:
 def main() -> int:
     try:
         return run()
-    except (OSError, StateError, ValueError) as error:
+    # LifecycleError, CaddyError, TlsError, IntegrationError and
+    # RuntimeInstallError all subclass RuntimeError and used to escape as a
+    # traceback, which is hostile to anyone parsing this CLI and tells a user
+    # nothing. Every deliberate failure is one line and exit 78.
+    except (OSError, RuntimeError, ValueError) as error:
         print(f"paddock: {error}", file=sys.stderr)
         return 78
 

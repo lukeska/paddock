@@ -13,6 +13,10 @@ set -uo pipefail
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 fixtures=${PADDOCK_VERIFY_DIR:-$HOME/paddock-verify}
+# Defaults to the installed CLI, which is what should normally be measured.
+# PADDOCK_BIN points it at a working tree so a change can be checked before
+# it is packaged.
+paddock=${PADDOCK_BIN:-paddock}
 failures=0
 
 pass() { printf '\033[32mPASS\033[0m  %-28s %s\n' "$1" "${2:-}"; }
@@ -75,7 +79,7 @@ for site in alpha beta; do
 done
 
 echo "== supporting services =="
-services=$(paddock services 2>/dev/null)
+services=$("$paddock" services 2>/dev/null)
 if [ -z "$services" ]; then
   pass "services" "none configured"
 else
@@ -99,11 +103,49 @@ else
   done <<< "$services"
 fi
 
+echo "== machine contract =="
+# The Omarchy plugin parses this and nothing else, so it has to be valid JSON
+# and it has to agree with the same system the checks above just measured.
+snapshot=$("$paddock" report 2>&1)
+if printf '%s' "$snapshot" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
+  pass "report:json" "parses"
+  read -r reported schema live_units live_sites <<< "$(printf '%s' "$snapshot" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(d["health"], d["schema_version"], len(d["units"]), len(d["sites"]))')"
+  pass "report:schema" "schema_version=$schema"
+
+  # Recompute the rollup here, independently of the Python that produced it,
+  # from the report's own raw fields. An earlier version derived it from units
+  # alone and so disagreed with reality whenever only a service was down.
+  expected=$(printf '%s' "$snapshot" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+units, services = d["units"], d["services"]
+if next((u for u in units if u["name"] == "paddock.target"), {}).get("state") != "active":
+    print("down")
+elif (any(not u["ok"] for u in units)
+      or any(s["state"] != "active" for s in services)
+      or (services and not d["linger"])):
+    print("degraded")
+else:
+    print("ok")')
+  check "$([ "$reported" = "$expected" ]; echo $?)" "report:health" \
+        "reported $reported, independently computed $expected"
+
+  # Every linked site must appear, and the count must match `paddock sites`.
+  listed=$("$paddock" sites | grep -c . || true)
+  check "$([ "$listed" = "$live_sites" ]; echo $?)" "report:sites" \
+        "$live_sites in report, $listed from paddock sites"
+else
+  fail "report:json" "$(printf '%s' "$snapshot" | head -c 200)"
+fi
+
 echo "== diagnostics =="
-if paddock doctor >/dev/null 2>&1; then
+if "$paddock" doctor >/dev/null 2>&1; then
   pass "doctor" "all checks pass"
 else
-  fail "doctor" "$(paddock doctor 2>&1 | grep '^FAIL' | tr '\n' ' ')"
+  fail "doctor" "$("$paddock" doctor 2>&1 | grep '^FAIL' | tr '\n' ' ')"
 fi
 
 echo
