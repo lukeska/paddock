@@ -45,11 +45,18 @@ Item {
   readonly property string defaultPhp:
     snapshot && snapshot.php && snapshot.php.default ? String(snapshot.php.default) : ""
 
-  // The schema this plugin was written against. A newer CLI is assumed
-  // compatible; an older one is reported rather than misread.
+  // The schema this plugin was written against. Versions only increment, and
+  // only on a breaking change, so a *newer* CLI is assumed compatible: the
+  // plugin may not show something new, which is not a fault. An *older* CLI is
+  // reported rather than misread.
+  //
+  // This matters most if the plugin is ever distributed separately from the
+  // CLI, where mismatched pairs stop being hypothetical. See the distribution
+  // decision in plans/04-omarchy-integration.md.
   readonly property int expectedSchema: 1
-  readonly property bool schemaSupported:
-    !snapshot || Number(snapshot.schema_version) >= expectedSchema
+  readonly property int reportedSchema:
+    snapshot && snapshot.schema_version ? Number(snapshot.schema_version) : 0
+  readonly property bool schemaSupported: !snapshot || reportedSchema >= expectedSchema
 
   signal updated()
 

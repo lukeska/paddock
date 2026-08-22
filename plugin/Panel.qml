@@ -142,6 +142,21 @@ Panel {
               : "Reading Paddock…"
           }
 
+          // ---- Too old to trust: the report predates what this plugin reads.
+          Text {
+            width: parent.width
+            visible: root.available && paddock && !paddock.schemaSupported
+            wrapMode: Text.WordWrap
+            color: root.badColor
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            text: paddock
+              ? "Paddock is older than this widget expects (report schema "
+                + paddock.reportedSchema + ", needs " + paddock.expectedSchema
+                + "). Update Paddock."
+              : ""
+          }
+
           PanelSeparator { width: parent.width; visible: root.available }
 
           // ---- Status ------------------------------------------------------

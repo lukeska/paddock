@@ -122,6 +122,15 @@ class ManifestTests(unittest.TestCase):
         for member in ("function open(", "function close(", "property bool opened"):
             self.assertIn(member, widget, member)
 
+    def test_a_schema_mismatch_is_surfaced_not_just_computed(self) -> None:
+        # The service can detect a CLI too old for this widget, which only
+        # matters if the two are ever shipped apart. Computing it and never
+        # showing it is the same as not checking.
+        service = (PLUGIN / "Service.qml").read_text(encoding="utf-8")
+        panel = (PLUGIN / "Panel.qml").read_text(encoding="utf-8")
+        self.assertIn("schemaSupported", service)
+        self.assertIn("schemaSupported", panel)
+
     def test_only_one_component_owns_the_ipc_target(self) -> None:
         # The shell refuses a second handler for the same target, so the panel
         # sets manageIpc false and leaves the target to the service.
