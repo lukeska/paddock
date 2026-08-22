@@ -27,6 +27,11 @@ jobs:
         with:
           python-version: "3.13"
 
+      # The only Python runtime dependency, for reading paddock.yml. Packaged
+      # as python-yaml, which the Arch job installs with the other depends.
+      - name: Install runtime dependencies
+        run: python -m pip install --disable-pip-version-check pyyaml
+
       - name: Run tests
         env:
           PYTHONPATH: src
@@ -50,8 +55,8 @@ jobs:
       - name: Install package dependencies
         run: >-
           pacman -Syu --needed --noconfirm
-          git python caddy dnsmasq mkcert nss p11-kit networkmanager polkit
-          podman
+          git python python-yaml caddy dnsmasq mkcert nss p11-kit networkmanager
+          polkit podman
 
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5

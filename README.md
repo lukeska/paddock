@@ -14,6 +14,13 @@ paddock php use 8.5
 paddock secure
 ```
 
+A cloned project describing itself in [`paddock.yml`](docs/project-file.md)
+needs one command:
+
+```bash
+paddock init
+```
+
 ## Status
 
 Paddock is in active development and does not have a supported public release

@@ -1,11 +1,11 @@
 pkgname=paddock
 pkgver=0.1.0
-pkgrel=15
+pkgrel=16
 pkgdesc='Local Laravel development environment for Omarchy'
 arch=('x86_64' 'aarch64')
 url='https://github.com/lukeska/paddock'
 license=('MIT')
-depends=('python' 'caddy' 'dnsmasq' 'mkcert' 'nss' 'p11-kit' 'networkmanager' 'polkit'
+depends=('python' 'python-yaml' 'caddy' 'dnsmasq' 'mkcert' 'nss' 'p11-kit' 'networkmanager' 'polkit'
          'podman')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz")
@@ -31,4 +31,5 @@ package() {
   install -Dm644 resources/artifacts.json "$pkgdir/usr/share/paddock/artifacts.json"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 docs/state-schema-v1.md "$pkgdir/usr/share/doc/$pkgname/state-schema-v1.md"
+  install -Dm644 docs/project-file.md "$pkgdir/usr/share/doc/$pkgname/project-file.md"
 }

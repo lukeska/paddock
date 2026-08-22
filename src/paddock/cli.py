@@ -14,6 +14,7 @@ from .integration import INSTALL_CHANGES, REMOVE_CHANGES, Integration
 from .paths import Paths
 from .artifacts import ArtifactManifest
 from .php_runtime import RuntimeInstaller
+from .projectfile import PROJECT_FILE, ProjectFileError, Reconciler, find, load
 from .projects import write_project_selection
 from .report import build as build_report
 from .runtimes import RuntimeRegistry
@@ -40,6 +41,7 @@ OVERVIEW: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("secure [NAME]", "Serve a site over locally trusted HTTPS"),
         ("unsecure [NAME]", "Serve a site over plain HTTP again"),
         ("sites", "List linked sites, their PHP version and URL"),
+        ("init", "Apply this project's paddock.yml"),
     )),
     ("PHP", (
         ("php list", "List the installed PHP runtimes"),
@@ -164,6 +166,17 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
         "doctor",
         "Check runtimes, state, sites, and generated configuration.",
         epilog="Exits 1 if any check fails.",
+    )
+    initialize = command(
+        "init",
+        f"Bring this machine in line with the project's {PROJECT_FILE}.",
+        epilog="Idempotent: a second run reports everything unchanged. Never "
+               "reconfigures a supporting service another project may share; "
+               "a difference is reported instead. Exits 1 if anything was "
+               "blocked.",
+    )
+    initialize.add_argument(
+        "--dry-run", action="store_true", help="report what would change, and do nothing"
     )
     command("sites", "List linked sites: name, PHP minor, scheme, and root.")
     command(
@@ -321,6 +334,25 @@ def run(argv: list[str] | None = None) -> int:
         service = services.require(arguments.name)
         print(f"{ACTION_DONE[arguments.action]} {service.name} on {service.address}")
         return 0
+    if arguments.command == "init":
+        root = Path.cwd()
+        path = find(root)
+        if path is None:
+            raise ProjectFileError(
+                f"no {PROJECT_FILE} in {root}; create one describing the site, "
+                "PHP version, and services this project needs"
+            )
+        steps = Reconciler(store, manager, security, services).apply(
+            root, load(path), dry_run=arguments.dry_run
+        )
+        for step in steps:
+            print(f"{step.marker} {step.detail}")
+        blocked = [step for step in steps if step.outcome == "blocked"]
+        if arguments.dry_run:
+            print("\n(dry run: nothing was changed)")
+        elif not blocked and not any(step.outcome == "changed" for step in steps):
+            print("\nAlready up to date.")
+        return 1 if blocked else 0
     if arguments.command == "sites":
         for site in manager.list():
             scheme = "https" if site.secured else "http"
