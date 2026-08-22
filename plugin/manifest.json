@@ -2,16 +2,35 @@
   "schemaVersion": 1,
   "id": "dev.paddock.status",
   "name": "Paddock status",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Paddock",
-  "description": "Optional status and diagnostics launcher for Paddock",
-  "kinds": ["bar-widget"],
-  "entryPoints": {"barWidget": "PaddockStatus.qml"},
+  "license": "MIT",
+  "description": "Local Laravel environment status: PHP runtimes, services, and linked sites",
+  "kinds": ["service", "bar-widget"],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
   "barWidget": {
     "displayName": "Paddock",
-    "description": "Open Paddock status and diagnostics",
+    "description": "Paddock health, PHP runtimes, services, and linked sites",
     "category": "Development",
     "allowMultiple": false,
-    "defaultSection": "right"
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 15
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval",
+        "description": "Seconds between paddock report calls",
+        "min": 5,
+        "max": 300,
+        "step": 5,
+        "defaultValue": 15
+      }
+    ]
   }
 }

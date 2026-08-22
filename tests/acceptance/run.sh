@@ -141,6 +141,43 @@ else
   fail "report:json" "$(printf '%s' "$snapshot" | head -c 200)"
 fi
 
+echo "== omarchy plugin =="
+# The real gate. It reads the manifest only, so a QML fault still needs a live
+# shell to surface; tests/test_plugin_manifest.py is the CI-side stand-in.
+plugin_dir=$(cd -- "$root/../../plugin" && pwd)
+if command -v omarchy >/dev/null 2>&1; then
+  if omarchy plugin validate "$plugin_dir" >/dev/null 2>&1; then
+    pass "plugin:validate" "$plugin_dir"
+  else
+    fail "plugin:validate" "$(omarchy plugin validate "$plugin_dir" 2>&1 | head -c 160)"
+  fi
+  if command -v omarchy-shell >/dev/null 2>&1 && omarchy-shell shell ping >/dev/null 2>&1; then
+    id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' \
+      "$plugin_dir/manifest.json")
+    listed=$(omarchy-shell shell listPlugins 2>/dev/null | python3 -c "
+import json, sys
+try:
+    plugins = json.load(sys.stdin)
+except Exception:
+    raise SystemExit
+for p in plugins:
+    if p.get('id') == '$id':
+        print('enabled' if p.get('enabled') else 'installed')
+")
+    check "$([ -n "$listed" ]; echo $?)" "plugin:registered" "${listed:-not found by the shell}"
+    # The widget reports its own view of health; it must agree with the CLI.
+    # No -q here: that flag suppresses output, which is right for a
+    # fire-and-forget refresh and useless when reading a value back.
+    widget=$(omarchy-shell "$id" health 2>/dev/null | tr -d '\r\n')
+    check "$([ "$widget" = "$reported" ]; echo $?)" "plugin:health" \
+          "widget says ${widget:-nothing}, CLI says ${reported:-unknown}"
+  else
+    pass "plugin:shell" "omarchy-shell not running; skipped"
+  fi
+else
+  pass "plugin:validate" "omarchy not installed; skipped"
+fi
+
 echo "== diagnostics =="
 if "$paddock" doctor >/dev/null 2>&1; then
   pass "doctor" "all checks pass"
