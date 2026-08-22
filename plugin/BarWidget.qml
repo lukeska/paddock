@@ -30,6 +30,47 @@ BarWidget {
 
   function refresh() { if (paddock) paddock.refresh() }
 
+  // ---- Panel hosting -------------------------------------------------------
+  // The panel is a nested Loader rather than a `panel` kind, so it lives and
+  // dies with this widget and needs no second enable step.
+  function injectPanel() {
+    var target = panelLoader.item
+    if (!target) return
+    if ("bar" in target) target.bar = root.bar
+    if ("settings" in target) target.settings = root.settings
+    if ("anchorItem" in target) target.anchorItem = button
+    if ("hostWidget" in target) target.hostWidget = root
+  }
+
+  onBarChanged: { injectPanel(); applySettings() }
+
+  // Bar.findPanelWidget looks for opened/open/close on the *widget*, which is
+  // how `omarchy-shell shell toggle dev.paddock.status` reaches the panel
+  // without a second IPC handler competing with the service's.
+  readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
+  function open() { if (panelLoader.item) panelLoader.item.open() }
+  function close() { if (panelLoader.item) panelLoader.item.close() }
+  function togglePanel() { if (panelLoader.item) panelLoader.item.toggle() }
+
+  // Forwarded so this widget can stand in for the panel as the bar's popout
+  // identity: requestPopout prefers closeForPopoutSwitch over close.
+  readonly property bool popoutSwitchClosing:
+    panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
+  function closeForPopoutSwitch() {
+    if (panelLoader.item) panelLoader.item.closeForPopoutSwitch()
+  }
+
+  Loader {
+    id: panelLoader
+    active: true
+    source: Qt.resolvedUrl("Panel.qml")
+    visible: false
+    onLoaded: {
+      root.injectPanel()
+      Qt.callLater(root.injectPanel)
+    }
+  }
+
   readonly property color statusColor: {
     if (health === "ok") return Color.accent
     if (health === "degraded" || health === "down") return Color.urgent
@@ -65,7 +106,7 @@ BarWidget {
     slotSize: Style.bar.statusSlot
     fontSize: Style.font.caption
     tooltipText: root.summary
-    onPressed: root.refresh()
+    onPressed: root.togglePanel()
 
     // Bindings on the singletons re-theme live when omarchy-theme-set pushes
     // a new palette; no plugin code runs.

@@ -107,12 +107,38 @@ class ManifestTests(unittest.TestCase):
         widget = (PLUGIN / self.manifest["entryPoints"]["barWidget"]).read_text(encoding="utf-8")
         self.assertIn("serviceFor", widget)
 
+    def test_every_loaded_qml_file_exists(self) -> None:
+        # The panel is loaded by Qt.resolvedUrl, not by an entry point, so the
+        # manifest cannot catch a typo here. A missing source leaves the Loader
+        # null, `open()` silently does nothing, and summon still reports ok.
+        widget = (PLUGIN / self.manifest["entryPoints"]["barWidget"]).read_text(encoding="utf-8")
+        for referenced in re.findall(r'Qt\.resolvedUrl\("([^"]+)"\)', widget):
+            self.assertTrue((PLUGIN / referenced).is_file(), referenced)
+
+    def test_the_widget_satisfies_the_summon_contract(self) -> None:
+        # Bar.findPanelWidget skips any widget without all three, and the only
+        # symptom is a "no live bar widget" warning.
+        widget = (PLUGIN / self.manifest["entryPoints"]["barWidget"]).read_text(encoding="utf-8")
+        for member in ("function open(", "function close(", "property bool opened"):
+            self.assertIn(member, widget, member)
+
+    def test_only_one_component_owns_the_ipc_target(self) -> None:
+        # The shell refuses a second handler for the same target, so the panel
+        # sets manageIpc false and leaves the target to the service.
+        owners = [
+            path.name for path in PLUGIN.glob("*.qml")
+            if 'target: "dev.paddock.status"' in path.read_text(encoding="utf-8")
+            and "manageIpc: false" not in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(["Service.qml"], owners)
+
     def test_colours_come_from_the_theme_singletons(self) -> None:
         # Bound colours re-theme live when omarchy-theme-set pushes a palette;
         # a literal would freeze at whatever the theme was when it was written.
-        widget = (PLUGIN / self.manifest["entryPoints"]["barWidget"]).read_text(encoding="utf-8")
-        self.assertIn("Color.", widget)
-        self.assertNotRegex(widget, r'"#[0-9a-fA-F]{6}"')
+        for name in ("BarWidget.qml", "Panel.qml"):
+            source = (PLUGIN / name).read_text(encoding="utf-8")
+            self.assertIn("Color.", source, name)
+            self.assertNotRegex(source, r'"#[0-9a-fA-F]{6}"', name)
 
 
 class RetiredNameTests(unittest.TestCase):

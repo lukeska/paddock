@@ -29,7 +29,8 @@ signing, CI attestations, and automated publication are still being completed.
 - `dnsmasq` and NetworkManager route `.test` domains locally.
 - Caddy serves linked projects over HTTP or locally trusted HTTPS.
 - Each managed PHP minor runs in an isolated PHP-FPM service.
-- The optional Omarchy plugin calls the CLI and owns no canonical state.
+- The optional Omarchy plugin shows health, PHP runtimes, services, and
+  linked sites, reading only `paddock report`, and owns no canonical state.
 
 The architectural decisions are recorded in [`docs/adr`](docs/adr).
 
