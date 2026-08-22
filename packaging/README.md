@@ -4,19 +4,20 @@ Current at revision `paddock 0.1.0-16`.
 
 ## What the package owns
 
-`makepkg` builds it, and `check()` runs the whole unit suite — 194 tests — so a
+`makepkg` builds it, and `check()` runs the whole unit suite, so a
 package that builds is a package whose tests passed. It installs the Python
-package, `/usr/bin/paddock`, the fixed root helpers under `/usr/lib/paddock`,
-the artifact index, and the state-schema and project-file references under
+package, `/usr/bin/paddock`, `/usr/bin/paddock-ui`, its desktop entry, icons and
+AppStream metadata, the fixed root helpers under `/usr/lib/paddock`, the
+artifact index, and the state-schema and project-file references under
 `/usr/share/doc/paddock`.
 
 It deliberately does **not** own the Omarchy plugin: ADR 0008 reserves
 `~/.config/omarchy/plugins` for Omarchy, and pacman must not write there.
 
-Runtime dependencies are `python`, `python-yaml`, `caddy`, `dnsmasq`, `mkcert`,
-`nss`, `p11-kit`, `networkmanager`, `polkit`, and `podman`. `python-yaml` is the
-only Python dependency, for reading `paddock.yml`; everything else in the
-codebase is standard library. Note that every hard dependency must exist
+Runtime dependencies include `python`, `python-yaml`, `python-gobject`, `gtk4`,
+`libadwaita`, `caddy`, `dnsmasq`, `mkcert`, `nss`, `p11-kit`, `networkmanager`,
+`polkit`, and `podman`. `python-yaml` reads `paddock.yml`; PyGObject provides
+the native GTK interface. Note that every hard dependency must exist
 wherever the package is **built**, not only where it runs — `makepkg` resolves
 runtime dependencies before building, which broke both CI and the local build
 when `podman` was added.

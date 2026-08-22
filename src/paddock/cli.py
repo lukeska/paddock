@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 from . import __version__
+from .application import PaddockController, RedisConfigCandidate
 from .execution import plan_composer, plan_php
 from .caddy import CaddyProjector
 from .diagnostics import doctor, service_status
@@ -300,15 +301,36 @@ def run(argv: list[str] | None = None) -> int:
         site = security.unsecure(arguments.name, Path.cwd())
         print(f"Unsecured http://{site.name}.test")
     services = ServiceManager(store)
+    controller = PaddockController(store)
     if arguments.command == "services":
         for service in services.list():
             print(f"{service.name}\t{services.state_of(service)}\t{service.address}\t{service.image}")
         return 0
     if arguments.command == "service":
+        redis = arguments.name == "redis"
         if arguments.action == "add":
-            service = services.configure(arguments.name, arguments.image, arguments.port)
+            if redis:
+                current = controller.redis_snapshot()
+                defaults = controller.redis_candidate_defaults()
+                candidate = RedisConfigCandidate(
+                    arguments.image or current.image or defaults.image,
+                    (
+                        arguments.port
+                        if arguments.port is not None
+                        else current.port or defaults.port
+                    ),
+                )
+                result = controller.apply_redis(candidate, start_after_add=False)
+                if not result.ok:
+                    raise ValueError(result.detail or result.summary)
+                service = services.require("redis")
+            else:
+                service = services.configure(arguments.name, arguments.image, arguments.port)
             print(f"Configured {service.name} on {service.address} using {service.image}")
-            settings = services.connection_lines(service.name)
+            settings = (
+                list(controller.redis_snapshot().connection)
+                if redis else services.connection_lines(service.name)
+            )
             if settings:
                 # A database nobody can connect to is not much use, and the
                 # .env is the user's file to edit.
@@ -318,9 +340,22 @@ def run(argv: list[str] | None = None) -> int:
             print(f'\nStart it with "paddock service start {service.name}"')
             return 0
         if arguments.action == "logs":
+            if redis and not arguments.follow:
+                result = controller.redis_logs()
+                if not result.ok:
+                    raise ValueError(result.detail or "cannot read Redis logs")
+                for line in result.lines:
+                    print(line)
+                return 0
             return services.logs(arguments.name, arguments.follow)
         if arguments.action == "remove":
-            service = services.remove(arguments.name, delete_data=arguments.delete_data)
+            if redis:
+                service = services.require("redis")
+                result = controller.remove_redis(delete_data=arguments.delete_data)
+                if not result.ok:
+                    raise ValueError(result.detail or result.summary)
+            else:
+                service = services.remove(arguments.name, delete_data=arguments.delete_data)
             kept = "and its data volume was deleted" if arguments.delete_data else (
                 f"data volume {service.volume} was kept"
             )
@@ -328,9 +363,14 @@ def run(argv: list[str] | None = None) -> int:
             return 0
         # Re-project before starting so an edited image or port takes effect
         # and a missing file cannot leave the unit inert via ConditionPathExists.
-        if arguments.action in {"start", "restart"}:
-            services.project(services.require(arguments.name))
-        services.control(arguments.action, arguments.name)
+        if redis:
+            result = getattr(controller, f"{arguments.action}_redis")()
+            if not result.ok:
+                raise ValueError(result.detail or result.summary)
+        else:
+            if arguments.action in {"start", "restart"}:
+                services.project(services.require(arguments.name))
+            services.control(arguments.action, arguments.name)
         service = services.require(arguments.name)
         print(f"{ACTION_DONE[arguments.action]} {service.name} on {service.address}")
         return 0

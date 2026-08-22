@@ -46,6 +46,9 @@ section enables the service too, so it stays a single step for the user.
 configures anything, which keeps "never owns services" concrete rather than
 aspirational. Service control from the panel is a later decision, and would
 need confirmation and in-panel error reporting before it is worth having.
+The panel may launch the separately packaged `paddock-ui` management
+application. If that executable is unavailable, it reports the missing package
+instead of making the shell plugin responsible for service control.
 
 **Theming is by binding, not by reading.** Colours come from the `Color` and
 `Style` singletons; `omarchy-theme-set` pushes a palette over IPC and QML
@@ -64,4 +67,3 @@ and removed/unloaded through Omarchy. It was third-party and not package-owned.
 The CLI was package-owned and worked without the plugin. A unified bootstrap
 installed both in one operation; unified cleanup removed both while preserving
 shared dependencies and unrelated state. No `/usr/share/omarchy` file changed.
-

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.paddock.Paddock</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Paddock</name>
+  <developer id="dev.paddock">
+    <name>Paddock</name>
+  </developer>
+  <summary>Manage a local Laravel development environment</summary>
+  <description>
+    <p>
+      Paddock provides a native interface for local Laravel sites, PHP runtimes,
+      and supporting services on Omarchy.
+    </p>
+    <p>
+      It follows the active Omarchy color scheme and keeps development services
+      isolated to the local machine.
+    </p>
+  </description>
+  <launchable type="desktop-id">dev.paddock.Paddock.desktop</launchable>
+  <provides>
+    <binary>paddock-ui</binary>
+  </provides>
+  <categories>
+    <category>Development</category>
+    <category>WebDevelopment</category>
+  </categories>
+  <url type="homepage">https://github.com/lukeska/paddock</url>
+  <releases>
+    <release version="0.1.0" date="2026-08-22"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

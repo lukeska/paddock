@@ -5,11 +5,11 @@ pkgdesc='Local Laravel development environment for Omarchy'
 arch=('x86_64' 'aarch64')
 url='https://github.com/lukeska/paddock'
 license=('MIT')
-depends=('python' 'python-yaml' 'caddy' 'dnsmasq' 'mkcert' 'nss' 'p11-kit' 'networkmanager' 'polkit'
-         'podman')
+depends=('python' 'python-yaml' 'python-gobject' 'gtk4' 'libadwaita' 'caddy' 'dnsmasq' 'mkcert'
+         'nss' 'p11-kit' 'networkmanager' 'polkit' 'podman')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz")
-sha256sums=('6fd87c285fc43270d06fbb289a273108c12db51c6f566ea4f8f9768b08d95a4e')
+sha256sums=('301c565a8a46a5aa795b061d3800709a69a18b81322fc65052aa77fbb0192e34')
 
 check() {
   cd "$srcdir/$pkgname-$pkgver"
@@ -24,6 +24,15 @@ package() {
   cp -r --no-preserve=ownership src/paddock "$pkgdir$site_packages/paddock"
   find "$pkgdir$site_packages/paddock" -type d -name __pycache__ -prune -exec rm -rf -- {} +
   install -Dm755 packaging/arch/paddock "$pkgdir/usr/bin/paddock"
+  install -Dm755 packaging/arch/paddock-ui "$pkgdir/usr/bin/paddock-ui"
+  install -Dm644 resources/dev.paddock.Paddock.desktop \
+    "$pkgdir/usr/share/applications/dev.paddock.Paddock.desktop"
+  install -Dm644 resources/dev.paddock.Paddock.metainfo.xml \
+    "$pkgdir/usr/share/metainfo/dev.paddock.Paddock.metainfo.xml"
+  install -Dm644 resources/dev.paddock.Paddock.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/dev.paddock.Paddock.svg"
+  install -Dm644 resources/dev.paddock.Paddock-symbolic.svg \
+    "$pkgdir/usr/share/icons/hicolor/symbolic/apps/dev.paddock.Paddock-symbolic.svg"
   install -Dm755 system/system-helper "$pkgdir/usr/lib/paddock/system-helper"
   install -Dm755 system/php-fpm-launcher "$pkgdir/usr/lib/paddock/php-fpm-launcher"
   install -Dm755 system/check-ports "$pkgdir/usr/lib/paddock/check-ports"

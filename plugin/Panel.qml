@@ -323,10 +323,24 @@ Panel {
 
           PanelSeparator { width: parent.width; visible: root.available }
 
-          // ---- Footer: the two things worth a terminal.
+          // ---- Footer: native management plus terminal diagnostics.
           Row {
             width: parent.width
             spacing: Style.space(8)
+
+            Button {
+              text: "manage"
+              fontSize: Style.font.caption
+              foreground: Color.accent
+              tooltipText: "Open the Paddock application"
+              onClicked: {
+                var fallback = "command -v paddock-ui >/dev/null 2>&1 "
+                  + "&& exec paddock-ui || notify-send 'Paddock UI unavailable' "
+                  + "'Install or update the Paddock package.'"
+                root.shellRun("sh -lc " + root.quoted(fallback))
+                root.close()
+              }
+            }
 
             Button {
               text: "doctor"
