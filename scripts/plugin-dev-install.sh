@@ -25,6 +25,17 @@ mkdir -p "$target"
 rm -rf -- "${target:?}"/*
 cp -R -- "$source_dir"/. "$target"/
 find "$target" -type l -delete          # the registry rejects any symlink
+
+# Point only this development copy at the working tree. The plugin source and
+# published plugin continue to launch the packaged `paddock-ui` command.
+dev_launcher=$(cd -- "$source_dir/.." && pwd)/scripts/paddock-ui-dev
+escaped_launcher=${dev_launcher//\\/\\\\}
+escaped_launcher=${escaped_launcher//&/\\&}
+escaped_launcher=${escaped_launcher//|/\\|}
+sed -i \
+  "s|property string manageCommand: \"paddock-ui\"|property string manageCommand: \"$escaped_launcher\"|" \
+  "$target/Panel.qml"
+
 echo "installed $id -> $target"
 
 if command -v omarchy-shell >/dev/null 2>&1; then

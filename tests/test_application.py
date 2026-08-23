@@ -14,6 +14,7 @@ from paddock.application import (
     validate_redis,
 )
 from paddock.paths import Paths
+from paddock.runtimes import RuntimeRegistry
 from paddock.services import CATALOG, Service
 from paddock.state import StateStore
 
@@ -85,6 +86,35 @@ class MutableRunner(StateRunner):
         return result
 
 
+class DashboardRunner:
+    def __init__(self, states: dict[str, str]):
+        self.states = dict(states)
+        self.calls: list[list[str]] = []
+
+    def __call__(self, command, *args, **kwargs):
+        command = list(command)
+        self.calls.append(command)
+        if command[:2] == ["loginctl", "show-user"]:
+            return subprocess.CompletedProcess(command, 0, "yes\n", "")
+        if "is-active" in command:
+            units = command[command.index("is-active") + 1:]
+            output = "".join(f"{self.states.get(unit, 'inactive')}\n" for unit in units)
+            return subprocess.CompletedProcess(command, 0, output, "")
+        if command[:3] == ["systemctl", "--user", "enable"]:
+            self.states[command[-1]] = "active"
+        elif command[:3] == ["systemctl", "--user", "stop"]:
+            self.states[command[-1]] = "inactive"
+        elif command == ["systemctl", "start", "paddock.target"]:
+            for unit in list(self.states):
+                if not unit.startswith("paddock-service-"):
+                    self.states[unit] = "active"
+        elif command == ["systemctl", "stop", "paddock.target"]:
+            for unit in list(self.states):
+                if not unit.startswith("paddock-service-"):
+                    self.states[unit] = "inactive"
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+
 class ApplicationFixture:
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -102,7 +132,7 @@ class ApplicationFixture:
         self.temporary.cleanup()
 
     def configure_redis(
-        self, *, image: str = "docker.io/library/redis:8", port: int = 6379
+        self, *, image: str = "docker.io/library/redis:8.10.1", port: int = 6379
     ) -> None:
         service = Service("redis", image, port, "paddock-redis")
         self.store.update(
@@ -169,6 +199,112 @@ class RedisSnapshotTests(ApplicationFixture, unittest.TestCase):
         self.assertFalse(snapshot.lingering)
 
 
+class DashboardTests(ApplicationFixture, unittest.TestCase):
+    def install_php(self, version: str = "8.4") -> None:
+        path = self.store.paths.data / "releases" / f"php-{version}.23-abcdef" / "bin/php"
+        path.parent.mkdir(parents=True)
+        path.write_text("#!/bin/sh\n", encoding="utf-8")
+        path.chmod(0o755)
+        RuntimeRegistry(self.store).register(version, path, "0" * 64)
+
+    def states(self, value: str) -> dict[str, str]:
+        return {
+            "paddock.target": value,
+            "paddock-dns.service": value,
+            "paddock-dns-route.service": value,
+            "paddock-caddy.service": value,
+            "paddock-php@8.4.service": value,
+            "paddock-service-redis.service": value,
+        }
+
+    def test_snapshot_lists_core_php_and_the_complete_service_catalog(self) -> None:
+        self.install_php()
+        self.configure_redis()
+        snapshot = self.controller(DashboardRunner(self.states("active"))).dashboard_snapshot()
+        by_key = {service.key: service for service in snapshot.services}
+        self.assertEqual(
+            {"caddy", "dns", "php-8.4", "redis", "mysql", "postgres"},
+            set(by_key),
+        )
+        self.assertTrue(by_key["redis"].active)
+        self.assertFalse(by_key["mysql"].configured)
+        self.assertEqual("not-configured", by_key["mysql"].state)
+        self.assertEqual("8.10.1 · Port: 6379", by_key["redis"].detail)
+        self.assertEqual("8.4.11 · Port: 3306", by_key["mysql"].detail)
+        self.assertEqual("17.11 · Port: 5432", by_key["postgres"].detail)
+        self.assertEqual(
+            ("REDIS_HOST=127.0.0.1", "REDIS_PORT=6379"),
+            by_key["redis"].connection,
+        )
+        self.assertTrue(snapshot.all_active)
+
+    def test_service_catalog_detail_uses_configured_image_tag_and_port(self) -> None:
+        self.configure_redis(image="docker.io/library/redis:8.2.0", port=6380)
+        snapshot = self.controller(DashboardRunner(self.states("active"))).dashboard_snapshot()
+        redis = next(service for service in snapshot.services if service.key == "redis")
+        self.assertEqual("8.2.0 · Port: 6380", redis.detail)
+
+    def test_old_moving_image_tag_uses_the_new_exact_catalog_version(self) -> None:
+        self.configure_redis(image="docker.io/library/redis:8")
+        snapshot = self.controller(DashboardRunner(self.states("active"))).dashboard_snapshot()
+        redis = next(service for service in snapshot.services if service.key == "redis")
+        self.assertEqual("8.10.1 · Port: 6379", redis.detail)
+
+    def test_starting_unconfigured_database_adds_defaults_and_starts_it(self) -> None:
+        runner = DashboardRunner(self.states("inactive"))
+        result = self.controller(runner).set_service_active("mysql", True)
+        self.assertTrue(result.ok)
+        service = self.store.read("services")["services"]["mysql"]
+        self.assertEqual("docker.io/library/mysql:8.4.11", service["image"])
+        self.assertIn(
+            [
+                "systemctl",
+                "--user",
+                "enable",
+                "--now",
+                "paddock-service-mysql.service",
+            ],
+            runner.calls,
+        )
+
+    def test_stopping_one_configured_service_does_not_remove_it(self) -> None:
+        self.configure_redis()
+        runner = DashboardRunner(self.states("active"))
+        result = self.controller(runner).set_service_active("redis", False)
+        self.assertTrue(result.ok)
+        self.assertIn("redis", self.store.read("services")["services"])
+        self.assertIn(
+            ["systemctl", "--user", "stop", "paddock-service-redis.service"],
+            runner.calls,
+        )
+
+    def test_start_all_controls_the_target_and_only_configured_services(self) -> None:
+        self.install_php()
+        self.configure_redis()
+        runner = DashboardRunner(self.states("inactive"))
+        result = self.controller(runner).set_dashboard_active(True)
+        self.assertTrue(result.ok)
+        self.assertTrue(result.snapshot.all_active)
+        self.assertIn(["systemctl", "start", "paddock.target"], runner.calls)
+        self.assertIn(
+            ["systemctl", "--user", "enable", "--now", "paddock-service-redis.service"],
+            runner.calls,
+        )
+        self.assertFalse(any("mysql" in part for call in runner.calls for part in call))
+
+    def test_stop_all_stops_user_services_before_the_system_target(self) -> None:
+        self.configure_redis()
+        runner = DashboardRunner(self.states("active"))
+        result = self.controller(runner).set_dashboard_active(False)
+        self.assertTrue(result.ok)
+        user_stop = runner.calls.index(
+            ["systemctl", "--user", "stop", "paddock-service-redis.service"]
+        )
+        target_stop = runner.calls.index(["systemctl", "stop", "paddock.target"])
+        self.assertLess(user_stop, target_stop)
+        self.assertFalse(result.snapshot.all_active)
+
+
 class RedisValidationTests(unittest.TestCase):
     def errors(self, image: str, port: object) -> dict[str, str]:
         candidate = RedisConfigCandidate(image=image, port=port)  # type: ignore[arg-type]
@@ -217,7 +353,7 @@ class RedisPlanTests(ApplicationFixture, unittest.TestCase):
     def test_unchanged_plan_has_no_effect(self) -> None:
         self.configure_redis()
         plan = self.controller(StateRunner(active="active")).plan_redis(
-            RedisConfigCandidate("docker.io/library/redis:8", 6379)
+            RedisConfigCandidate("docker.io/library/redis:8.10.1", 6379)
         )
         self.assertTrue(plan.valid)
         self.assertFalse(plan.changed)
@@ -285,7 +421,7 @@ class RedisApplyTests(ApplicationFixture, unittest.TestCase):
         self.configure_redis()
         runner = MutableRunner(active="active", enabled="enabled")
         result = self.controller(runner).apply_redis(
-            RedisConfigCandidate("docker.io/library/redis:8", 6379)
+            RedisConfigCandidate("docker.io/library/redis:8.10.1", 6379)
         )
         self.assertEqual("unchanged", result.code)
         self.assertNotIn("daemon-reload", [part for call in runner.calls for part in call])

@@ -12,6 +12,8 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from paddock import __version__
 from paddock.application import (
+    DashboardOperationResult,
+    DashboardSnapshot,
     FieldError,
     LogResult,
     OperationResult,
@@ -23,7 +25,7 @@ from paddock.paths import Paths
 from paddock.state import StateStore
 
 from . import APPLICATION_ID
-from .components import PaddockHero, PaddockSection
+from .components import PaddockHero, PaddockSection, PaddockServiceRow
 from .redis_form import (
     describe_apply_failure,
     describe_lifecycle_failure,
@@ -46,6 +48,7 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.controller = controller
         self.tasks = AsyncOperationRunner(dispatch)
         self.redis_snapshot: RedisSnapshot | None = None
+        self.dashboard_snapshot: DashboardSnapshot | None = None
         self.mutation_busy = False
         self.redis_transitioning = False
         self.refresh_source = 0
@@ -59,9 +62,9 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.toast_overlay.set_child(self.split_view)
 
         self.stack = Adw.ViewStack()
-        self.overview_page = self._build_overview()
+        self.dashboard_page = self._build_dashboard()
         self.services_page = self._build_services()
-        self.stack.add_titled(self.overview_page, "overview", "Overview")
+        self.stack.add_titled(self.dashboard_page, "dashboard", "Dashboard")
         self.stack.add_titled(self.services_page, "services", "Services")
 
         self.split_view.set_sidebar(
@@ -81,7 +84,7 @@ class PaddockWindow(Adw.ApplicationWindow):
         navigation = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
         navigation.add_css_class("navigation-sidebar")
         for name, title, icon in (
-            ("overview", "Overview", "view-grid-symbolic"),
+            ("dashboard", "Dashboard", "view-grid-symbolic"),
             ("services", "Services", "network-server-symbolic"),
         ):
             row = Adw.ActionRow(title=title)
@@ -109,23 +112,222 @@ class PaddockWindow(Adw.ApplicationWindow):
         box.append(self.stack)
         return box
 
-    def _build_overview(self) -> Gtk.Widget:
-        page = Adw.StatusPage(
-            title="Paddock",
-            description="Your local Laravel development environment.",
-            icon_name="applications-development-symbolic",
+    def _build_dashboard(self) -> Gtk.Widget:
+        page = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
         )
-        self.overview_status = Gtk.Label(label="Loading Redis status…")
-        self.overview_status.add_css_class("dim-label")
-        page.set_child(self.overview_status)
+        clamp = Adw.Clamp(maximum_size=760, tightening_threshold=600)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        content.add_css_class("paddock-page")
+        clamp.set_child(content)
+        page.set_child(clamp)
+
+        heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        heading.set_valign(Gtk.Align.CENTER)
+        title = Gtk.Label(label="Dashboard", xalign=0)
+        title.set_hexpand(True)
+        title.add_css_class("paddock-dashboard-heading")
+        heading.append(title)
+        self.dashboard_toggle = Gtk.Button(label="Start All")
+        self.dashboard_toggle.add_css_class("suggested-action")
+        self.dashboard_toggle.set_tooltip_text("Start every configured Paddock service")
+        self.dashboard_toggle.connect("clicked", self._toggle_dashboard_services)
+        heading.append(self.dashboard_toggle)
+        content.append(heading)
+
+        self.dashboard_infrastructure = PaddockSection("Infrastructure")
+        self.dashboard_php = PaddockSection("PHP runtimes")
+        self.dashboard_services = PaddockSection("Services")
+        content.append(self.dashboard_infrastructure)
+        content.append(self.dashboard_php)
+        content.append(self.dashboard_services)
         return page
 
     def _build_services(self) -> Gtk.Widget:
+        self.services_view = Gtk.Stack()
+        self.services_view.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        self.pending_service_status: dict[str, Adw.StatusPage] = {}
+        self.services_view.add_named(self._build_service_catalog(), "catalog")
+        self.services_view.add_named(self._build_redis_detail(), "redis")
+        self.services_view.add_named(
+            self._build_pending_service_detail(
+                "mysql", "MySQL", "relational database", "network-server-symbolic"
+            ),
+            "mysql",
+        )
+        self.services_view.add_named(
+            self._build_pending_service_detail(
+                "postgres",
+                "PostgreSQL",
+                "relational database",
+                "network-server-symbolic",
+            ),
+            "postgres",
+        )
+        return self.services_view
+
+    def _build_service_catalog(self) -> Gtk.Widget:
+        page = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+        )
+        clamp = Adw.Clamp(maximum_size=760, tightening_threshold=600)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        content.add_css_class("paddock-page")
+        clamp.set_child(content)
+        page.set_child(clamp)
+
+        title = Gtk.Label(label="Services", xalign=0)
+        title.add_css_class("paddock-dashboard-heading")
+        content.append(title)
+
+        cache = PaddockSection("Cache")
+        databases = PaddockSection("Databases")
+        content.append(cache)
+        content.append(databases)
+
+        self.service_catalog_rows: dict[str, PaddockServiceRow] = {}
+        self.service_toggle_buttons: dict[str, Gtk.Button] = {}
+        for key, name, detail, section in (
+            ("redis", "Redis", "8.10.1 · Port: 6379", cache),
+            ("mysql", "MySQL", "8.4.11 · Port: 3306", databases),
+            ("postgres", "PostgreSQL", "17.11 · Port: 5432", databases),
+        ):
+            row = PaddockServiceRow(
+                name, detail, "not-configured", show_detail=True
+            )
+            row.set_activatable(True)
+            settings = Gtk.Button(label="Settings")
+            settings.set_valign(Gtk.Align.CENTER)
+            settings.connect("clicked", self._open_service_settings, key)
+            toggle = Gtk.Button(label="Start")
+            toggle.set_valign(Gtk.Align.CENTER)
+            toggle.add_css_class("suggested-action")
+            toggle.connect("clicked", self._toggle_service, key)
+            row.add_suffix(settings)
+            row.add_suffix(toggle)
+            row.connect("activated", self._show_service_info, key)
+            section.add(row)
+            self.service_catalog_rows[key] = row
+            self.service_toggle_buttons[key] = toggle
+
+        self.services_split = Adw.OverlaySplitView()
+        self.services_split.set_sidebar_position(Gtk.PackType.END)
+        self.services_split.set_min_sidebar_width(280)
+        self.services_split.set_max_sidebar_width(380)
+        self.services_split.set_content(page)
+        self.services_split.set_sidebar(self._build_service_info_sidebar())
+        self.services_split.set_show_sidebar(False)
+        return self.services_split
+
+    def _build_service_info_sidebar(self) -> Gtk.Widget:
+        sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        header = Adw.HeaderBar()
+        header.set_show_start_title_buttons(False)
+        header.set_show_end_title_buttons(False)
+        self.service_info_title = Gtk.Label(label="Service")
+        header.set_title_widget(self.service_info_title)
+        close = Gtk.Button.new_from_icon_name("window-close-symbolic")
+        close.set_tooltip_text("Close service information")
+        close.connect("clicked", lambda _button: self.services_split.set_show_sidebar(False))
+        header.pack_end(close)
+        sidebar.append(header)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        content.add_css_class("paddock-page")
+        section = PaddockSection("Laravel .env")
+        environment = Gtk.ListBoxRow(selectable=False, activatable=False)
+        self.service_info_env = Gtk.Label(xalign=0, selectable=True)
+        self.service_info_env.set_wrap(True)
+        self.service_info_env.add_css_class("paddock-env-block")
+        environment.set_child(self.service_info_env)
+        section.add(environment)
+        content.append(section)
+        sidebar.append(content)
+        return sidebar
+
+    def _build_pending_service_detail(
+        self, key: str, title: str, kind: str, icon_name: str
+    ) -> Gtk.Widget:
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        page.append(self._service_detail_header(title))
+        status = Adw.StatusPage(
+            title=title,
+            description=(
+                f"Paddock can run this {kind}, but native configuration controls "
+                "will be added in the next service-management slice."
+            ),
+            icon_name=icon_name,
+        )
+        status.set_vexpand(True)
+        page.append(status)
+        self.pending_service_status[key] = status
+        return page
+
+    def _service_detail_header(self, title: str) -> Gtk.Widget:
+        header = Adw.HeaderBar()
+        header.set_title_widget(Gtk.Label(label=title))
+        back = Gtk.Button.new_from_icon_name("go-previous-symbolic")
+        back.set_tooltip_text("Back to all services")
+        back.connect("clicked", self._show_service_catalog)
+        header.pack_start(back)
+        return header
+
+    def _open_service_settings(self, _button, key: str) -> None:
+        self.services_view.set_visible_child_name(key)
+
+    def _show_service_info(self, _row, key: str) -> None:
+        self.selected_service_key = key
+        if self.dashboard_snapshot is not None:
+            service = next(
+                (
+                    service
+                    for service in self.dashboard_snapshot.services
+                    if service.key == key
+                ),
+                None,
+            )
+            if service is not None:
+                self._update_service_info(service)
+        self.services_split.set_show_sidebar(True)
+
+    def _update_service_info(self, service) -> None:
+        self.service_info_title.set_label(service.title)
+        self.service_info_env.set_label("\n".join(service.connection))
+
+    def _toggle_service(self, _button, key: str) -> None:
+        if self.mutation_busy or self.dashboard_snapshot is None:
+            return
+        service = next(
+            (service for service in self.dashboard_snapshot.services if service.key == key),
+            None,
+        )
+        if service is None:
+            return
+        active = not service.active
+        self.operation_spinner.set_tooltip_text(
+            f"{'Starting' if active else 'Stopping'} {service.title}"
+        )
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            f"service-mutation-{key}",
+            lambda: self.controller.set_service_active(key, active),
+            self._dashboard_operation_finished,
+            self._dashboard_operation_failed,
+        )
+
+    def _show_service_catalog(self, _button=None) -> None:
+        self.services_view.set_visible_child_name("catalog")
+
+    def _build_redis_detail(self) -> Gtk.Widget:
         self.redis_view = Gtk.Stack()
         self.redis_view.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
 
+        redis_empty_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        redis_empty_page.append(self._service_detail_header("Redis"))
         self.redis_empty = Adw.StatusPage(
-            title="Services",
+            title="Redis",
             description="Loading Redis status…",
             icon_name="network-server-symbolic",
         )
@@ -133,7 +335,9 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.redis_add.add_css_class("suggested-action")
         self.redis_add.connect("clicked", self._open_redis_editor)
         self.redis_empty.set_child(self.redis_add)
-        self.redis_view.add_named(self.redis_empty, "status")
+        self.redis_empty.set_vexpand(True)
+        redis_empty_page.append(self.redis_empty)
+        self.redis_view.add_named(redis_empty_page, "status")
 
         page = Gtk.ScrolledWindow(
             hscrollbar_policy=Gtk.PolicyType.NEVER,
@@ -145,6 +349,7 @@ class PaddockWindow(Adw.ApplicationWindow):
         clamp.set_child(content)
         page.set_child(clamp)
 
+        content.append(self._service_detail_header("Redis"))
         self.redis_hero = PaddockHero(
             "content-loading-symbolic", "Redis", "Shared service · loopback only"
         )
@@ -237,16 +442,110 @@ class PaddockWindow(Adw.ApplicationWindow):
 
     def _navigate(self, _list: Gtk.ListBox, row: Gtk.ListBoxRow | None) -> None:
         if row is not None:
+            if row.get_name() == "services":
+                self._show_service_catalog()
             self.stack.set_visible_child_name(row.get_name())
             self.split_view.set_show_content(True)
 
     def refresh(self) -> None:
+        self.tasks.submit(
+            "dashboard-snapshot",
+            self.controller.dashboard_snapshot,
+            self._show_dashboard,
+            lambda error: self.show_error("Dashboard refresh failed", str(error)),
+        )
         self.tasks.submit(
             "snapshot",
             self.controller.redis_snapshot,
             self._show_snapshot,
             lambda error: self.show_error("Status refresh failed", str(error)),
         )
+
+    def _show_dashboard(self, snapshot: DashboardSnapshot) -> None:
+        self.dashboard_snapshot = snapshot
+        sections = {
+            "Infrastructure": self.dashboard_infrastructure,
+            "PHP": self.dashboard_php,
+            "Services": self.dashboard_services,
+        }
+        for section in sections.values():
+            section.clear()
+        for service in snapshot.services:
+            sections[service.group].add(
+                PaddockServiceRow(
+                    service.title, service.detail, service.state
+                )
+            )
+            catalog_row = self.service_catalog_rows.get(service.key)
+            if catalog_row is not None:
+                catalog_row.set_state(service.state)
+                catalog_row.set_subtitle(service.detail)
+            toggle = self.service_toggle_buttons.get(service.key)
+            if toggle is not None:
+                toggle.set_label("Stop" if service.active else "Start")
+                if service.active:
+                    toggle.remove_css_class("suggested-action")
+                else:
+                    toggle.add_css_class("suggested-action")
+            if getattr(self, "selected_service_key", None) == service.key:
+                self._update_service_info(service)
+            pending_status = self.pending_service_status.get(service.key)
+            if pending_status is not None:
+                state = "Running" if service.active else "Not configured"
+                if service.configured and not service.active:
+                    state = service.state.replace("-", " ").title()
+                pending_status.set_description(
+                    f"{state} · {service.detail}. Native configuration controls "
+                    "will be added in the next service-management slice."
+                )
+        if not any(service.group == "PHP" for service in snapshot.services):
+            self.dashboard_php.add(
+                Adw.ActionRow(
+                    title="No PHP runtimes installed",
+                    subtitle="Install a PHP runtime to make it available here.",
+                )
+            )
+        if snapshot.all_active:
+            self.dashboard_toggle.set_label("Stop All")
+            self.dashboard_toggle.remove_css_class("suggested-action")
+            self.dashboard_toggle.set_tooltip_text(
+                "Temporarily stop every configured Paddock service"
+            )
+        else:
+            self.dashboard_toggle.set_label("Start All")
+            self.dashboard_toggle.add_css_class("suggested-action")
+            self.dashboard_toggle.set_tooltip_text(
+                "Start every configured Paddock service"
+            )
+
+    def _toggle_dashboard_services(self, _button) -> None:
+        if self.mutation_busy or self.dashboard_snapshot is None:
+            return
+        active = not self.dashboard_snapshot.all_active
+        self.operation_spinner.set_tooltip_text(
+            "Starting all configured services" if active else "Stopping all services"
+        )
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            "dashboard-mutation",
+            lambda: self.controller.set_dashboard_active(active),
+            self._dashboard_operation_finished,
+            self._dashboard_operation_failed,
+        )
+
+    def _dashboard_operation_finished(self, result: DashboardOperationResult) -> None:
+        self._set_mutation_busy(False)
+        self._show_dashboard(result.snapshot)
+        if result.ok:
+            self.show_toast(result.summary)
+        else:
+            self.show_error(result.summary, result.detail or "Unknown lifecycle error")
+        self.refresh()
+
+    def _dashboard_operation_failed(self, error: BaseException) -> None:
+        self._set_mutation_busy(False)
+        self.show_error("Dashboard operation failed", str(error))
+        self.refresh()
 
     def _periodic_refresh(self) -> bool:
         if not self.mutation_busy:
@@ -260,7 +559,6 @@ class PaddockWindow(Adw.ApplicationWindow):
     def _show_snapshot(self, snapshot: RedisSnapshot) -> None:
         self.redis_snapshot = snapshot
         presentation = present_redis(snapshot)
-        self.overview_status.set_label(f"Redis: {presentation.title}")
         if presentation.view != "configured":
             self.redis_transitioning = False
             self.redis_empty.set_title(presentation.title)
@@ -343,6 +641,9 @@ class PaddockWindow(Adw.ApplicationWindow):
             button.set_sensitive(sensitive)
         self.redis_add.set_sensitive(sensitive)
         self.redis_configure.set_sensitive(sensitive)
+        self.dashboard_toggle.set_sensitive(sensitive)
+        for button in self.service_toggle_buttons.values():
+            button.set_sensitive(sensitive)
         for button in (
             self.redis_logs_button,
             self.redis_remove,

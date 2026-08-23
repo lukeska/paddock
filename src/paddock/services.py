@@ -69,10 +69,10 @@ class Catalog:
     ready: tuple[str, ...] = ()
 
 
-# Images are registry-qualified and tag-pinned: a bare `redis:8` resolves
-# through the caller's registry search list, which is not reproducible. Every
-# published port is above 1024, so rootless podman never needs a privileged
-# bind.
+# Images are registry-qualified and pinned to a complete semantic release: a
+# bare `redis:8` resolves through the caller's registry search list, while a
+# moving major tag can silently change the installed runtime. Every published
+# port is above 1024, so rootless podman never needs a privileged bind.
 #
 # The databases run without a password, which is the local-development
 # convention Herd, Valet and DBngin all follow, and is what an unedited
@@ -80,7 +80,7 @@ class Catalog:
 # published on loopback alone; none of these is reachable from the network.
 CATALOG: dict[str, Catalog] = {
     "redis": Catalog(
-        image="docker.io/library/redis:8",
+        image="docker.io/library/redis:8.10.1",
         port=6379,
         container_port=6379,
         data="/data",
@@ -89,7 +89,7 @@ CATALOG: dict[str, Catalog] = {
         ready=("redis-cli", "-h", "127.0.0.1", "ping"),
     ),
     "mysql": Catalog(
-        image="docker.io/library/mysql:8",
+        image="docker.io/library/mysql:8.4.11",
         port=3306,
         container_port=3306,
         data="/var/lib/mysql",
@@ -109,7 +109,7 @@ CATALOG: dict[str, Catalog] = {
         ready=("mysqladmin", "ping", "-h", "127.0.0.1", "--silent"),
     ),
     "postgres": Catalog(
-        image="docker.io/library/postgres:17",
+        image="docker.io/library/postgres:17.11",
         port=5432,
         container_port=5432,
         data="/var/lib/postgresql/data",

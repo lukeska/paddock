@@ -79,7 +79,7 @@ class SchemaTests(unittest.TestCase):
 
     def test_no_version_means_the_catalog_default(self) -> None:
         self.assertEqual(
-            "docker.io/library/redis:8", DeclaredService("redis").image()
+            "docker.io/library/redis:8.10.1", DeclaredService("redis").image()
         )
 
 

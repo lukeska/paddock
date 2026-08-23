@@ -44,9 +44,16 @@ class DesktopIntegrationTests(unittest.TestCase):
 
     def test_plugin_launches_ui_with_an_unavailable_fallback(self) -> None:
         panel = (ROOT / "plugin/Panel.qml").read_text(encoding="utf-8")
-        self.assertIn("command -v paddock-ui", panel)
-        self.assertIn("exec paddock-ui", panel)
+        self.assertIn('property string manageCommand: "paddock-ui"', panel)
+        self.assertIn("root.manageCommand", panel)
         self.assertIn("Paddock UI unavailable", panel)
+
+    def test_plugin_dev_installer_overrides_only_its_installed_copy(self) -> None:
+        installer = (ROOT / "scripts/plugin-dev-install.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("scripts/paddock-ui-dev", installer)
+        self.assertIn('manageCommand: \\"paddock-ui\\"', installer)
 
 
 if __name__ == "__main__":

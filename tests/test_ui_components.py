@@ -24,6 +24,43 @@ class DesignCssTests(unittest.TestCase):
         for name in ("paddock-hero", "paddock-card", "paddock-section-title"):
             self.assertIn(f".{name}", css)
 
+    def test_service_leds_use_semantic_success_and_error_colors(self) -> None:
+        css = design_css()
+        self.assertIn(".paddock-led-active", css)
+        self.assertIn("var(--success-bg-color)", css)
+        self.assertIn(".paddock-led-inactive", css)
+        self.assertIn("var(--error-bg-color)", css)
+
+    def test_buttons_are_compact_outlined_and_square(self) -> None:
+        css = design_css()
+        self.assertIn(".paddock-shell button", css)
+        self.assertIn("font-size: 0.82em", css)
+        self.assertIn("border: 1px solid var(--border-color)", css)
+        self.assertIn("border-radius: 0", css)
+        self.assertIn("background-color: transparent", css)
+
+    def test_section_cards_are_square(self) -> None:
+        css = design_css()
+        self.assertIn(".paddock-card { padding: 2px; border-radius: 0; }", css)
+
+    def test_service_rows_are_compact(self) -> None:
+        css = design_css()
+        self.assertIn(".paddock-service-row", css)
+        self.assertIn("min-height: 32px", css)
+        self.assertIn("font-size: 0.9em", css)
+
+    def test_selected_sidebar_page_is_square(self) -> None:
+        css = design_css()
+        self.assertIn(
+            ".paddock-shell .navigation-sidebar row:selected { border-radius: 0; }",
+            css,
+        )
+
+    def test_environment_blocks_are_compact_and_monospace(self) -> None:
+        css = design_css()
+        self.assertIn(".paddock-env-block", css)
+        self.assertIn("font-family: monospace", css)
+
 
 if __name__ == "__main__":
     unittest.main()

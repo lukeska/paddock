@@ -9,7 +9,7 @@ depends=('python' 'python-yaml' 'python-gobject' 'gtk4' 'libadwaita' 'caddy' 'dn
          'nss' 'p11-kit' 'networkmanager' 'polkit' 'podman')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz")
-sha256sums=('d72eb628edf057e8d0daa814628c0a6e7f58c48dac4b979cca27d2d72e681aa8')
+sha256sums=('799d9bebc1e120aa75a4de4df3fd40e49d5cc0d623a1515d7278f2e11f3fec76')
 
 check() {
   cd "$srcdir/$pkgname-$pkgver"

@@ -23,6 +23,8 @@ Panel {
 
   property var anchorItem: null
   property var hostWidget: null
+  // The development installer changes this only in its installed copy.
+  property string manageCommand: "paddock-ui"
   // The bar tracks the widget in its slot, not this nested panel, so the
   // popout coordinator has to be given that identity.
   readonly property var barIdentity: hostWidget || root
@@ -334,8 +336,10 @@ Panel {
               foreground: Color.accent
               tooltipText: "Open the Paddock application"
               onClicked: {
-                var fallback = "command -v paddock-ui >/dev/null 2>&1 "
-                  + "&& exec paddock-ui || notify-send 'Paddock UI unavailable' "
+                var launcher = root.quoted(root.manageCommand)
+                var fallback = "command -v " + launcher + " >/dev/null 2>&1 "
+                  + "&& exec " + launcher
+                  + " || notify-send 'Paddock UI unavailable' "
                   + "'Install or update the Paddock package.'"
                 root.shellRun("sh -lc " + root.quoted(fallback))
                 root.close()

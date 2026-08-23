@@ -276,7 +276,7 @@ class UnitRenderingTests(ServiceFixture, unittest.TestCase):
 
     def test_the_image_is_separated_from_the_flags(self) -> None:
         # An image reference shaped like a flag would otherwise be parsed as one.
-        self.assertIn("-- docker.io/library/redis:8", self.unit)
+        self.assertIn("-- docker.io/library/redis:8.10.1", self.unit)
 
     def test_a_crashed_container_does_not_block_the_next_start(self) -> None:
         self.assertIn("--replace", self.unit)

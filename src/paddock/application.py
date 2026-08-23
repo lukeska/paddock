@@ -21,6 +21,8 @@ import subprocess
 from typing import Callable
 
 from .atomic import atomic_write, exclusive_lock
+from .lifecycle import Lifecycle, LifecycleError
+from . import report
 from .services import CATALOG, Service, ServiceManager
 from .state import StateError, StateStore
 
@@ -41,6 +43,17 @@ IMAGE_REFERENCE = re.compile(
     r"^[A-Za-z0-9._-]+(?::[0-9]+)?/[A-Za-z0-9._/-]+"
     r"(?::[A-Za-z0-9._-]+|@[A-Za-z0-9_+.-]+:[A-Fa-f0-9]+)$"
 )
+
+
+def service_image_version(image: str) -> str:
+    """Return the human-facing tag or digest carried by a pinned image."""
+    leaf = image.rsplit("/", 1)[-1]
+    if "@" in leaf:
+        return leaf.split("@", 1)[1]
+    return leaf.rsplit(":", 1)[-1]
+
+
+SERVICE_VERSION_PARTS = {"redis": 3, "mysql": 3, "postgres": 2}
 
 
 @dataclass(frozen=True)
@@ -114,6 +127,44 @@ class LogResult:
     code: str
     lines: tuple[str, ...]
     detail: str | None = None
+
+
+@dataclass(frozen=True)
+class DashboardService:
+    key: str
+    title: str
+    group: str
+    state: str
+    detail: str
+    configured: bool = True
+    connection: tuple[str, ...] = ()
+
+    @property
+    def active(self) -> bool:
+        return self.state == "active"
+
+
+@dataclass(frozen=True)
+class DashboardSnapshot:
+    services: tuple[DashboardService, ...]
+
+    @property
+    def controllable(self) -> tuple[DashboardService, ...]:
+        return tuple(service for service in self.services if service.configured)
+
+    @property
+    def all_active(self) -> bool:
+        return bool(self.controllable) and all(
+            service.active for service in self.controllable
+        )
+
+
+@dataclass(frozen=True)
+class DashboardOperationResult:
+    ok: bool
+    summary: str
+    detail: str | None
+    snapshot: DashboardSnapshot
 
 
 class OperationFailure(RuntimeError):
@@ -217,6 +268,144 @@ class PaddockController:
             enabled_state=self._enabled_state(service.unit),
             lingering=lingering,
             connection=(f"REDIS_HOST={REDIS_HOST}", f"REDIS_PORT={service.port}"),
+        )
+
+    def dashboard_snapshot(self) -> DashboardSnapshot:
+        """Return the services a user can understand and control from the UI."""
+        payload = report.build(self.store, self.runner)
+        units = {unit["name"]: unit["state"] for unit in payload["units"]}
+        services: list[DashboardService] = [
+            DashboardService(
+                "caddy",
+                "Caddy",
+                "Infrastructure",
+                units.get("paddock-caddy.service", "unknown"),
+                "Web server · HTTPS and .test sites",
+            ),
+            DashboardService(
+                "dns",
+                "DNS",
+                "Infrastructure",
+                units.get("paddock-dns.service", "unknown"),
+                "Local .test domain resolution",
+            ),
+        ]
+        services.extend(
+            DashboardService(
+                f"php-{runtime['minor']}",
+                f"PHP {runtime['minor']}",
+                "PHP",
+                runtime["state"],
+                (
+                    f"PHP {runtime['release']} · FPM"
+                    if runtime["release"] else "PHP-FPM runtime"
+                ),
+            )
+            for runtime in payload["php"]["runtimes"]
+        )
+        configured = {service["name"]: service for service in payload["services"]}
+        names = {"redis": "Redis", "mysql": "MySQL", "postgres": "PostgreSQL"}
+        for name in CATALOG:
+            service = configured.get(name)
+            catalog = CATALOG[name]
+            image = service["image"] if service else catalog.image
+            version = service_image_version(image)
+            if len(version.split(".")) < SERVICE_VERSION_PARTS[name]:
+                # Older Paddock records may still carry a moving major tag.
+                # Present the exact version now pinned by the catalog.
+                version = service_image_version(catalog.image)
+            port = int(service["address"].rsplit(":", 1)[1]) if service else catalog.port
+            connection = tuple(
+                f"{key}={port if key in {'REDIS_PORT', 'DB_PORT'} else value}"
+                for key, value in catalog.connection
+            )
+            services.append(
+                DashboardService(
+                    name,
+                    names[name],
+                    "Services",
+                    service["state"] if service else "not-configured",
+                    f"{version} · Port: {port}",
+                    configured=service is not None,
+                    connection=connection,
+                )
+            )
+        return DashboardSnapshot(tuple(services))
+
+    def set_service_active(self, name: str, active: bool) -> DashboardOperationResult:
+        """Configure when necessary, then start or temporarily stop one service."""
+        if name not in CATALOG:
+            return DashboardOperationResult(
+                False,
+                f"Unknown service: {name}",
+                "Choose a service from Paddock's catalog.",
+                self.dashboard_snapshot(),
+            )
+
+        try:
+            configured = any(service.name == name for service in self.services.list())
+            if name == REDIS:
+                if active and not configured:
+                    result = self.apply_redis(self.redis_candidate_defaults())
+                else:
+                    result = (self.start_redis() if active else self.stop_redis())
+                return DashboardOperationResult(
+                    result.ok, result.summary, result.detail, self.dashboard_snapshot()
+                )
+
+            if active and not configured:
+                self.services.configure(name)
+            self.services.control("start" if active else "stop", name)
+        except (OSError, RuntimeError, ValueError) as error:
+            action = "start" if active else "stop"
+            return DashboardOperationResult(
+                False,
+                f"Could not {action} {name}",
+                str(error),
+                self.dashboard_snapshot(),
+            )
+
+        title = {"mysql": "MySQL", "postgres": "PostgreSQL", "redis": "Redis"}[name]
+        return DashboardOperationResult(
+            True,
+            f"{'Started' if active else 'Stopped'} {title}",
+            None,
+            self.dashboard_snapshot(),
+        )
+
+    def set_dashboard_active(self, active: bool) -> DashboardOperationResult:
+        """Start or temporarily stop every configured Paddock service."""
+        action = "start" if active else "stop"
+        failures: list[str] = []
+        with exclusive_lock(self.operation_lock):
+            configured = self.services.list()
+            if active:
+                try:
+                    Lifecycle(self.runner).control("start")
+                except (LifecycleError, OSError, ValueError) as error:
+                    failures.append(str(error))
+            for service in configured:
+                try:
+                    self.services.control(action, service.name)
+                except (OSError, RuntimeError, ValueError) as error:
+                    failures.append(f"{service.name}: {error}")
+            if not active:
+                try:
+                    Lifecycle(self.runner).control("stop")
+                except (LifecycleError, OSError, ValueError) as error:
+                    failures.append(str(error))
+
+        snapshot = self.dashboard_snapshot()
+        verb = "Started" if active else "Stopped"
+        if failures:
+            return DashboardOperationResult(
+                False,
+                f"{verb} some Paddock services",
+                "\n".join(failures),
+                snapshot,
+            )
+        return DashboardOperationResult(
+            True, f"{verb} all configured services", None, snapshot
         )
 
     def validate_redis(self, candidate: RedisConfigCandidate) -> tuple[FieldError, ...]:
