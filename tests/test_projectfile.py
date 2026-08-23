@@ -19,7 +19,7 @@ from paddock.projectfile import (
     DeclaredService, ProjectFile, ProjectFileError, Reconciler, parse,
 )
 from paddock.runtimes import RuntimeRegistry
-from paddock.services import ServiceManager
+from paddock.service_instances import ServiceInstanceManager
 from paddock.sites import SiteManager
 from paddock.state import StateStore
 from paddock.tls import SecurityManager
@@ -119,9 +119,12 @@ class ReconcilerFixture:
         projector = CaddyProjector(self.paths, runner)
         self.sites = SiteManager(self.store, projector)
         self.security = SecurityManager(self.store, projector)
-        self.services = ServiceManager(
-            self.store, runner, which=lambda _: "/usr/bin/podman"
+        tokens = iter(("11111111", "22222222", "33333333", "44444444"))
+        self.services = ServiceInstanceManager(
+            self.store, runner, port_available=lambda _host, _port: True,
+            token=lambda: next(tokens),
         )
+        self.services.initialize()
         self.reconciler = Reconciler(self.store, self.sites, self.security, self.services)
 
     def tearDown(self) -> None:
@@ -178,19 +181,22 @@ class ReconcilerTests(ReconcilerFixture, unittest.TestCase):
 
 
 class SharedServiceTests(ReconcilerFixture, unittest.TestCase):
-    """One instance per machine, so this project does not get to repoint it."""
+    """A declaration is safe only when its type selects at most one instance."""
 
     def test_a_declared_service_is_configured_and_started(self) -> None:
         self.reconciler.apply(self.root, ProjectFile(
             php="8.5", services=(DeclaredService("postgres"),)))
-        self.assertEqual(["postgres"], [s.name for s in self.services.list()])
+        self.assertEqual(["postgres"], [s.type for s in self.services.list()])
         self.assertIn(
-            ["systemctl", "--user", "enable", "--now", "paddock-service-postgres.service"],
+            ["systemctl", "--user", "start", "paddock-service-postgres-11111111.service"],
             self.calls,
         )
 
     def test_a_version_disagreement_is_reported_not_imposed(self) -> None:
-        self.services.configure("postgres", "docker.io/library/postgres:17")
+        self.services.create(
+            "postgres", "PostgreSQL", 5432,
+            image="docker.io/library/postgres:17",
+        )
         steps = self.reconciler.apply(self.root, ProjectFile(
             php="8.5", services=(DeclaredService("postgres", version="16"),)))
         blocked = [s for s in steps if s.outcome == "blocked"]
@@ -203,22 +209,32 @@ class SharedServiceTests(ReconcilerFixture, unittest.TestCase):
         )
 
     def test_a_port_disagreement_is_also_reported(self) -> None:
-        self.services.configure("redis")
+        self.services.create("redis", "Redis", 6379)
         steps = self.reconciler.apply(self.root, ProjectFile(
             php="8.5", services=(DeclaredService("redis", port=6380),)))
         self.assertIn("blocked", self.outcomes(steps))
 
     def test_a_matching_but_stopped_service_is_started(self) -> None:
-        self.services.configure("redis")
-        stopped = ServiceManager(
+        instance = self.services.create("redis", "Redis", 6379)
+        stopped = ServiceInstanceManager(
             self.store,
             lambda command, **kw: subprocess.CompletedProcess(command, 0, "inactive\n", ""),
-            which=lambda _: "/usr/bin/podman",
+            port_available=lambda _host, _port: True,
         )
         reconciler = Reconciler(self.store, self.sites, self.security, stopped)
         steps = reconciler.apply(self.root, ProjectFile(
             php="8.5", services=(DeclaredService("redis"),)))
-        self.assertIn("start redis", [s.detail for s in steps])
+        self.assertIn("start Redis", [s.detail for s in steps])
+
+    def test_multiple_instances_are_reported_as_ambiguous(self) -> None:
+        first = self.services.create("redis", "Application Cache", 6379)
+        second = self.services.create("redis", "Queue Cache", 6380)
+        steps = self.reconciler.apply(self.root, ProjectFile(
+            php="8.5", services=(DeclaredService("redis"),)))
+        blocked = [step for step in steps if step.outcome == "blocked"]
+        self.assertEqual(1, len(blocked))
+        self.assertIn(first.id, blocked[0].detail)
+        self.assertIn(second.id, blocked[0].detail)
 
 
 if __name__ == "__main__":

@@ -130,6 +130,20 @@ class ServiceMessageTests(unittest.TestCase):
                 continue
             self.assertIn(action, cli.ACTION_DONE, action)
 
+    def test_add_accepts_a_type_and_display_name(self) -> None:
+        arguments = cli.parser().parse_args(
+            ["service", "add", "redis", "--name", "Queue Cache", "--port", "6380"]
+        )
+        self.assertEqual("redis", arguments.target)
+        self.assertEqual("Queue Cache", arguments.label)
+        self.assertEqual(6380, arguments.port)
+
+    def test_lifecycle_commands_address_an_instance_id(self) -> None:
+        arguments = cli.parser().parse_args(
+            ["service", "restart", "redis-a1b2c3d4"]
+        )
+        self.assertEqual("redis-a1b2c3d4", arguments.target)
+
 
 class ErrorHandlingTests(unittest.TestCase):
     """Every deliberate failure is one line and exit 78.

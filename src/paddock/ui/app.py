@@ -20,6 +20,8 @@ from paddock.application import (
     PaddockController,
     RedisConfigCandidate,
     RedisSnapshot,
+    ServiceInstanceOperationResult,
+    ServiceInstancesSnapshot,
 )
 from paddock.paths import Paths
 from paddock.state import StateStore
@@ -49,6 +51,7 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.tasks = AsyncOperationRunner(dispatch)
         self.redis_snapshot: RedisSnapshot | None = None
         self.dashboard_snapshot: DashboardSnapshot | None = None
+        self.service_instances_snapshot: ServiceInstancesSnapshot | None = None
         self.mutation_busy = False
         self.redis_transitioning = False
         self.refresh_source = 0
@@ -147,24 +150,8 @@ class PaddockWindow(Adw.ApplicationWindow):
     def _build_services(self) -> Gtk.Widget:
         self.services_view = Gtk.Stack()
         self.services_view.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
-        self.pending_service_status: dict[str, Adw.StatusPage] = {}
         self.services_view.add_named(self._build_service_catalog(), "catalog")
-        self.services_view.add_named(self._build_redis_detail(), "redis")
-        self.services_view.add_named(
-            self._build_pending_service_detail(
-                "mysql", "MySQL", "relational database", "network-server-symbolic"
-            ),
-            "mysql",
-        )
-        self.services_view.add_named(
-            self._build_pending_service_detail(
-                "postgres",
-                "PostgreSQL",
-                "relational database",
-                "network-server-symbolic",
-            ),
-            "postgres",
-        )
+        self.services_view.add_named(self._build_instance_detail(), "detail")
         return self.services_view
 
     def _build_service_catalog(self) -> Gtk.Widget:
@@ -178,39 +165,24 @@ class PaddockWindow(Adw.ApplicationWindow):
         clamp.set_child(content)
         page.set_child(clamp)
 
+        heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         title = Gtk.Label(label="Services", xalign=0)
+        title.set_hexpand(True)
         title.add_css_class("paddock-dashboard-heading")
-        content.append(title)
+        heading.append(title)
+        self.add_service_button = Gtk.Button(label="Add Service")
+        self.add_service_button.add_css_class("suggested-action")
+        self.add_service_button.connect("clicked", self._open_add_service)
+        heading.append(self.add_service_button)
+        content.append(heading)
 
-        cache = PaddockSection("Cache")
-        databases = PaddockSection("Databases")
-        content.append(cache)
-        content.append(databases)
+        self.service_cache_section = PaddockSection("Cache")
+        self.service_database_section = PaddockSection("Databases")
+        content.append(self.service_cache_section)
+        content.append(self.service_database_section)
 
         self.service_catalog_rows: dict[str, PaddockServiceRow] = {}
         self.service_toggle_buttons: dict[str, Gtk.Button] = {}
-        for key, name, detail, section in (
-            ("redis", "Redis", "8.10.1 · Port: 6379", cache),
-            ("mysql", "MySQL", "8.4.11 · Port: 3306", databases),
-            ("postgres", "PostgreSQL", "17.11 · Port: 5432", databases),
-        ):
-            row = PaddockServiceRow(
-                name, detail, "not-configured", show_detail=True
-            )
-            row.set_activatable(True)
-            settings = Gtk.Button(label="Settings")
-            settings.set_valign(Gtk.Align.CENTER)
-            settings.connect("clicked", self._open_service_settings, key)
-            toggle = Gtk.Button(label="Start")
-            toggle.set_valign(Gtk.Align.CENTER)
-            toggle.add_css_class("suggested-action")
-            toggle.connect("clicked", self._toggle_service, key)
-            row.add_suffix(settings)
-            row.add_suffix(toggle)
-            row.connect("activated", self._show_service_info, key)
-            section.add(row)
-            self.service_catalog_rows[key] = row
-            self.service_toggle_buttons[key] = toggle
 
         self.services_split = Adw.OverlaySplitView()
         self.services_split.set_sidebar_position(Gtk.PackType.END)
@@ -220,6 +192,62 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.services_split.set_sidebar(self._build_service_info_sidebar())
         self.services_split.set_show_sidebar(False)
         return self.services_split
+
+    def _build_instance_detail(self) -> Gtk.Widget:
+        page = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+        )
+        clamp = Adw.Clamp(maximum_size=760, tightening_threshold=600)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        content.add_css_class("paddock-page")
+        clamp.set_child(content)
+        page.set_child(clamp)
+
+        header = Adw.HeaderBar()
+        self.instance_detail_title = Gtk.Label(label="Service")
+        header.set_title_widget(self.instance_detail_title)
+        back = Gtk.Button.new_from_icon_name("go-previous-symbolic")
+        back.set_tooltip_text("Back to all services")
+        back.connect("clicked", self._show_service_catalog)
+        header.pack_start(back)
+        content.append(header)
+
+        settings = PaddockSection("Settings")
+        name_row = Adw.ActionRow(title="Display name")
+        self.instance_name_entry = Gtk.Entry(max_length=80, valign=Gtk.Align.CENTER)
+        self.instance_name_entry.set_width_chars(24)
+        name_row.add_suffix(self.instance_name_entry)
+        settings.add(name_row)
+        port_row = Adw.ActionRow(title="Port")
+        self.instance_port_entry = Gtk.Entry(max_length=5, valign=Gtk.Align.CENTER)
+        self.instance_port_entry.set_input_purpose(Gtk.InputPurpose.DIGITS)
+        self.instance_port_entry.set_width_chars(8)
+        port_row.add_suffix(self.instance_port_entry)
+        settings.add(port_row)
+        autostart_row = Adw.ActionRow(title="Start automatically with Paddock")
+        self.instance_autostart_check = Gtk.CheckButton(valign=Gtk.Align.CENTER)
+        autostart_row.add_suffix(self.instance_autostart_check)
+        settings.add(autostart_row)
+        content.append(settings)
+        self.instance_save_button = Gtk.Button(label="Save")
+        self.instance_save_button.set_halign(Gtk.Align.END)
+        self.instance_save_button.add_css_class("suggested-action")
+        self.instance_save_button.connect("clicked", self._save_instance_settings)
+        content.append(self.instance_save_button)
+
+        danger = PaddockSection("Danger zone", danger=True)
+        removal = Adw.ActionRow(
+            title="Remove service",
+            subtitle="Permanently remove this instance and its data volume.",
+        )
+        self.instance_remove_button = Gtk.Button(label="Remove")
+        self.instance_remove_button.add_css_class("destructive-action")
+        self.instance_remove_button.connect("clicked", self._confirm_remove_instance)
+        removal.add_suffix(self.instance_remove_button)
+        danger.add(removal)
+        content.append(danger)
+        return page
 
     def _build_service_info_sidebar(self) -> Gtk.Widget:
         sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -244,26 +272,80 @@ class PaddockWindow(Adw.ApplicationWindow):
         environment.set_child(self.service_info_env)
         section.add(environment)
         content.append(section)
+
+        logs = PaddockSection("Recent logs")
+        log_row = Gtk.ListBoxRow(selectable=False, activatable=False)
+        self.service_log_preview = Gtk.TextView(
+            editable=False, cursor_visible=False, monospace=True
+        )
+        self.service_log_preview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        self.service_log_preview.get_buffer().set_text("Select a service to load logs.")
+        preview = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+            min_content_height=150,
+        )
+        preview.set_child(self.service_log_preview)
+        log_row.set_child(preview)
+        logs.add(log_row)
+        content.append(logs)
+        self.service_open_logs = Gtk.Button(label="Open Logs")
+        self.service_open_logs.set_halign(Gtk.Align.END)
+        self.service_open_logs.connect("clicked", self._open_selected_service_logs)
+        content.append(self.service_open_logs)
         sidebar.append(content)
         return sidebar
 
     def _build_pending_service_detail(
         self, key: str, title: str, kind: str, icon_name: str
     ) -> Gtk.Widget:
-        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        page.append(self._service_detail_header(title))
-        status = Adw.StatusPage(
-            title=title,
-            description=(
-                f"Paddock can run this {kind}, but native configuration controls "
-                "will be added in the next service-management slice."
-            ),
-            icon_name=icon_name,
+        page = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
         )
-        status.set_vexpand(True)
-        page.append(status)
-        self.pending_service_status[key] = status
+        clamp = Adw.Clamp(maximum_size=760, tightening_threshold=600)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        content.add_css_class("paddock-page")
+        clamp.set_child(content)
+        page.set_child(clamp)
+        content.append(self._service_detail_header(title))
+        content.append(self._build_service_settings_form(key))
         return page
+
+    def _build_service_settings_form(self, key: str) -> Gtk.Widget:
+        section = PaddockSection("Settings")
+        name_row = Adw.ActionRow(title="Display name")
+        name = Gtk.Entry(max_length=80, valign=Gtk.Align.CENTER)
+        name.set_hexpand(False)
+        name.set_width_chars(24)
+        name_row.add_suffix(name)
+        section.add(name_row)
+
+        port_row = Adw.ActionRow(title="Port")
+        port = Gtk.Entry(max_length=5, valign=Gtk.Align.CENTER)
+        port.set_input_purpose(Gtk.InputPurpose.DIGITS)
+        port.set_width_chars(8)
+        port.set_valign(Gtk.Align.CENTER)
+        port_row.add_suffix(port)
+        section.add(port_row)
+
+        autostart_row = Adw.ActionRow(title="Start automatically with Paddock")
+        autostart = Gtk.CheckButton(valign=Gtk.Align.CENTER)
+        autostart_row.add_suffix(autostart)
+        section.add(autostart_row)
+
+        save = Gtk.Button(label="Save")
+        save.set_halign(Gtk.Align.END)
+        save.add_css_class("suggested-action")
+        save.connect("clicked", self._save_service_settings, key)
+        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        container.append(section)
+        container.append(save)
+        self.service_name_entries[key] = name
+        self.service_port_entries[key] = port
+        self.service_autostart_checks[key] = autostart
+        self.service_save_buttons[key] = save
+        return container
 
     def _service_detail_header(self, title: str) -> Gtk.Widget:
         header = Adw.HeaderBar()
@@ -275,47 +357,280 @@ class PaddockWindow(Adw.ApplicationWindow):
         return header
 
     def _open_service_settings(self, _button, key: str) -> None:
-        self.services_view.set_visible_child_name(key)
+        service = self._service_instance(key)
+        if service is None:
+            return
+        self.selected_service_key = key
+        self.instance_detail_title.set_label(service.label)
+        self.instance_name_entry.set_text(service.label)
+        self.instance_port_entry.set_text(str(service.port))
+        self.instance_autostart_check.set_active(service.autostart)
+        self.services_view.set_visible_child_name("detail")
+
+    def _save_instance_settings(self, _button) -> None:
+        if self.mutation_busy:
+            return
+        key = getattr(self, "selected_service_key", None)
+        if key is None:
+            return
+        label = self.instance_name_entry.get_text()
+        port_text = self.instance_port_entry.get_text().strip()
+        if not port_text.isdigit():
+            self.show_error("Invalid port", "Enter a numeric port between 1024 and 65535.")
+            return
+        port = int(port_text)
+        autostart = self.instance_autostart_check.get_active()
+        self.operation_spinner.set_tooltip_text(f"Saving {label.strip()} settings")
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            f"service-instance-settings-{key}",
+            lambda: self.controller.update_service_instance(
+                key, label, port, autostart
+            ),
+            self._instance_operation_finished,
+            self._instance_operation_failed,
+        )
 
     def _show_service_info(self, _row, key: str) -> None:
         self.selected_service_key = key
-        if self.dashboard_snapshot is not None:
-            service = next(
-                (
-                    service
-                    for service in self.dashboard_snapshot.services
-                    if service.key == key
-                ),
-                None,
-            )
-            if service is not None:
-                self._update_service_info(service)
+        service = self._service_instance(key)
+        if service is not None:
+            self._update_service_info(service)
         self.services_split.set_show_sidebar(True)
+        self._load_service_log_preview(key)
 
     def _update_service_info(self, service) -> None:
-        self.service_info_title.set_label(service.title)
+        self.service_info_title.set_label(service.label)
         self.service_info_env.set_label("\n".join(service.connection))
+        self.service_open_logs.set_sensitive(not self.mutation_busy)
+
+    def _load_service_log_preview(self, key: str) -> None:
+        self.service_log_preview.get_buffer().set_text("Loading recent logs…")
+        self.tasks.submit(
+            f"service-log-preview-{key}",
+            lambda: self.controller.service_instance_logs(key, 12),
+            lambda result: self._show_service_log_preview(key, result),
+            lambda error: self._show_service_log_preview_error(key, error),
+        )
+
+    def _show_service_log_preview(self, key: str, result: LogResult) -> None:
+        if getattr(self, "selected_service_key", None) != key:
+            return
+        if result.ok:
+            text = "\n".join(result.lines) or "No log entries were found."
+        else:
+            text = result.detail or "Logs are unavailable."
+        self.service_log_preview.get_buffer().set_text(text)
+
+    def _show_service_log_preview_error(self, key: str, error: BaseException) -> None:
+        if getattr(self, "selected_service_key", None) == key:
+            self.service_log_preview.get_buffer().set_text(str(error))
+
+    def _open_selected_service_logs(self, _button=None) -> None:
+        key = getattr(self, "selected_service_key", None)
+        if key is None or self.mutation_busy:
+            return
+        service = self._service_instance(key)
+        if service is None:
+            return
+        self.operation_spinner.set_tooltip_text(f"Loading {service.label} logs")
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            f"service-logs-{key}",
+            lambda: self.controller.service_instance_logs(key, 200),
+            lambda result: self._show_service_logs(key, service.label, result),
+            lambda error: self._service_logs_failed(service.label, error),
+        )
+
+    def _service_logs_failed(self, title: str, error: BaseException) -> None:
+        self._set_mutation_busy(False)
+        self.show_error(f"{title} logs unavailable", str(error))
+
+    def _show_service_logs(self, key: str, title: str, result: LogResult) -> None:
+        self._set_mutation_busy(False)
+        if not result.ok:
+            self.show_error(f"{title} logs unavailable", result.detail or result.code)
+            return
+        text = "\n".join(result.lines)
+        text = f"{text}\n" if text else f"No {title} log entries were found.\n"
+        dialog = Adw.AlertDialog(
+            heading=f"{title} Logs",
+            body="Latest 200 journal lines. Log content is displayed as plain text.",
+        )
+        dialog.add_css_class("paddock-dialog")
+        view = Gtk.TextView(editable=False, cursor_visible=False, monospace=True)
+        view.set_wrap_mode(Gtk.WrapMode.NONE)
+        view.get_buffer().set_text(text)
+        scroller = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+            vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+            min_content_width=640,
+            min_content_height=360,
+        )
+        scroller.set_child(view)
+        dialog.set_extra_child(scroller)
+        dialog.add_response("close", "Close")
+        dialog.add_response("refresh", "Refresh")
+        dialog.add_response("copy", "Copy")
+        dialog.set_default_response("close")
+
+        def response(_dialog, response_name: str) -> None:
+            if response_name == "refresh":
+                self._open_selected_service_logs()
+            elif response_name == "copy":
+                self.get_clipboard().set(text)
+                self.show_toast(f"{title} logs copied")
+
+        dialog.connect("response", response)
+        dialog.present(self)
 
     def _toggle_service(self, _button, key: str) -> None:
-        if self.mutation_busy or self.dashboard_snapshot is None:
+        if self.mutation_busy:
             return
-        service = next(
-            (service for service in self.dashboard_snapshot.services if service.key == key),
-            None,
-        )
+        service = self._service_instance(key)
         if service is None:
             return
         active = not service.active
         self.operation_spinner.set_tooltip_text(
-            f"{'Starting' if active else 'Stopping'} {service.title}"
+            f"{'Starting' if active else 'Stopping'} {service.label}"
         )
         self._set_mutation_busy(True)
         self.tasks.submit(
             f"service-mutation-{key}",
-            lambda: self.controller.set_service_active(key, active),
-            self._dashboard_operation_finished,
-            self._dashboard_operation_failed,
+            lambda: self.controller.set_service_instance_active(key, active),
+            self._instance_operation_finished,
+            self._instance_operation_failed,
         )
+
+    def _service_instance(self, instance_id: str):
+        if self.service_instances_snapshot is None:
+            return None
+        return next(
+            (item for item in self.service_instances_snapshot.instances if item.id == instance_id),
+            None,
+        )
+
+    def _open_add_service(self, _button=None) -> None:
+        if self.mutation_busy:
+            return
+        kinds = ("redis", "mysql", "postgres")
+        labels = ("Redis", "MySQL", "PostgreSQL")
+        ports = (6379, 3306, 5432)
+        dialog = Adw.AlertDialog(
+            heading="Add Service",
+            body="Create an independent service instance with its own port and data volume.",
+        )
+        dialog.add_css_class("paddock-dialog")
+        form = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        form.set_size_request(440, -1)
+        form.append(Gtk.Label(label="Service type", xalign=0))
+        kind = Gtk.DropDown.new_from_strings(labels)
+        form.append(kind)
+        form.append(Gtk.Label(label="Display name", xalign=0))
+        name = Gtk.Entry(max_length=80)
+        form.append(name)
+        form.append(Gtk.Label(label="Loopback port", xalign=0))
+        port = Gtk.Entry(input_purpose=Gtk.InputPurpose.DIGITS)
+        form.append(port)
+        autostart = Gtk.CheckButton(label="Start automatically with Paddock")
+        form.append(autostart)
+
+        def selected_changed(dropdown, _property=None) -> None:
+            index = dropdown.get_selected()
+            existing = self.service_instances_snapshot.instances if self.service_instances_snapshot else ()
+            used_labels = {item.label.casefold() for item in existing}
+            ordinal = 1
+            candidate = labels[index]
+            while candidate.casefold() in used_labels:
+                ordinal += 1
+                candidate = f"{labels[index]} {ordinal}"
+            used_ports = {item.port for item in existing}
+            candidate_port = ports[index]
+            while candidate_port in used_ports:
+                candidate_port += 1
+            name.set_text(candidate)
+            port.set_text(str(candidate_port))
+
+        kind.connect("notify::selected", selected_changed)
+        selected_changed(kind)
+        dialog.set_extra_child(form)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("add", "Add")
+        dialog.set_default_response("add")
+        dialog.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
+
+        def response(_dialog, response_name: str) -> None:
+            if response_name != "add":
+                return
+            port_text = port.get_text().strip()
+            if not port_text.isdigit():
+                self.show_error("Invalid port", "Enter a numeric port between 1024 and 65535.")
+                return
+            index = kind.get_selected()
+            self.operation_spinner.set_tooltip_text(f"Adding {name.get_text().strip()}")
+            self._set_mutation_busy(True)
+            self.tasks.submit(
+                "service-instance-add",
+                lambda: self.controller.create_service_instance(
+                    kinds[index], name.get_text(), int(port_text), autostart.get_active()
+                ),
+                self._instance_operation_finished,
+                self._instance_operation_failed,
+            )
+
+        dialog.connect("response", response)
+        dialog.present(self)
+
+    def _confirm_remove_instance(self, _button=None) -> None:
+        key = getattr(self, "selected_service_key", None)
+        service = self._service_instance(key) if key else None
+        if service is None or self.mutation_busy:
+            return
+        dialog = Adw.AlertDialog(
+            heading=f"Remove {service.label}?",
+            body=(
+                f"This permanently removes the instance and deletes its data volume "
+                f"{service.volume}. This cannot be undone."
+            ),
+        )
+        dialog.add_css_class("paddock-dialog")
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("remove", "Remove")
+        dialog.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
+
+        def response(_dialog, response_name: str) -> None:
+            if response_name != "remove":
+                return
+            self._set_mutation_busy(True)
+            self.tasks.submit(
+                f"service-instance-remove-{service.id}",
+                lambda: self.controller.remove_service_instance(service.id),
+                self._instance_removed,
+                self._instance_operation_failed,
+            )
+
+        dialog.connect("response", response)
+        dialog.present(self)
+
+    def _instance_removed(self, result: ServiceInstanceOperationResult) -> None:
+        self.services_view.set_visible_child_name("catalog")
+        self.services_split.set_show_sidebar(False)
+        self.selected_service_key = None
+        self._instance_operation_finished(result)
+
+    def _instance_operation_finished(self, result: ServiceInstanceOperationResult) -> None:
+        self._set_mutation_busy(False)
+        self._show_service_instances(result.snapshot)
+        if result.ok:
+            self.show_toast(result.summary)
+        else:
+            self.show_error(result.summary, result.detail or "Unknown service error")
+        self.refresh()
+
+    def _instance_operation_failed(self, error: BaseException) -> None:
+        self._set_mutation_busy(False)
+        self.show_error("Service operation failed", str(error))
+        self.refresh()
 
     def _show_service_catalog(self, _button=None) -> None:
         self.services_view.set_visible_child_name("catalog")
@@ -350,10 +665,10 @@ class PaddockWindow(Adw.ApplicationWindow):
         page.set_child(clamp)
 
         content.append(self._service_detail_header("Redis"))
+        content.append(self._build_service_settings_form("redis"))
         self.redis_hero = PaddockHero(
             "content-loading-symbolic", "Redis", "Shared service · loopback only"
         )
-        content.append(self.redis_hero)
 
         hero_actions = self.redis_hero.actions
         self.redis_start = Gtk.Button(label="Start")
@@ -388,7 +703,6 @@ class PaddockWindow(Adw.ApplicationWindow):
         ):
             row.set_subtitle_selectable(True)
             details.add(row)
-        content.append(details)
 
         actions = PaddockSection("Manage")
         configuration = Adw.ActionRow(
@@ -398,7 +712,6 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.redis_configure = Gtk.Button(label="Configure")
         self.redis_configure.connect("clicked", self._open_redis_editor)
         configuration.add_suffix(self.redis_configure)
-        actions.add(configuration)
 
         environment = Adw.ActionRow(
             title="Laravel environment",
@@ -418,21 +731,21 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.redis_logs_button.connect("clicked", self._load_redis_logs)
         logs.add_suffix(self.redis_logs_button)
         actions.add(logs)
-        content.append(actions)
 
         danger = PaddockSection("Danger zone", danger=True)
         removal = Adw.ActionRow(
             title="Remove Redis",
-            subtitle="Remove the service while preserving its data, or explicitly delete both.",
+            subtitle="Permanently remove the service and its data volume.",
         )
         removal_buttons = Gtk.Box(spacing=6)
         self.redis_remove = Gtk.Button(label="Remove")
-        self.redis_remove.connect("clicked", self._confirm_redis_removal)
+        self.redis_remove.set_valign(Gtk.Align.CENTER)
+        self.redis_remove.add_css_class("destructive-action")
+        self.redis_remove.connect("clicked", self._confirm_redis_data_deletion)
         self.redis_delete = Gtk.Button(label="Delete Data…")
         self.redis_delete.add_css_class("destructive-action")
         self.redis_delete.connect("clicked", self._confirm_redis_data_deletion)
         removal_buttons.append(self.redis_remove)
-        removal_buttons.append(self.redis_delete)
         removal.add_suffix(removal_buttons)
         danger.add(removal)
         content.append(danger)
@@ -455,10 +768,10 @@ class PaddockWindow(Adw.ApplicationWindow):
             lambda error: self.show_error("Dashboard refresh failed", str(error)),
         )
         self.tasks.submit(
-            "snapshot",
-            self.controller.redis_snapshot,
-            self._show_snapshot,
-            lambda error: self.show_error("Status refresh failed", str(error)),
+            "service-instances-snapshot",
+            self.controller.service_instances_snapshot,
+            self._show_service_instances,
+            lambda error: self.show_error("Service refresh failed", str(error)),
         )
 
     def _show_dashboard(self, snapshot: DashboardSnapshot) -> None:
@@ -476,28 +789,6 @@ class PaddockWindow(Adw.ApplicationWindow):
                     service.title, service.detail, service.state
                 )
             )
-            catalog_row = self.service_catalog_rows.get(service.key)
-            if catalog_row is not None:
-                catalog_row.set_state(service.state)
-                catalog_row.set_subtitle(service.detail)
-            toggle = self.service_toggle_buttons.get(service.key)
-            if toggle is not None:
-                toggle.set_label("Stop" if service.active else "Start")
-                if service.active:
-                    toggle.remove_css_class("suggested-action")
-                else:
-                    toggle.add_css_class("suggested-action")
-            if getattr(self, "selected_service_key", None) == service.key:
-                self._update_service_info(service)
-            pending_status = self.pending_service_status.get(service.key)
-            if pending_status is not None:
-                state = "Running" if service.active else "Not configured"
-                if service.configured and not service.active:
-                    state = service.state.replace("-", " ").title()
-                pending_status.set_description(
-                    f"{state} · {service.detail}. Native configuration controls "
-                    "will be added in the next service-management slice."
-                )
         if not any(service.group == "PHP" for service in snapshot.services):
             self.dashboard_php.add(
                 Adw.ActionRow(
@@ -517,6 +808,52 @@ class PaddockWindow(Adw.ApplicationWindow):
             self.dashboard_toggle.set_tooltip_text(
                 "Start every configured Paddock service"
             )
+
+    def _show_service_instances(self, snapshot: ServiceInstancesSnapshot) -> None:
+        self.service_instances_snapshot = snapshot
+        self.service_cache_section.clear()
+        self.service_database_section.clear()
+        self.service_catalog_rows.clear()
+        self.service_toggle_buttons.clear()
+        for service in snapshot.instances:
+            section = (
+                self.service_cache_section
+                if service.type == "redis" else self.service_database_section
+            )
+            row = PaddockServiceRow(
+                service.label,
+                f"{service.version} · Port: {service.port}",
+                service.state,
+                show_detail=True,
+            )
+            row.set_activatable(True)
+            settings = Gtk.Button(label="Settings")
+            settings.set_valign(Gtk.Align.CENTER)
+            settings.connect("clicked", self._open_service_settings, service.id)
+            toggle = Gtk.Button(label="Stop" if service.active else "Start")
+            toggle.set_valign(Gtk.Align.CENTER)
+            if not service.active:
+                toggle.add_css_class("suggested-action")
+            toggle.connect("clicked", self._toggle_service, service.id)
+            row.add_suffix(settings)
+            row.add_suffix(toggle)
+            row.connect("activated", self._show_service_info, service.id)
+            section.add(row)
+            self.service_catalog_rows[service.id] = row
+            self.service_toggle_buttons[service.id] = toggle
+            if getattr(self, "selected_service_key", None) == service.id:
+                self._update_service_info(service)
+                if self.services_view.get_visible_child_name() == "detail":
+                    if not self.instance_name_entry.has_focus():
+                        self.instance_name_entry.set_text(service.label)
+                    if not self.instance_port_entry.has_focus():
+                        self.instance_port_entry.set_text(str(service.port))
+                    self.instance_autostart_check.set_active(service.autostart)
+        if not any(item.type == "redis" for item in snapshot.instances):
+            self.service_cache_section.add(Adw.ActionRow(title="No cache services added"))
+        if not any(item.type != "redis" for item in snapshot.instances):
+            self.service_database_section.add(Adw.ActionRow(title="No databases added"))
+        self._update_action_sensitivity()
 
     def _toggle_dashboard_services(self, _button) -> None:
         if self.mutation_busy or self.dashboard_snapshot is None:
@@ -559,15 +896,6 @@ class PaddockWindow(Adw.ApplicationWindow):
     def _show_snapshot(self, snapshot: RedisSnapshot) -> None:
         self.redis_snapshot = snapshot
         presentation = present_redis(snapshot)
-        if presentation.view != "configured":
-            self.redis_transitioning = False
-            self.redis_empty.set_title(presentation.title)
-            self.redis_empty.set_description(presentation.description)
-            self.redis_empty.set_icon_name(presentation.icon_name)
-            self.redis_add.set_visible(presentation.view == "unconfigured")
-            self.redis_view.set_visible_child_name("status")
-            return
-
         self.redis_view.set_visible_child_name("configured")
         self.redis_hero.set_presentation(
             presentation.title,
@@ -589,6 +917,8 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.redis_start.set_visible(presentation.can_start)
         self.redis_stop.set_visible(presentation.can_stop)
         self.redis_restart.set_visible(presentation.can_restart)
+        self.redis_remove.set_sensitive(snapshot.configured)
+        self.redis_delete.set_sensitive(snapshot.configured)
         self.redis_transitioning = presentation.transitioning
         self._update_action_sensitivity()
 
@@ -636,20 +966,19 @@ class PaddockWindow(Adw.ApplicationWindow):
         self._update_action_sensitivity()
 
     def _update_action_sensitivity(self) -> None:
-        sensitive = not (self.mutation_busy or self.redis_transitioning)
-        for button in (self.redis_start, self.redis_stop, self.redis_restart):
-            button.set_sensitive(sensitive)
-        self.redis_add.set_sensitive(sensitive)
-        self.redis_configure.set_sensitive(sensitive)
+        sensitive = not self.mutation_busy
         self.dashboard_toggle.set_sensitive(sensitive)
+        self.add_service_button.set_sensitive(sensitive)
+        self.instance_save_button.set_sensitive(sensitive)
+        self.instance_remove_button.set_sensitive(sensitive)
         for button in self.service_toggle_buttons.values():
             button.set_sensitive(sensitive)
-        for button in (
-            self.redis_logs_button,
-            self.redis_remove,
-            self.redis_delete,
-        ):
-            button.set_sensitive(sensitive)
+        if hasattr(self, "service_open_logs"):
+            selected = getattr(self, "selected_service_key", None)
+            service = self._service_instance(selected) if selected else None
+            self.service_open_logs.set_sensitive(
+                sensitive and service is not None
+            )
 
     def _open_redis_editor(
         self,
@@ -817,6 +1146,7 @@ class PaddockWindow(Adw.ApplicationWindow):
             heading="Redis Logs",
             body="Latest 200 journal lines. Log content is displayed as plain text.",
         )
+        dialog.add_css_class("paddock-dialog")
         view = Gtk.TextView(editable=False, cursor_visible=False, monospace=True)
         view.set_wrap_mode(Gtk.WrapMode.NONE)
         view.get_buffer().set_text(text)

@@ -5,10 +5,9 @@ The point is that a freshly cloned repository becomes usable with one command.
 
 Two rules shape everything here. Applying must be **idempotent**, so running it
 twice is indistinguishable from running it once. And it must never silently
-undo something it did not declare: supporting services are shared between
-projects by ADR 0010, so a project asking for PostgreSQL 17 on a machine
-already running 16 is told about the difference rather than having its wish
-imposed on everyone else's databases.
+undo something it did not declare: supporting service instances can be shared
+between projects, so a declaration is reconciled only when its type identifies
+zero or one instance. Multiple instances are reported as ambiguous.
 
 The schema is strict. An unknown key is a hard error, matching the state
 records, because a typo in a committed file should fail loudly on the first
@@ -224,16 +223,27 @@ class Reconciler:
         if not declared.services:
             return []
         steps: list[Step] = []
-        configured = {service.name: service for service in self.services.list()}
         for wanted in declared.services:
-            current = configured.get(wanted.name)
+            matches = self.services.list(wanted.name)
             image, port = wanted.image(), wanted.port or CATALOG[wanted.name].port
-            if current is None:
+            if len(matches) > 1:
+                identities = ", ".join(
+                    f"{instance.label} ({instance.id})" for instance in matches
+                )
+                steps.append(Step(
+                    "blocked",
+                    f"{wanted.name} is ambiguous; choose an instance: {identities}",
+                ))
+                continue
+            if not matches:
                 steps.append(Step("changed", f"start {wanted.name} on 127.0.0.1:{port}"))
                 if not dry_run:
-                    self.services.configure(wanted.name, image, port)
-                    self.services.control("start", wanted.name)
+                    current = self.services.create(
+                        wanted.name, CATALOG_LABELS[wanted.name], port, image=image
+                    )
+                    self.services.control("start", current.id)
                 continue
+            current = matches[0]
             # Services are shared between projects. Changing one because this
             # project asked would silently repoint every other project's
             # database, so the difference is reported and left alone.
@@ -244,10 +254,13 @@ class Reconciler:
                     f"{current.address}; this project asks for {image} on port {port}",
                 ))
                 continue
-            if self.services.state_of(current) != "active":
-                steps.append(Step("changed", f"start {wanted.name}"))
+            if self.services.states_of([current]).get(current.id) != "active":
+                steps.append(Step("changed", f"start {current.label}"))
                 if not dry_run:
-                    self.services.control("start", wanted.name)
+                    self.services.control("start", current.id)
             else:
-                steps.append(Step("unchanged", f"{wanted.name} already running"))
+                steps.append(Step("unchanged", f"{current.label} already running"))
         return steps
+
+
+CATALOG_LABELS = {"redis": "Redis", "mysql": "MySQL", "postgres": "PostgreSQL"}

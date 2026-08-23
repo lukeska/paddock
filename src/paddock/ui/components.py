@@ -17,7 +17,10 @@ def design_css() -> str:
 .paddock-shell .navigation-sidebar row:selected { border-radius: 0; }
 .paddock-shell button,
 .paddock-shell button.suggested-action,
-.paddock-shell button.destructive-action {
+.paddock-shell button.destructive-action,
+.paddock-dialog button,
+.paddock-dialog button.suggested-action,
+.paddock-dialog button.destructive-action {
   min-height: 22px;
   min-width: 22px;
   padding: 3px 8px;
@@ -28,8 +31,10 @@ def design_css() -> str:
   box-shadow: none;
   font-size: 0.82em;
 }
-.paddock-shell button.suggested-action { color: var(--accent-color); }
-.paddock-shell button.destructive-action { color: var(--error-bg-color); }
+.paddock-shell button.suggested-action,
+.paddock-dialog button.suggested-action { color: var(--accent-color); }
+.paddock-shell button.destructive-action,
+.paddock-dialog button.destructive-action { color: var(--error-bg-color); }
 .paddock-hero,
 .paddock-card {
   background-color: var(--card-bg-color);

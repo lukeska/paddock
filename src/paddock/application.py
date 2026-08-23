@@ -24,6 +24,7 @@ from .atomic import atomic_write, exclusive_lock
 from .lifecycle import Lifecycle, LifecycleError
 from . import report
 from .services import CATALOG, Service, ServiceManager
+from .service_instances import ServiceInstanceManager
 from .state import StateError, StateStore
 
 
@@ -138,6 +139,8 @@ class DashboardService:
     detail: str
     configured: bool = True
     connection: tuple[str, ...] = ()
+    port: int | None = None
+    autostart: bool = False
 
     @property
     def active(self) -> bool:
@@ -165,6 +168,37 @@ class DashboardOperationResult:
     summary: str
     detail: str | None
     snapshot: DashboardSnapshot
+
+
+@dataclass(frozen=True)
+class ServiceInstanceView:
+    id: str
+    type: str
+    label: str
+    image: str
+    version: str
+    port: int
+    volume: str
+    state: str
+    autostart: bool
+    connection: tuple[str, ...]
+
+    @property
+    def active(self) -> bool:
+        return self.state == "active"
+
+
+@dataclass(frozen=True)
+class ServiceInstancesSnapshot:
+    instances: tuple[ServiceInstanceView, ...]
+
+
+@dataclass(frozen=True)
+class ServiceInstanceOperationResult:
+    ok: bool
+    summary: str
+    detail: str | None
+    snapshot: ServiceInstancesSnapshot
 
 
 class OperationFailure(RuntimeError):
@@ -220,6 +254,9 @@ class PaddockController:
         self.store = store
         self.runner = runner
         self.services = ServiceManager(store, runner, which)
+        self.instances = ServiceInstanceManager(
+            store, runner, port_available=port_available
+        )
         self.port_available = port_available or _port_available
 
     @property
@@ -230,6 +267,99 @@ class PaddockController:
     def redis_candidate_defaults() -> RedisConfigCandidate:
         catalog = CATALOG[REDIS]
         return RedisConfigCandidate(image=catalog.image, port=catalog.port)
+
+    def service_instances_snapshot(self) -> ServiceInstancesSnapshot:
+        instances = self.instances.list()
+        states = self.instances.states_of(instances)
+        enabled = self.instances.enabled_states(instances)
+        return ServiceInstancesSnapshot(tuple(
+            ServiceInstanceView(
+                instance.id,
+                instance.type,
+                instance.label,
+                instance.image,
+                service_image_version(instance.image),
+                instance.port,
+                instance.volume,
+                states.get(instance.id, "unknown"),
+                enabled.get(instance.id) == "enabled",
+                self.instances.connection_lines(instance.id),
+            )
+            for instance in instances
+        ))
+
+    def create_service_instance(
+        self, type: str, label: str, port: int | None, autostart: bool
+    ) -> ServiceInstanceOperationResult:
+        try:
+            instance = self.instances.create(type, label, port)
+            self.instances.set_autostart(instance.id, autostart)
+            self.instances.control("start", instance.id)
+        except (OSError, RuntimeError, ValueError) as error:
+            return ServiceInstanceOperationResult(
+                False, "Service could not be added", str(error),
+                self.service_instances_snapshot(),
+            )
+        return ServiceInstanceOperationResult(
+            True, f"Added and started {instance.label}", None,
+            self.service_instances_snapshot()
+        )
+
+    def set_service_instance_active(
+        self, instance_id: str, active: bool
+    ) -> ServiceInstanceOperationResult:
+        try:
+            instance = self.instances.require(instance_id)
+            self.instances.control("start" if active else "stop", instance_id)
+        except (OSError, RuntimeError, ValueError) as error:
+            return ServiceInstanceOperationResult(
+                False, "Service state could not be changed", str(error),
+                self.service_instances_snapshot(),
+            )
+        return ServiceInstanceOperationResult(
+            True, f"{'Started' if active else 'Stopped'} {instance.label}", None,
+            self.service_instances_snapshot(),
+        )
+
+    def update_service_instance(
+        self, instance_id: str, label: str, port: int, autostart: bool
+    ) -> ServiceInstanceOperationResult:
+        try:
+            before = self.instances.require(instance_id)
+            was_active = self.instances.states_of([before]).get(instance_id) == "active"
+            port_changed = before.port != port
+            updated = self.instances.update(instance_id, label, port)
+            self.instances.set_autostart(instance_id, autostart)
+            if was_active and port_changed:
+                self.instances.control("restart", instance_id)
+        except (OSError, RuntimeError, ValueError) as error:
+            return ServiceInstanceOperationResult(
+                False, "Service settings could not be saved", str(error),
+                self.service_instances_snapshot(),
+            )
+        return ServiceInstanceOperationResult(
+            True, f"Saved {updated.label} settings", None,
+            self.service_instances_snapshot(),
+        )
+
+    def remove_service_instance(self, instance_id: str) -> ServiceInstanceOperationResult:
+        try:
+            removed = self.instances.remove(instance_id)
+        except (OSError, RuntimeError, ValueError) as error:
+            return ServiceInstanceOperationResult(
+                False, "Service could not be removed", str(error),
+                self.service_instances_snapshot(),
+            )
+        return ServiceInstanceOperationResult(
+            True, f"Removed {removed.label} and its data", None,
+            self.service_instances_snapshot(),
+        )
+
+    def service_instance_logs(self, instance_id: str, lines: int = 200) -> LogResult:
+        try:
+            return LogResult(True, "ok", self.instances.logs(instance_id, lines))
+        except (OSError, RuntimeError, ValueError) as error:
+            return LogResult(False, "logs_failed", (), str(error))
 
     def redis_snapshot(self) -> RedisSnapshot:
         """Return one non-raising Redis view for the CLI or native app.
@@ -303,34 +433,133 @@ class PaddockController:
             )
             for runtime in payload["php"]["runtimes"]
         )
-        configured = {service["name"]: service for service in payload["services"]}
-        names = {"redis": "Redis", "mysql": "MySQL", "postgres": "PostgreSQL"}
-        for name in CATALOG:
-            service = configured.get(name)
-            catalog = CATALOG[name]
-            image = service["image"] if service else catalog.image
-            version = service_image_version(image)
-            if len(version.split(".")) < SERVICE_VERSION_PARTS[name]:
-                # Older Paddock records may still carry a moving major tag.
-                # Present the exact version now pinned by the catalog.
-                version = service_image_version(catalog.image)
-            port = int(service["address"].rsplit(":", 1)[1]) if service else catalog.port
-            connection = tuple(
-                f"{key}={port if key in {'REDIS_PORT', 'DB_PORT'} else value}"
-                for key, value in catalog.connection
-            )
+        for instance in self.service_instances_snapshot().instances:
             services.append(
                 DashboardService(
-                    name,
-                    names[name],
+                    instance.id,
+                    instance.label,
                     "Services",
-                    service["state"] if service else "not-configured",
-                    f"{version} · Port: {port}",
-                    configured=service is not None,
-                    connection=connection,
+                    instance.state,
+                    f"{instance.version} · Port: {instance.port}",
+                    connection=instance.connection,
+                    port=instance.port,
+                    autostart=instance.autostart,
                 )
             )
         return DashboardSnapshot(tuple(services))
+
+    def save_service_settings(
+        self, name: str, label: str, port: int, autostart: bool
+    ) -> DashboardOperationResult:
+        """Persist a UI label and safely apply the only editable runtime setting."""
+        label = label.strip()
+        if name not in CATALOG:
+            return DashboardOperationResult(
+                False, "Unknown service", name, self.dashboard_snapshot()
+            )
+        if not label or len(label) > 80 or any(ord(character) < 32 for character in label):
+            return DashboardOperationResult(
+                False,
+                "Invalid display name",
+                "Enter between 1 and 80 printable characters.",
+                self.dashboard_snapshot(),
+            )
+        if isinstance(port, bool) or not isinstance(port, int) or not 1024 <= port <= 65535:
+            return DashboardOperationResult(
+                False,
+                "Invalid port",
+                "Choose an unprivileged port between 1024 and 65535.",
+                self.dashboard_snapshot(),
+            )
+
+        configured = {service.name: service for service in self.services.list()}
+        conflict = next(
+            (
+                service
+                for service in configured.values()
+                if service.name != name and service.port == port
+            ),
+            None,
+        )
+        if conflict is not None:
+            return DashboardOperationResult(
+                False,
+                "Port is already used by Paddock",
+                f"{conflict.name} already uses port {port}.",
+                self.dashboard_snapshot(),
+            )
+
+        current = configured.get(name)
+        port_changed = current is None or current.port != port
+        if port_changed and not self.port_available(REDIS_HOST, port):
+            return DashboardOperationResult(
+                False,
+                "Port is unavailable",
+                f"Another process is already listening on {REDIS_HOST}:{port}.",
+                self.dashboard_snapshot(),
+            )
+
+        try:
+            if port_changed:
+                if name == REDIS:
+                    image = current.image if current else CATALOG[name].image
+                    result = self.apply_redis(
+                        RedisConfigCandidate(image, port), start_after_add=False
+                    )
+                    if not result.ok:
+                        return DashboardOperationResult(
+                            False, result.summary, result.detail, self.dashboard_snapshot()
+                        )
+                else:
+                    was_active = current is not None and self.services.state_of(current) == "active"
+                    self.services.configure(name, port=port)
+                    if was_active:
+                        self.services.control("restart", name)
+
+            self.services.set_autostart(name, autostart)
+
+            self.store.update(
+                "settings",
+                lambda settings: {
+                    **settings,
+                    "service_labels": {
+                        **settings.get("service_labels", {}),
+                        name: label,
+                    },
+                },
+            )
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return DashboardOperationResult(
+                False,
+                "Service settings could not be saved",
+                str(error),
+                self.dashboard_snapshot(),
+            )
+
+        return DashboardOperationResult(
+            True,
+            f"Saved {label} settings",
+            None,
+            self.dashboard_snapshot(),
+        )
+
+    def _enabled_states(self, units: list[str]) -> dict[str, str]:
+        if not units:
+            return {}
+        try:
+            result = self.runner(
+                ["systemctl", "--user", "is-enabled", *units],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        except OSError:
+            return {unit: "unknown" for unit in units}
+        lines = (result.stdout or "").splitlines()
+        return {
+            unit: lines[index].strip() if index < len(lines) else "unknown"
+            for index, unit in enumerate(units)
+        }
 
     def set_service_active(self, name: str, active: bool) -> DashboardOperationResult:
         """Configure when necessary, then start or temporarily stop one service."""
@@ -378,7 +607,7 @@ class PaddockController:
         action = "start" if active else "stop"
         failures: list[str] = []
         with exclusive_lock(self.operation_lock):
-            configured = self.services.list()
+            configured = self.instances.list()
             if active:
                 try:
                     Lifecycle(self.runner).control("start")
@@ -386,9 +615,9 @@ class PaddockController:
                     failures.append(str(error))
             for service in configured:
                 try:
-                    self.services.control(action, service.name)
+                    self.instances.control(action, service.id)
                 except (OSError, RuntimeError, ValueError) as error:
-                    failures.append(f"{service.name}: {error}")
+                    failures.append(f"{service.label}: {error}")
             if not active:
                 try:
                     Lifecycle(self.runner).control("stop")
@@ -556,6 +785,9 @@ class PaddockController:
         return self._control_redis("restart")
 
     def redis_logs(self, lines: int = 200) -> LogResult:
+        return self.service_logs(REDIS, lines)
+
+    def service_logs(self, name: str, lines: int = 200) -> LogResult:
         if isinstance(lines, bool) or not isinstance(lines, int) or not 1 <= lines <= 5000:
             return LogResult(
                 False,
@@ -563,12 +795,14 @@ class PaddockController:
                 (),
                 "Log line count must be between 1 and 5000.",
             )
-        if self._configured_redis() is None:
-            return LogResult(False, "not_configured", (), "Redis is not configured.")
+        try:
+            service = self.services.require(name)
+        except (ValueError, StateError) as error:
+            return LogResult(False, "not_configured", (), str(error))
         command = [
             "journalctl",
             "--user-unit",
-            "paddock-service-redis.service",
+            service.unit,
             "--no-pager",
             "--output=cat",
             "--lines",

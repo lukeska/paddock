@@ -5,7 +5,7 @@ fields are rejected so that package upgrades cannot silently misinterpret state.
 
 | Record | Path | Shape |
 | --- | --- | --- |
-| Settings | `$XDG_CONFIG_HOME/paddock/settings.json` | `schema_version`, nullable `default_php` |
+| Settings | `$XDG_CONFIG_HOME/paddock/settings.json` | `schema_version`, nullable `default_php`, optional `service_labels` map |
 | Sites | `$XDG_CONFIG_HOME/paddock/sites.json` | `schema_version`, site map |
 | Runtimes | `$XDG_DATA_HOME/paddock/runtimes.json` | `schema_version`, runtime map |
 | Services | `$XDG_CONFIG_HOME/paddock/services.json` | `schema_version`, service map |
@@ -15,6 +15,9 @@ selected PHP minor, and TLS state. A runtime record contains its minor version,
 absolute activation path, and artifact SHA-256 digest. A service record
 contains its lowercase name, registry-qualified container image, published
 loopback port, and data volume name.
+
+`service_labels` is UI-only metadata keyed by stable catalog service name. Old
+version-1 settings records without it normalize to an empty map when read.
 
 Every record is validated before writing. Writes hold a record-specific advisory
 lock, create a mode-`0600` candidate in the destination directory, flush it,

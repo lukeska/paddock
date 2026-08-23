@@ -340,6 +340,22 @@ class ServiceManager:
             detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
             raise ServiceError(f"cannot {action} {name}: {detail}")
 
+    def set_autostart(self, name: str, enabled: bool) -> None:
+        """Enable or disable future startup without changing current runtime state."""
+        service = self.require(name)
+        if enabled:
+            self.project(service)
+        action = "enable" if enabled else "disable"
+        result = self.runner(
+            ["systemctl", "--user", action, service.unit],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
+            raise ServiceError(f"cannot {action} {name}: {detail}")
+
     def states_of(self, services: list[Service]) -> dict[str, str]:
         """One `systemctl` call for every service, not one per service.
 

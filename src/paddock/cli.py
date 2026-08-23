@@ -6,7 +6,6 @@ from pathlib import Path
 import sys
 
 from . import __version__
-from .application import PaddockController, RedisConfigCandidate
 from .execution import plan_composer, plan_php
 from .caddy import CaddyProjector
 from .diagnostics import doctor, service_status
@@ -19,7 +18,7 @@ from .projectfile import PROJECT_FILE, ProjectFileError, Reconciler, find, load
 from .projects import write_project_selection
 from .report import build as build_report
 from .runtimes import RuntimeRegistry
-from .services import ServiceManager
+from .service_instances import ServiceInstanceManager
 from .state import StateStore
 from .sites import SiteManager
 from .tls import SecurityManager
@@ -54,11 +53,11 @@ OVERVIEW: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     )),
     ("Supporting services", (
         ("services", "List configured services and their state"),
-        ("service add NAME", "Configure a service, e.g. redis"),
-        ("service start NAME", "Start a configured service"),
-        ("service stop NAME", "Stop a configured service"),
-        ("service logs NAME", "Show one service's journal"),
-        ("service remove NAME", "Forget a service; data is kept unless asked"),
+        ("service add TYPE", "Add a service instance, e.g. redis"),
+        ("service start ID", "Start a service instance"),
+        ("service stop ID", "Stop a service instance"),
+        ("service logs ID", "Show one instance's journal"),
+        ("service remove ID", "Remove an instance and its data"),
     )),
     ("Services", (
         ("status", "Report whether the Paddock services are running"),
@@ -197,20 +196,17 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
     service = command(
         "service",
         "Configure and control a supporting service.",
-        epilog="Supported services: mysql, postgres, redis. Data outlives "
-               "`remove` unless --delete-data is given. Pin a different "
+        epilog="Supported services: mysql, postgres, redis. Removing an instance "
+               "also permanently removes its data. Pin a different "
                "version with --image, e.g. --image docker.io/library/postgres:16.",
     )
     service.add_argument(
         "action", choices=("add", "start", "stop", "restart", "logs", "remove")
     )
-    service.add_argument("name", help="service name, e.g. redis")
+    service.add_argument("target", help="service type for add; instance ID otherwise")
+    service.add_argument("--name", dest="label", help="add: display name for the instance")
     service.add_argument("--image", help="override the container image")
     service.add_argument("--port", type=int, help="override the published loopback port")
-    service.add_argument("--follow", action="store_true", help="logs: keep printing new entries")
-    service.add_argument(
-        "--delete-data", action="store_true", help="remove: also delete the data volume"
-    )
     logs = command("logs", "Show the journal for the Caddy, PHP-FPM, and DNS services.")
     logs.add_argument("--follow", action="store_true", help="keep printing new entries")
     setup = command(
@@ -300,79 +296,51 @@ def run(argv: list[str] | None = None) -> int:
     if arguments.command == "unsecure":
         site = security.unsecure(arguments.name, Path.cwd())
         print(f"Unsecured http://{site.name}.test")
-    services = ServiceManager(store)
-    controller = PaddockController(store)
+    instances = ServiceInstanceManager(store)
     if arguments.command == "services":
-        for service in services.list():
-            print(f"{service.name}\t{services.state_of(service)}\t{service.address}\t{service.image}")
+        configured = instances.list()
+        states = instances.states_of(configured)
+        for service in configured:
+            print(
+                f"{service.id}\t{service.type}\t{service.label}\t"
+                f"{states.get(service.id, 'unknown')}\t{service.address}\t{service.image}"
+            )
         return 0
     if arguments.command == "service":
-        redis = arguments.name == "redis"
         if arguments.action == "add":
-            if redis:
-                current = controller.redis_snapshot()
-                defaults = controller.redis_candidate_defaults()
-                candidate = RedisConfigCandidate(
-                    arguments.image or current.image or defaults.image,
-                    (
-                        arguments.port
-                        if arguments.port is not None
-                        else current.port or defaults.port
-                    ),
-                )
-                result = controller.apply_redis(candidate, start_after_add=False)
-                if not result.ok:
-                    raise ValueError(result.detail or result.summary)
-                service = services.require("redis")
-            else:
-                service = services.configure(arguments.name, arguments.image, arguments.port)
-            print(f"Configured {service.name} on {service.address} using {service.image}")
-            settings = (
-                list(controller.redis_snapshot().connection)
-                if redis else services.connection_lines(service.name)
+            kind = arguments.target
+            label = arguments.label or {
+                "redis": "Redis", "mysql": "MySQL", "postgres": "PostgreSQL",
+            }.get(kind, kind)
+            service = instances.create(
+                kind, label, arguments.port, image=arguments.image
             )
+            instances.control("start", service.id)
+            print(
+                f"Added and started {service.label} ({service.id}) on "
+                f"{service.address} using {service.image}"
+            )
+            settings = instances.connection_lines(service.id)
             if settings:
                 # A database nobody can connect to is not much use, and the
                 # .env is the user's file to edit.
                 print("\nAdd to your .env:")
                 for line in settings:
                     print(f"  {line}")
-            print(f'\nStart it with "paddock service start {service.name}"')
             return 0
         if arguments.action == "logs":
-            if redis and not arguments.follow:
-                result = controller.redis_logs()
-                if not result.ok:
-                    raise ValueError(result.detail or "cannot read Redis logs")
-                for line in result.lines:
-                    print(line)
-                return 0
-            return services.logs(arguments.name, arguments.follow)
+            for line in instances.logs(arguments.target):
+                print(line)
+            return 0
         if arguments.action == "remove":
-            if redis:
-                service = services.require("redis")
-                result = controller.remove_redis(delete_data=arguments.delete_data)
-                if not result.ok:
-                    raise ValueError(result.detail or result.summary)
-            else:
-                service = services.remove(arguments.name, delete_data=arguments.delete_data)
-            kept = "and its data volume was deleted" if arguments.delete_data else (
-                f"data volume {service.volume} was kept"
-            )
-            print(f"Removed {service.name}; {kept}")
+            service = instances.remove(arguments.target)
+            print(f"Removed {service.label} ({service.id}) and deleted {service.volume}")
             return 0
         # Re-project before starting so an edited image or port takes effect
         # and a missing file cannot leave the unit inert via ConditionPathExists.
-        if redis:
-            result = getattr(controller, f"{arguments.action}_redis")()
-            if not result.ok:
-                raise ValueError(result.detail or result.summary)
-        else:
-            if arguments.action in {"start", "restart"}:
-                services.project(services.require(arguments.name))
-            services.control(arguments.action, arguments.name)
-        service = services.require(arguments.name)
-        print(f"{ACTION_DONE[arguments.action]} {service.name} on {service.address}")
+        instances.control(arguments.action, arguments.target)
+        service = instances.require(arguments.target)
+        print(f"{ACTION_DONE[arguments.action]} {service.label} on {service.address}")
         return 0
     if arguments.command == "init":
         root = Path.cwd()
@@ -382,7 +350,7 @@ def run(argv: list[str] | None = None) -> int:
                 f"no {PROJECT_FILE} in {root}; create one describing the site, "
                 "PHP version, and services this project needs"
             )
-        steps = Reconciler(store, manager, security, services).apply(
+        steps = Reconciler(store, manager, security, instances).apply(
             root, load(path), dry_run=arguments.dry_run
         )
         for step in steps:

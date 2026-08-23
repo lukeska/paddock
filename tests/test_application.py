@@ -89,6 +89,9 @@ class MutableRunner(StateRunner):
 class DashboardRunner:
     def __init__(self, states: dict[str, str]):
         self.states = dict(states)
+        self.enabled = {
+            unit for unit in states if unit.startswith("paddock-service-")
+        }
         self.calls: list[list[str]] = []
 
     def __call__(self, command, *args, **kwargs):
@@ -100,7 +103,20 @@ class DashboardRunner:
             units = command[command.index("is-active") + 1:]
             output = "".join(f"{self.states.get(unit, 'inactive')}\n" for unit in units)
             return subprocess.CompletedProcess(command, 0, output, "")
+        if "is-enabled" in command:
+            units = command[command.index("is-enabled") + 1:]
+            output = "".join(
+                f"{'enabled' if unit in self.enabled else 'disabled'}\n"
+                for unit in units
+            )
+            return subprocess.CompletedProcess(command, 0, output, "")
         if command[:3] == ["systemctl", "--user", "enable"]:
+            self.enabled.add(command[-1])
+            if "--now" in command:
+                self.states[command[-1]] = "active"
+        elif command[:3] == ["systemctl", "--user", "disable"]:
+            self.enabled.discard(command[-1])
+        elif command[:3] == ["systemctl", "--user", "start"]:
             self.states[command[-1]] = "active"
         elif command[:3] == ["systemctl", "--user", "stop"]:
             self.states[command[-1]] = "inactive"
@@ -217,88 +233,53 @@ class DashboardTests(ApplicationFixture, unittest.TestCase):
             "paddock-service-redis.service": value,
         }
 
-    def test_snapshot_lists_core_php_and_the_complete_service_catalog(self) -> None:
+    def test_snapshot_lists_core_php_and_configured_instances(self) -> None:
         self.install_php()
-        self.configure_redis()
-        snapshot = self.controller(DashboardRunner(self.states("active"))).dashboard_snapshot()
+        runner = DashboardRunner(self.states("active"))
+        controller = self.controller(runner)
+        instance = controller.instances.create("redis", "Application Cache", 6379)
+        runner.states[instance.unit] = "active"
+        runner.enabled.add(instance.unit)
+        snapshot = controller.dashboard_snapshot()
         by_key = {service.key: service for service in snapshot.services}
         self.assertEqual(
-            {"caddy", "dns", "php-8.4", "redis", "mysql", "postgres"},
+            {"caddy", "dns", "php-8.4", instance.id},
             set(by_key),
         )
-        self.assertTrue(by_key["redis"].active)
-        self.assertFalse(by_key["mysql"].configured)
-        self.assertEqual("not-configured", by_key["mysql"].state)
-        self.assertEqual("8.10.1 · Port: 6379", by_key["redis"].detail)
-        self.assertEqual("8.4.11 · Port: 3306", by_key["mysql"].detail)
-        self.assertEqual("17.11 · Port: 5432", by_key["postgres"].detail)
+        self.assertTrue(by_key[instance.id].active)
+        self.assertEqual("Application Cache", by_key[instance.id].title)
+        self.assertEqual("8.10.1 · Port: 6379", by_key[instance.id].detail)
         self.assertEqual(
             ("REDIS_HOST=127.0.0.1", "REDIS_PORT=6379"),
-            by_key["redis"].connection,
+            by_key[instance.id].connection,
         )
         self.assertTrue(snapshot.all_active)
 
-    def test_service_catalog_detail_uses_configured_image_tag_and_port(self) -> None:
-        self.configure_redis(image="docker.io/library/redis:8.2.0", port=6380)
-        snapshot = self.controller(DashboardRunner(self.states("active"))).dashboard_snapshot()
-        redis = next(service for service in snapshot.services if service.key == "redis")
-        self.assertEqual("8.2.0 · Port: 6380", redis.detail)
-
-    def test_old_moving_image_tag_uses_the_new_exact_catalog_version(self) -> None:
-        self.configure_redis(image="docker.io/library/redis:8")
-        snapshot = self.controller(DashboardRunner(self.states("active"))).dashboard_snapshot()
-        redis = next(service for service in snapshot.services if service.key == "redis")
-        self.assertEqual("8.10.1 · Port: 6379", redis.detail)
-
-    def test_starting_unconfigured_database_adds_defaults_and_starts_it(self) -> None:
-        runner = DashboardRunner(self.states("inactive"))
-        result = self.controller(runner).set_service_active("mysql", True)
-        self.assertTrue(result.ok)
-        service = self.store.read("services")["services"]["mysql"]
-        self.assertEqual("docker.io/library/mysql:8.4.11", service["image"])
-        self.assertIn(
-            [
-                "systemctl",
-                "--user",
-                "enable",
-                "--now",
-                "paddock-service-mysql.service",
-            ],
-            runner.calls,
-        )
-
-    def test_stopping_one_configured_service_does_not_remove_it(self) -> None:
-        self.configure_redis()
-        runner = DashboardRunner(self.states("active"))
-        result = self.controller(runner).set_service_active("redis", False)
-        self.assertTrue(result.ok)
-        self.assertIn("redis", self.store.read("services")["services"])
-        self.assertIn(
-            ["systemctl", "--user", "stop", "paddock-service-redis.service"],
-            runner.calls,
-        )
-
     def test_start_all_controls_the_target_and_only_configured_services(self) -> None:
         self.install_php()
-        self.configure_redis()
         runner = DashboardRunner(self.states("inactive"))
-        result = self.controller(runner).set_dashboard_active(True)
+        controller = self.controller(runner)
+        instance = controller.instances.create("redis", "Cache", 6379)
+        runner.states[instance.unit] = "inactive"
+        result = controller.set_dashboard_active(True)
         self.assertTrue(result.ok)
         self.assertTrue(result.snapshot.all_active)
         self.assertIn(["systemctl", "start", "paddock.target"], runner.calls)
         self.assertIn(
-            ["systemctl", "--user", "enable", "--now", "paddock-service-redis.service"],
+            ["systemctl", "--user", "start", instance.unit],
             runner.calls,
         )
         self.assertFalse(any("mysql" in part for call in runner.calls for part in call))
 
     def test_stop_all_stops_user_services_before_the_system_target(self) -> None:
-        self.configure_redis()
         runner = DashboardRunner(self.states("active"))
-        result = self.controller(runner).set_dashboard_active(False)
+        controller = self.controller(runner)
+        instance = controller.instances.create("redis", "Cache", 6379)
+        runner.states[instance.unit] = "active"
+        result = controller.set_dashboard_active(False)
         self.assertTrue(result.ok)
         user_stop = runner.calls.index(
-            ["systemctl", "--user", "stop", "paddock-service-redis.service"]
+            ["systemctl", "--user", "stop", instance.unit]
         )
         target_stop = runner.calls.index(["systemctl", "stop", "paddock.target"])
         self.assertLess(user_stop, target_stop)
@@ -524,6 +505,22 @@ class RedisLifecycleAndLogsTests(ApplicationFixture, unittest.TestCase):
         self.assertEqual(("one", "two", "three"), result.lines)
         journal = next(call for call in runner.calls if call[0] == "journalctl")
         self.assertEqual(["--lines", "2"], journal[-2:])
+
+    def test_generic_service_logs_target_the_selected_service_unit(self) -> None:
+        runner = MutableRunner()
+        controller = self.controller(runner)
+        controller.services.configure("mysql")
+        result = controller.service_logs("mysql", 12)
+        self.assertTrue(result.ok)
+        journal = next(call for call in runner.calls if call[0] == "journalctl")
+        self.assertIn("paddock-service-mysql.service", journal)
+        self.assertEqual(["--lines", "12"], journal[-2:])
+
+    def test_generic_logs_explain_an_unconfigured_service(self) -> None:
+        runner = MutableRunner()
+        result = self.controller(runner).service_logs("postgres", 12)
+        self.assertEqual("not_configured", result.code)
+        self.assertNotIn("journalctl", [part for call in runner.calls for part in call])
 
     def test_invalid_log_limit_never_invokes_journalctl(self) -> None:
         runner = MutableRunner()

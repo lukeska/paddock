@@ -34,6 +34,7 @@ class DesignCssTests(unittest.TestCase):
     def test_buttons_are_compact_outlined_and_square(self) -> None:
         css = design_css()
         self.assertIn(".paddock-shell button", css)
+        self.assertIn(".paddock-dialog button", css)
         self.assertIn("font-size: 0.82em", css)
         self.assertIn("border: 1px solid var(--border-color)", css)
         self.assertIn("border-radius: 0", css)

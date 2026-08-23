@@ -13,7 +13,7 @@ class SchemaError(ValueError):
 
 
 def default_settings() -> dict[str, Any]:
-    return {"schema_version": SCHEMA_VERSION, "default_php": None}
+    return {"schema_version": SCHEMA_VERSION, "default_php": None, "service_labels": {}}
 
 
 def default_runtimes() -> dict[str, Any]:
@@ -53,12 +53,27 @@ def _version(value: dict[str, Any], label: str) -> None:
 
 def validate_settings(raw: Any) -> dict[str, Any]:
     value = _object(raw, "settings")
-    _exact_keys(value, {"schema_version", "default_php"}, "settings")
+    unknown = set(value) - {"schema_version", "default_php", "service_labels"}
+    missing = {"schema_version", "default_php"} - set(value)
+    if missing:
+        raise SchemaError(f"settings is missing: {', '.join(sorted(missing))}")
+    if unknown:
+        raise SchemaError(f"settings has unknown fields: {', '.join(sorted(unknown))}")
     _version(value, "settings")
     default = value["default_php"]
     if default is not None and (not isinstance(default, str) or not default):
         raise SchemaError("settings.default_php must be null or a non-empty string")
-    return value
+    labels = _object(value.get("service_labels", {}), "settings.service_labels")
+    for name, label in labels.items():
+        if not isinstance(name, str) or not name:
+            raise SchemaError("settings.service_labels keys must be non-empty strings")
+        if not isinstance(label, str) or not label or len(label) > 80:
+            raise SchemaError(
+                f"settings.service_labels.{name} must be a string between 1 and 80 characters"
+            )
+        if any(ord(character) < 32 for character in label):
+            raise SchemaError(f"settings.service_labels.{name} contains control characters")
+    return {**value, "service_labels": labels}
 
 
 def validate_runtimes(raw: Any) -> dict[str, Any]:
@@ -139,4 +154,3 @@ DEFAULTS: dict[str, Callable[[], dict[str, Any]]] = {
     "sites": default_sites,
     "services": default_services,
 }
-

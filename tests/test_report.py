@@ -17,6 +17,7 @@ import unittest
 from paddock import report
 from paddock.paths import Paths
 from paddock.runtimes import RuntimeRegistry
+from paddock.service_instances import ServiceInstanceManager
 from paddock.services import ServiceManager
 from paddock.state import StateStore
 
@@ -33,9 +34,14 @@ class FakeSystemctl:
         self.calls.append(list(command))
         if command[0] == "loginctl":
             return subprocess.CompletedProcess(command, 0, self.lingering + "\n", "")
-        if "is-active" in command:
-            units = command[command.index("is-active") + 1:]
-            body = "".join(f"{self.states.get(unit, 'active')}\n" for unit in units)
+        operation = next(
+            (candidate for candidate in ("is-active", "is-enabled") if candidate in command),
+            None,
+        )
+        if operation:
+            units = command[command.index(operation) + 1:]
+            default = "active" if operation == "is-active" else "enabled"
+            body = "".join(f"{self.states.get(unit, default)}\n" for unit in units)
             return subprocess.CompletedProcess(command, 0, body, "")
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -118,6 +124,29 @@ class PayloadTests(ReportFixture, unittest.TestCase):
         self.assertEqual("redis", service["name"])
         self.assertEqual("127.0.0.1:6379", service["address"])
         self.assertEqual("paddock-service-redis.service", service["unit"])
+
+    def test_instance_report_carries_identity_runtime_and_autostart(self) -> None:
+        manager = ServiceInstanceManager(
+            self.store,
+            FakeSystemctl(),
+            port_available=lambda _host, _port: True,
+            token=lambda: "a1b2c3d4",
+        )
+        manager.initialize()
+        instance = manager.create("redis", "Application Cache", 6381)
+        payload = report.build_service_instances(self.store, FakeSystemctl())
+        self.assertEqual(1, len(payload))
+        self.assertEqual(instance.id, payload[0]["id"])
+        self.assertEqual("Application Cache", payload[0]["label"])
+        self.assertEqual("active", payload[0]["state"])
+        self.assertTrue(payload[0]["autostart"])
+        self.assertEqual("127.0.0.1:6381", payload[0]["address"])
+
+    def test_instance_report_does_not_create_a_missing_registry(self) -> None:
+        path = ServiceInstanceManager(self.store).path
+        self.assertFalse(path.exists())
+        self.assertEqual([], report.build_service_instances(self.store, FakeSystemctl()))
+        self.assertFalse(path.exists())
 
 
 class CostTests(ReportFixture, unittest.TestCase):

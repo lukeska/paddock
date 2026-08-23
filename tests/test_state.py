@@ -98,6 +98,13 @@ class StateTests(unittest.TestCase):
         self.store.initialize()
         self.assertEqual(self.store.read("settings")["default_php"], "8.5")
 
+    def test_old_settings_gain_an_empty_service_label_map_when_read(self) -> None:
+        self.store.initialize()
+        self.store.path_for("settings").write_text(
+            '{"schema_version": 1, "default_php": "8.4"}\n', encoding="utf-8"
+        )
+        self.assertEqual({}, self.store.read("settings")["service_labels"])
+
 
 if __name__ == "__main__":
     unittest.main()

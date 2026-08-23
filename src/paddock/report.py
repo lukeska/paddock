@@ -24,6 +24,7 @@ from typing import Any, Callable
 
 from .caddy import CaddyProjector
 from .runtimes import RuntimeRegistry
+from .service_instances import ServiceInstanceManager
 from .services import ENGINE, ServiceManager
 from .sites import SiteManager
 from .state import StateError, StateStore
@@ -136,6 +137,42 @@ def _sites(store: StateStore) -> list[dict[str, Any]]:
             "root": str(site.root),
         }
         for site in sites
+    ]
+
+
+def build_service_instances(
+    store: StateStore, runner: Runner = subprocess.run
+) -> list[dict[str, Any]]:
+    """Build the schema-v2 supporting-service portion of a future report.
+
+    This deliberately remains separate from :func:`build` during the staged
+    cutover, so the installed plugin keeps consuming the stable schema-v1
+    payload.  Reporting is observational: a missing staging registry means no
+    instances and must not create state as a side effect.
+    """
+    manager = ServiceInstanceManager(store, runner)
+    if not manager.path.exists():
+        return []
+    try:
+        instances = manager.list()
+        states = manager.states_of(instances)
+        enabled = manager.enabled_states(instances)
+    except (OSError, StateError, ValueError):
+        return []
+    return [
+        {
+            "id": instance.id,
+            "type": instance.type,
+            "label": instance.label,
+            "state": states.get(instance.id, "unknown"),
+            "autostart": enabled.get(instance.id) == "enabled",
+            "address": instance.address,
+            "port": instance.port,
+            "image": instance.image,
+            "unit": instance.unit,
+            "volume": instance.volume,
+        }
+        for instance in instances
     ]
 
 
