@@ -16,9 +16,15 @@ from paddock.state import StateStore
 
 
 class FakeRuntimeRunner:
-    def __init__(self, version: str = "8.4.23", missing: str | None = None):
+    def __init__(
+        self,
+        version: str = "8.4.23",
+        missing: str | None = None,
+        missing_function: str | None = None,
+    ):
         self.version = version
         self.missing = missing
+        self.missing_function = missing_function
         self.calls = []
 
     def __call__(self, command, **kwargs):
@@ -28,6 +34,8 @@ class FakeRuntimeRunner:
         if "echo PHP_VERSION" in command[-1]:
             return subprocess.CompletedProcess(command, 0, self.version, "")
         if self.missing and f"'{self.missing}'" in command[-1]:
+            return subprocess.CompletedProcess(command, 1, "", "missing")
+        if self.missing_function and f"'{self.missing_function}'" in command[-1]:
             return subprocess.CompletedProcess(command, 1, "", "missing")
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -120,6 +128,14 @@ class RuntimeInstallTests(unittest.TestCase):
     def test_missing_baseline_extension_never_activates(self) -> None:
         installer = RuntimeInstaller(self.store, FakeRuntimeRunner(missing="intl"))
         with self.assertRaisesRegex(RuntimeInstallError, "intl"):
+            installer.install("8.4", ArtifactManifest.load(self.manifest_path))
+        self.assertEqual(self.store.read("runtimes")["runtimes"], {})
+
+    def test_mbstring_without_mbregex_never_activates(self) -> None:
+        installer = RuntimeInstaller(
+            self.store, FakeRuntimeRunner(missing_function="mb_split")
+        )
+        with self.assertRaisesRegex(RuntimeInstallError, "mb_split"):
             installer.install("8.4", ArtifactManifest.load(self.manifest_path))
         self.assertEqual(self.store.read("runtimes")["runtimes"], {})
 

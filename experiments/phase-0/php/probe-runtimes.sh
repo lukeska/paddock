@@ -95,6 +95,12 @@ for runtime_root in "$@"; do
     exit 1
   fi
 
+  if ! "$php_binary" -r 'exit(function_exists("mb_split") ? 0 : 1);'; then
+    printf 'Runtime %s has mbstring without mbregex; required function mb_split is missing.\n' \
+      "$version" >&2
+    exit 1
+  fi
+
   if [[ -n "$composer_path" ]]; then
     "$php_binary" "$composer_path" --version >/dev/null
   fi

@@ -55,6 +55,13 @@ class CaddyProjector:
             )
             if certificate is not None and private_key is not None:
                 lines.append(f"\ttls {_quote(certificate)} {_quote(private_key)}")
+            if site.get("reverb"):
+                lines.extend(
+                    [
+                        "\t@reverb path /app/* /apps/*",
+                        f"\treverse_proxy @reverb 127.0.0.1:{site['reverb']['port']}",
+                    ]
+                )
             lines.extend(
                 [
                     f"\tphp_fastcgi unix/{socket}",

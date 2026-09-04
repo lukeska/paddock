@@ -1,19 +1,31 @@
 pkgname=paddock
 pkgver=0.1.0
-pkgrel=16
+pkgrel=23
 pkgdesc='Local Laravel development environment for Omarchy'
 arch=('x86_64' 'aarch64')
 url='https://github.com/lukeska/paddock'
 license=('MIT')
 depends=('python' 'python-yaml' 'python-gobject' 'gtk4' 'libadwaita' 'caddy' 'dnsmasq' 'mkcert'
          'nss' 'p11-kit' 'networkmanager' 'polkit' 'podman')
+makedepends=('go')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz")
-sha256sums=('799d9bebc1e120aa75a4de4df3fd40e49d5cc0d623a1515d7278f2e11f3fec76')
+sha256sums=('280922c1d11a26b4c815136f0309b4912d0f082590650df8e76e585e85c6e774')
+
+prepare() {
+  cd "$srcdir/$pkgname-$pkgver"
+  go mod download
+}
+
+build() {
+  cd "$srcdir/$pkgname-$pkgver"
+  CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o paddock-tui ./cmd/paddock-tui
+}
 
 check() {
   cd "$srcdir/$pkgname-$pkgver"
   PYTHONPATH=src python -m unittest discover -s tests -v
+  go test ./...
 }
 
 package() {
@@ -25,6 +37,12 @@ package() {
   find "$pkgdir$site_packages/paddock" -type d -name __pycache__ -prune -exec rm -rf -- {} +
   install -Dm755 packaging/arch/paddock "$pkgdir/usr/bin/paddock"
   install -Dm755 packaging/arch/paddock-ui "$pkgdir/usr/bin/paddock-ui"
+  install -Dm755 paddock-tui "$pkgdir/usr/bin/paddock-tui"
+  install -Dm755 packaging/arch/php "$pkgdir/usr/lib/paddock/shims/php"
+  install -Dm755 packaging/arch/composer "$pkgdir/usr/lib/paddock/shims/composer"
+  install -Dm755 packaging/arch/node "$pkgdir/usr/lib/paddock/shims/node"
+  install -Dm755 packaging/arch/npm "$pkgdir/usr/lib/paddock/shims/npm"
+  install -Dm755 packaging/arch/npx "$pkgdir/usr/lib/paddock/shims/npx"
   install -Dm644 resources/dev.paddock.Paddock.desktop \
     "$pkgdir/usr/share/applications/dev.paddock.Paddock.desktop"
   install -Dm644 resources/dev.paddock.Paddock.metainfo.xml \
@@ -38,7 +56,11 @@ package() {
   install -Dm755 system/check-ports "$pkgdir/usr/lib/paddock/check-ports"
   install -Dm755 system/wait-for-socket "$pkgdir/usr/lib/paddock/wait-for-socket"
   install -Dm644 resources/artifacts.json "$pkgdir/usr/share/paddock/artifacts.json"
+  install -Dm644 resources/composer.json "$pkgdir/usr/share/paddock/composer.json"
+  install -Dm644 resources/node-artifacts.json "$pkgdir/usr/share/paddock/node-artifacts.json"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 docs/state-schema-v1.md "$pkgdir/usr/share/doc/$pkgname/state-schema-v1.md"
   install -Dm644 docs/project-file.md "$pkgdir/usr/share/doc/$pkgname/project-file.md"
+  install -Dm644 docs/parking.md "$pkgdir/usr/share/doc/$pkgname/parking.md"
+  install -Dm644 docs/tui.md "$pkgdir/usr/share/doc/$pkgname/tui.md"
 }

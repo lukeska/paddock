@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -7,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from paddock.integration import INSTALL_CHANGES, REMOVE_CHANGES, Integration
+from paddock.artifacts import normalized_architecture
 from paddock.paths import Paths
 from paddock.state import StateStore
 
@@ -56,6 +58,11 @@ class IntegrationTests(unittest.TestCase):
         self.assertTrue((self.store.paths.state / "caddy/Caddyfile").is_file())
         self.assertTrue((self.store.paths.state / "caddy-data").is_dir())
         self.assertTrue((self.store.paths.state / "caddy-config").is_dir())
+        self.assertTrue((self.store.paths.home / "Paddock").is_dir())
+        self.assertEqual(
+            [self.store.paths.home / "Paddock"],
+            [Path(path) for path in self.store.read("parking")["paths"]],
+        )
 
     def test_prepare_replaces_a_stale_projection(self):
         # A Caddyfile generated before the socket layout changed must not
@@ -80,4 +87,46 @@ class IntegrationTests(unittest.TestCase):
 
     def test_change_previews_are_explicit(self):
         self.assertTrue(any("~test" in change for change in INSTALL_CHANGES))
+        self.assertTrue(any("latest published PHP" in change for change in INSTALL_CHANGES))
         self.assertTrue(any("preserve projects" in change for change in REMOVE_CHANGES))
+
+    def test_first_setup_installs_latest_php_once_and_makes_it_default(self):
+        manifest = Path(self.temporary.name) / "artifacts.json"
+        architecture = normalized_architecture()
+        manifest.write_text(json.dumps({
+            "schema_version": 1,
+            "artifacts": [
+                {
+                    "php": "8.4.23", "minor": "8.4", "architecture": architecture,
+                    "url": "https://example.test/php-8.4.tar.gz", "sha256": "1" * 64,
+                },
+                {
+                    "php": "8.5.8", "minor": "8.5", "architecture": architecture,
+                    "url": "https://example.test/php-8.5.tar.gz", "sha256": "2" * 64,
+                },
+            ],
+        }), encoding="utf-8")
+        integration = Integration(
+            self.store, self.fake, artifact_paths=(manifest,)
+        )
+        with patch("paddock.integration.RuntimeInstaller.install", autospec=True) as install:
+            self.assertEqual("8.5", integration.install_initial_php())
+            self.assertIsNone(integration.install_initial_php())
+
+        self.assertEqual(1, install.call_count)
+        self.assertEqual("8.5", install.call_args.args[1])
+        settings = self.store.read("settings")
+        self.assertEqual("8.5", settings["default_php"])
+        self.assertTrue(settings["initial_php_setup_complete"])
+
+    def test_failed_initial_php_install_remains_retryable(self):
+        integration = Integration(
+            self.store,
+            self.fake,
+            artifact_paths=(Path(self.temporary.name) / "missing.json",),
+        )
+        with self.assertRaisesRegex(RuntimeError, "runtime catalog"):
+            integration.install_initial_php()
+        self.assertFalse(
+            self.store.read("settings")["initial_php_setup_complete"]
+        )

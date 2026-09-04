@@ -6,6 +6,7 @@ needs locally. `paddock init` reads it and brings the machine in line.
 ```yaml
 name: my-app          # optional; defaults to the directory name
 php: "8.5"            # optional; quoted, because YAML reads 8.5 as a number
+node: "24"             # optional Node.js major; also detects .nvmrc/.node-version
 secure: true          # optional; default false
 
 services:             # optional
@@ -18,6 +19,41 @@ services:             # optional
 Supported services are `mysql`, `postgres`, and `redis`. `version` replaces
 only the image tag; the registry and repository stay Paddock's, so a project
 file cannot point the machine at an arbitrary image.
+
+## Reverb workers
+
+Reverb belongs to a Laravel site rather than the shared supporting-service
+catalog. Paddock detects `laravel/reverb` in Composer metadata (or
+`BROADCAST_CONNECTION=reverb` in `.env`) and exposes a worker for that site:
+
+```bash
+paddock worker start reverb
+paddock worker stop reverb
+paddock worker restart reverb my-app
+paddock worker logs reverb my-app
+```
+
+The first start allocates an unused loopback port beginning at 8080. Paddock
+sets the Reverb server address and the client-facing host, port, and scheme in
+`.env`, while leaving unrelated values and Reverb credentials untouched. It
+proxies Reverb's `/app/*` and `/apps/*` endpoints through the site's existing
+`.test` HTTP or HTTPS address. The worker runs with the PHP version selected
+for that site.
+
+## Queue workers
+
+Every detected Laravel site also exposes a queue worker with the same
+site-scoped lifecycle:
+
+```bash
+paddock worker start queue
+paddock worker stop queue
+paddock worker restart queue my-app
+paddock worker logs queue my-app
+```
+
+It runs `artisan queue:work` with the PHP version selected for the site. Queue
+workers need no published port or Caddy route.
 
 ## Applying it
 

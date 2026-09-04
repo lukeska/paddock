@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if ! command -v go >/dev/null 2>&1; then
+  printf '%s\n' 'Go is required to build the Paddock TUI. Install it with: sudo pacman -S --needed go' >&2
+  exit 1
+fi
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repository=$(cd -- "$script_dir/../.." && pwd)
 version=$(awk -F'"' '/^version = / { print $2; exit }' "$repository/pyproject.toml")

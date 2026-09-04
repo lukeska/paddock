@@ -22,6 +22,33 @@ def load_helper():
 
 
 class PackageLifecycleTests(unittest.TestCase):
+    def test_dns_route_explicitly_integrates_with_systemd_resolved(self):
+        source = (Path(__file__).parents[1] / "system/system-helper").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("ExecStart=/usr/bin/resolvectl dns paddock0 127.0.0.1", source)
+        self.assertIn("ExecStart=/usr/bin/resolvectl domain paddock0 ~test", source)
+        self.assertIn("ExecStop=/usr/bin/resolvectl revert paddock0", source)
+
+    def test_only_the_recorded_owner_can_replace_an_installation(self):
+        helper = load_helper()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            installation = root / "integration.json"
+            data = root / "data"
+            state = root / "state"
+            installation.write_text(json.dumps({
+                "version": 1,
+                "user": "demo",
+                "data_dir": str(data),
+                "state_dir": str(state),
+                "linger_enabled_by_paddock": True,
+            }), encoding="utf-8")
+            with patch.object(helper, "INSTALLATION", installation):
+                self.assertTrue(helper.owned_installation("demo", data, state))
+                with self.assertRaisesRegex(SystemExit, "another user or location"):
+                    helper.owned_installation("other", data, state)
+
     def test_recorded_package_removal_preserves_user_data(self):
         helper = load_helper()
         with tempfile.TemporaryDirectory() as temporary:

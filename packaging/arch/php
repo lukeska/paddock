@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec /usr/bin/python -c 'from paddock.shell import run_shim; run_shim("php")' "$@"

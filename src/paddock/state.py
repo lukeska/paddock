@@ -20,7 +20,9 @@ class StateStore:
     def path_for(self, record: str) -> Path:
         if record == "runtimes":
             return self.paths.data / "runtimes.json"
-        if record in {"settings", "sites", "services"}:
+        if record == "node_runtimes":
+            return self.paths.data / "node-runtimes.json"
+        if record in {"settings", "sites", "services", "parking"}:
             return self.paths.config / f"{record}.json"
         raise StateError(f"unknown state record: {record}")
 
@@ -70,4 +72,3 @@ class StateStore:
             return VALIDATORS[record]
         except KeyError as error:
             raise StateError(f"unknown state record: {record}") from error
-

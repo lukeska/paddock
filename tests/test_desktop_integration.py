@@ -39,6 +39,16 @@ class DesktopIntegrationTests(unittest.TestCase):
 
     def test_package_installs_all_desktop_resources(self) -> None:
         package = (ROOT / "packaging/arch/PKGBUILD").read_text(encoding="utf-8")
+        self.assertIn('makedepends=(\'go\')', package)
+        self.assertIn('paddock-tui "$pkgdir/usr/bin/paddock-tui"', package)
+        self.assertIn('go test ./...', package)
+        self.assertIn("resources/composer.json", package)
+        self.assertIn('shims/php', package)
+        self.assertIn('shims/node', package)
+        self.assertIn('shims/npm', package)
+        self.assertIn('shims/npx', package)
+        self.assertIn('node-artifacts.json', package)
+        self.assertIn('shims/composer', package)
         for suffix in (".desktop", ".metainfo.xml", ".svg", "-symbolic.svg"):
             self.assertIn(f"{APP_ID}{suffix}", package)
 

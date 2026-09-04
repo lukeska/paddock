@@ -35,6 +35,17 @@ def design_css() -> str:
 .paddock-dialog button.suggested-action { color: var(--accent-color); }
 .paddock-shell button.destructive-action,
 .paddock-dialog button.destructive-action { color: var(--error-bg-color); }
+.paddock-shell button.paddock-text-link {
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+  color: var(--accent-color);
+  text-decoration-line: underline;
+}
 .paddock-hero,
 .paddock-card {
   background-color: var(--card-bg-color);
@@ -42,7 +53,15 @@ def design_css() -> str:
 }
 .paddock-hero { padding: 18px; border-radius: 8px; }
 .paddock-card { padding: 2px; border-radius: 0; }
-.paddock-card row { background-color: transparent; }
+.paddock-card > row { background-color: transparent; }
+.paddock-shell popover > contents,
+.paddock-shell popover list,
+.paddock-shell popover list row {
+  background-color: var(--popover-bg-color);
+}
+.paddock-shell popover > contents {
+  border: 1px solid var(--border-color);
+}
 .paddock-hero-icon { color: var(--accent-color); }
 .paddock-hero-title { font-size: 1.3em; font-weight: bold; }
 .paddock-hero-meta,
@@ -76,6 +95,11 @@ def design_css() -> str:
 .paddock-led-active { color: var(--success-bg-color); }
 .paddock-led-inactive { color: var(--error-bg-color); }
 .paddock-dashboard-heading { font-size: 1.45em; font-weight: bold; }
+.paddock-sites-rail {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--headerbar-bg-color);
+}
 """
 
 

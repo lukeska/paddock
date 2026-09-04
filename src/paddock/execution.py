@@ -7,6 +7,8 @@ from typing import Mapping, Sequence
 
 from .projects import Selection, select_php
 from .runtimes import RuntimeRegistry
+from .node_runtime import NodeRegistry
+from .projects import select_node
 from .state import StateStore
 
 
@@ -63,3 +65,20 @@ def plan_composer(
         php.selection,
         php.environment,
     )
+
+
+def plan_node(
+    directory: Path,
+    command: str,
+    arguments: Sequence[str],
+    store: StateStore,
+) -> ExecutionPlan:
+    selection = select_node(directory, store)
+    runtime = NodeRegistry(store).resolve(selection.version)
+    binary = runtime.path if command == "node" else runtime.path.parent / command
+    if not binary.is_file():
+        raise ExecutionError(
+            f"{command} is not installed with Node {selection.version}"
+        )
+    environment = (("PATH", f"{runtime.path.parent}:{os.environ.get('PATH', '')}"),)
+    return ExecutionPlan(binary, tuple(arguments), directory.resolve(strict=True), selection, environment)

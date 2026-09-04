@@ -40,9 +40,21 @@ class DesignCssTests(unittest.TestCase):
         self.assertIn("border-radius: 0", css)
         self.assertIn("background-color: transparent", css)
 
+    def test_text_links_override_the_global_button_outline(self) -> None:
+        css = design_css()
+        self.assertIn("button.paddock-text-link", css)
+        self.assertIn("border: 0", css)
+        self.assertIn("text-decoration-line: underline", css)
+
     def test_section_cards_are_square(self) -> None:
         css = design_css()
         self.assertIn(".paddock-card { padding: 2px; border-radius: 0; }", css)
+
+    def test_card_row_styling_does_not_leak_into_dropdown_popovers(self) -> None:
+        css = design_css()
+        self.assertIn(".paddock-card > row", css)
+        self.assertNotIn(".paddock-card row {", css)
+        self.assertIn("background-color: var(--popover-bg-color)", css)
 
     def test_service_rows_are_compact(self) -> None:
         css = design_css()
@@ -61,6 +73,11 @@ class DesignCssTests(unittest.TestCase):
         css = design_css()
         self.assertIn(".paddock-env-block", css)
         self.assertIn("font-family: monospace", css)
+
+    def test_sites_search_rail_spans_with_theme_colors(self) -> None:
+        css = design_css()
+        self.assertIn(".paddock-sites-rail", css)
+        self.assertIn("background-color: var(--headerbar-bg-color)", css)
 
 
 if __name__ == "__main__":

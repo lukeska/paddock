@@ -20,6 +20,8 @@ BASELINE_EXTENSIONS = (
     "pdo", "session", "tokenizer", "xml", "zip",
 )
 
+BASELINE_FUNCTIONS = ("mb_split",)
+
 
 class RuntimeInstallError(RuntimeError):
     pass
@@ -186,6 +188,22 @@ class RuntimeInstaller:
         if missing:
             raise RuntimeInstallError(
                 f"PHP {artifact.php} is missing required extensions: {', '.join(missing)}"
+            )
+        missing_functions = []
+        for function in BASELINE_FUNCTIONS:
+            result = self.runner(
+                [
+                    str(php), "-d", extension_dir, "-r",
+                    f"exit(function_exists('{function}') ? 0 : 1);",
+                ],
+                env=environment, text=True, capture_output=True, check=False,
+            )
+            if result.returncode != 0:
+                missing_functions.append(function)
+        if missing_functions:
+            raise RuntimeInstallError(
+                f"PHP {artifact.php} is missing required functions: "
+                f"{', '.join(missing_functions)}"
             )
 
     def _write_fpm_config(self, minor: str, runtime: Path) -> None:

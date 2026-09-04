@@ -20,12 +20,22 @@ import socket
 import subprocess
 from typing import Callable
 
+from .artifacts import ArtifactManifest, ManifestError, normalized_architecture
 from .atomic import atomic_write, exclusive_lock
+from .caddy import CaddyProjector
+from .parking import ParkingManager
+from .php_runtime import RuntimeInstaller
+from .node_runtime import NodeInstaller, NodeManifest, NodeRegistry
 from .lifecycle import Lifecycle, LifecycleError
 from . import report
+from .runtimes import RuntimeRegistry
+from .reverb import ReverbManager, detects_reverb
+from .queue_worker import QueueWorkerManager, detects_laravel
 from .services import CATALOG, Service, ServiceManager
 from .service_instances import ServiceInstanceManager
 from .state import StateError, StateStore
+from .sites import SiteManager
+from .tls import SecurityManager
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -44,6 +54,10 @@ IMAGE_REFERENCE = re.compile(
     r"^[A-Za-z0-9._-]+(?::[0-9]+)?/[A-Za-z0-9._/-]+"
     r"(?::[A-Za-z0-9._-]+|@[A-Za-z0-9_+.-]+:[A-Fa-f0-9]+)$"
 )
+
+
+def _semantic_version(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
 
 
 def service_image_version(image: str) -> str:
@@ -201,6 +215,103 @@ class ServiceInstanceOperationResult:
     snapshot: ServiceInstancesSnapshot
 
 
+@dataclass(frozen=True)
+class LinkedSiteView:
+    name: str
+    host: str
+    url: str
+    php: str
+    secured: bool
+    root: str
+    node: str | None = None
+    reverb_available: bool = False
+    reverb_configured: bool = False
+    reverb_state: str = "not-configured"
+    reverb_autostart: bool = False
+    reverb_port: int | None = None
+    queue_available: bool = False
+    queue_configured: bool = False
+    queue_state: str = "not-configured"
+    queue_autostart: bool = False
+
+
+@dataclass(frozen=True)
+class LinkedSitesSnapshot:
+    sites: tuple[LinkedSiteView, ...]
+    php_versions: tuple[str, ...]
+    node_versions: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class LinkedSitesOperationResult:
+    ok: bool
+    summary: str
+    detail: str | None
+    snapshot: LinkedSitesSnapshot
+
+
+@dataclass(frozen=True)
+class ParkingSnapshot:
+    paths: tuple[str, ...]
+    conflicts: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ParkingOperationResult:
+    ok: bool
+    summary: str
+    detail: str | None
+    snapshot: ParkingSnapshot
+
+
+@dataclass(frozen=True)
+class PhpVersionView:
+    minor: str
+    release: str
+    architecture: str
+    installed: bool
+    available: bool
+    path: str | None
+
+
+@dataclass(frozen=True)
+class PhpVersionsSnapshot:
+    versions: tuple[PhpVersionView, ...]
+    architecture: str
+
+
+@dataclass(frozen=True)
+class PhpInstallResult:
+    ok: bool
+    summary: str
+    detail: str | None
+    snapshot: PhpVersionsSnapshot
+
+
+@dataclass(frozen=True)
+class NodeVersionView:
+    major: str
+    release: str
+    architecture: str
+    installed: bool
+    available: bool
+    path: str | None
+
+
+@dataclass(frozen=True)
+class NodeVersionsSnapshot:
+    versions: tuple[NodeVersionView, ...]
+    architecture: str
+
+
+@dataclass(frozen=True)
+class NodeInstallResult:
+    ok: bool
+    summary: str
+    detail: str | None
+    snapshot: NodeVersionsSnapshot
+
+
 class OperationFailure(RuntimeError):
     def __init__(self, code: str, detail: str):
         super().__init__(detail)
@@ -250,6 +361,8 @@ class PaddockController:
         runner: Runner = subprocess.run,
         which: Callable[[str], str | None] = shutil.which,
         port_available: PortAvailable | None = None,
+        artifact_paths: tuple[Path, ...] | None = None,
+        node_artifact_paths: tuple[Path, ...] | None = None,
     ):
         self.store = store
         self.runner = runner
@@ -257,7 +370,16 @@ class PaddockController:
         self.instances = ServiceInstanceManager(
             store, runner, port_available=port_available
         )
+        self.parking = ParkingManager(store, runner)
         self.port_available = port_available or _port_available
+        self.artifact_paths = artifact_paths or (
+            Path("/usr/share/paddock/artifacts.json"),
+            Path(__file__).resolve().parents[2] / "resources" / "artifacts.json",
+        )
+        self.node_artifact_paths = node_artifact_paths or (
+            Path("/usr/share/paddock/node-artifacts.json"),
+            Path(__file__).resolve().parents[2] / "resources/node-artifacts.json",
+        )
 
     @property
     def operation_lock(self) -> Path:
@@ -287,6 +409,307 @@ class PaddockController:
             )
             for instance in instances
         ))
+
+    def linked_sites_snapshot(self) -> LinkedSitesSnapshot:
+        """Return every linked site in stable display order without raising."""
+        try:
+            projector = CaddyProjector(self.store.paths, self.runner)
+            self.parking.reconcile(projector)
+            sites = SiteManager(self.store, projector).list()
+        except (OSError, StateError, ValueError):
+            sites = []
+        try:
+            versions = tuple(runtime.version for runtime in RuntimeRegistry(self.store).list())
+        except (OSError, StateError, ValueError):
+            versions = ()
+        try: node_versions = tuple(runtime.version for runtime in NodeRegistry(self.store).list())
+        except (OSError, StateError, ValueError): node_versions = ()
+        reverb = ReverbManager(self.store, self.runner, self.port_available)
+        queue = QueueWorkerManager(self.store, self.runner)
+        return LinkedSitesSnapshot(tuple(
+            LinkedSiteView(
+                site.name,
+                f"{site.name}.test",
+                f"{'https' if site.secured else 'http'}://{site.name}.test",
+                site.php,
+                site.secured,
+                str(site.root),
+                site.node,
+                detects_reverb(site.root),
+                reverb.worker(site.name) is not None,
+                reverb.state(site.name),
+                reverb.enabled(site.name),
+                reverb.worker(site.name).port if reverb.worker(site.name) else None,
+                detects_laravel(site.root),
+                queue.worker(site.name) is not None,
+                queue.state(site.name),
+                queue.enabled(site.name),
+            )
+            for site in sorted(sites, key=lambda item: item.name.casefold())
+        ), versions, node_versions)
+
+    def set_reverb_active(
+        self, name: str, active: bool
+    ) -> LinkedSitesOperationResult:
+        try:
+            ReverbManager(self.store, self.runner, self.port_available).control(
+                "start" if active else "stop", name
+            )
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return LinkedSitesOperationResult(
+                False, "Reverb could not be changed", str(error),
+                self.linked_sites_snapshot(),
+            )
+        return LinkedSitesOperationResult(
+            True, f"{'Started' if active else 'Stopped'} Reverb for {name}.test",
+            None, self.linked_sites_snapshot(),
+        )
+
+    def set_reverb_autostart(
+        self, name: str, enabled: bool
+    ) -> LinkedSitesOperationResult:
+        try:
+            ReverbManager(self.store, self.runner, self.port_available).set_autostart(
+                name, enabled
+            )
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return LinkedSitesOperationResult(
+                False, "Reverb autostart could not be changed", str(error),
+                self.linked_sites_snapshot(),
+            )
+        return LinkedSitesOperationResult(
+            True, f"Reverb autostart {'enabled' if enabled else 'disabled'} for {name}.test",
+            None, self.linked_sites_snapshot(),
+        )
+
+    def reverb_logs(self, name: str, lines: int = 200) -> tuple[str, ...]:
+        return ReverbManager(self.store, self.runner, self.port_available).logs(name, lines)
+
+    def set_queue_active(
+        self, name: str, active: bool
+    ) -> LinkedSitesOperationResult:
+        try:
+            QueueWorkerManager(self.store, self.runner).control(
+                "start" if active else "stop", name
+            )
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return LinkedSitesOperationResult(
+                False, "Queue worker could not be changed", str(error),
+                self.linked_sites_snapshot(),
+            )
+        return LinkedSitesOperationResult(
+            True, f"{'Started' if active else 'Stopped'} queue worker for {name}.test",
+            None, self.linked_sites_snapshot(),
+        )
+
+    def set_queue_autostart(
+        self, name: str, enabled: bool
+    ) -> LinkedSitesOperationResult:
+        try:
+            QueueWorkerManager(self.store, self.runner).set_autostart(name, enabled)
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return LinkedSitesOperationResult(
+                False, "Queue autostart could not be changed", str(error),
+                self.linked_sites_snapshot(),
+            )
+        return LinkedSitesOperationResult(
+            True, f"Queue autostart {'enabled' if enabled else 'disabled'} for {name}.test",
+            None, self.linked_sites_snapshot(),
+        )
+
+    def queue_logs(self, name: str, lines: int = 200) -> tuple[str, ...]:
+        return QueueWorkerManager(self.store, self.runner).logs(name, lines)
+
+    def parking_snapshot(self) -> ParkingSnapshot:
+        try:
+            discovery = self.parking.discover()
+            paths = tuple(str(path) for path in discovery.paths)
+            conflicts = tuple(
+                f"{conflict.name or conflict.roots[0]}: {conflict.reason}"
+                for conflict in discovery.conflicts
+            )
+        except (OSError, StateError, ValueError) as error:
+            return ParkingSnapshot((), (str(error),))
+        return ParkingSnapshot(paths, conflicts)
+
+    def php_versions_snapshot(self) -> PhpVersionsSnapshot:
+        """Combine published runtimes for this CPU with locally installed ones."""
+        architecture = normalized_architecture()
+        published: dict[str, str] = {}
+        for path in self.artifact_paths:
+            if not path.is_file():
+                continue
+            try:
+                manifest = ArtifactManifest.load(path)
+            except ManifestError:
+                continue
+            for artifact in manifest.artifacts:
+                if artifact.architecture == architecture:
+                    current = published.get(artifact.minor)
+                    if current is None or _semantic_version(artifact.php) > _semantic_version(current):
+                        published[artifact.minor] = artifact.php
+            break
+
+        try:
+            installed = {
+                runtime.version: runtime for runtime in RuntimeRegistry(self.store).list()
+            }
+        except (OSError, StateError, ValueError):
+            installed = {}
+        versions = tuple(
+            PhpVersionView(
+                minor=minor,
+                release=published.get(minor, minor),
+                architecture=architecture,
+                installed=minor in installed,
+                available=minor in published,
+                path=str(installed[minor].path) if minor in installed else None,
+            )
+            for minor in sorted(
+                set(published) | set(installed), key=_semantic_version, reverse=True
+            )
+        )
+        return PhpVersionsSnapshot(versions, architecture)
+
+    def install_php(self, minor: str) -> PhpInstallResult:
+        """Install one published runtime and return a fresh presentation model."""
+        try:
+            manifest = None
+            for path in self.artifact_paths:
+                if not path.is_file():
+                    continue
+                try:
+                    manifest = ArtifactManifest.load(path)
+                except ManifestError:
+                    continue
+                break
+            if manifest is None:
+                raise FileNotFoundError(
+                    f"no PHP runtime catalog is available for {minor}"
+                )
+            destination = RuntimeInstaller(self.store, self.runner).install(
+                minor, manifest
+            )
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return PhpInstallResult(
+                False, f"PHP {minor} could not be installed", str(error),
+                self.php_versions_snapshot(),
+            )
+        return PhpInstallResult(
+            True, f"Installed PHP {minor}", str(destination),
+            self.php_versions_snapshot(),
+        )
+
+    def node_versions_snapshot(self) -> NodeVersionsSnapshot:
+        architecture = normalized_architecture()
+        published: dict[str, str] = {}
+        for path in self.node_artifact_paths:
+            if not path.is_file(): continue
+            try: manifest = NodeManifest.load(path)
+            except RuntimeError: continue
+            for artifact in manifest.artifacts:
+                if artifact.architecture == architecture:
+                    current = published.get(artifact.major)
+                    if current is None or _semantic_version(artifact.node) > _semantic_version(current): published[artifact.major] = artifact.node
+            break
+        try: installed = {runtime.version: runtime for runtime in NodeRegistry(self.store).list()}
+        except (OSError, StateError, ValueError): installed = {}
+        versions = tuple(NodeVersionView(
+            major, published.get(major, major), architecture, major in installed,
+            major in published, str(installed[major].path) if major in installed else None,
+        ) for major in sorted(set(published) | set(installed), key=int, reverse=True))
+        return NodeVersionsSnapshot(versions, architecture)
+
+    def install_node(self, major: str) -> NodeInstallResult:
+        try:
+            catalog = next((path for path in self.node_artifact_paths if path.is_file()), None)
+            if catalog is None: raise FileNotFoundError(f"no Node runtime catalog is available for {major}")
+            destination = NodeInstaller(self.store).install(major, NodeManifest.load(catalog))
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return NodeInstallResult(False, f"Node {major} could not be installed", str(error), self.node_versions_snapshot())
+        return NodeInstallResult(True, f"Installed Node {major}", str(destination), self.node_versions_snapshot())
+
+    def add_parking_path(self, path: str) -> ParkingOperationResult:
+        try:
+            added = self.parking.add(Path(path))
+            self.parking.sync_watchers()
+            result = self.parking.reconcile(CaddyProjector(self.store.paths, self.runner))
+            conflicts = "\n".join(
+                f"{item.name or item.roots[0]}: {item.reason}" for item in result.conflicts
+            ) or None
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return ParkingOperationResult(
+                False, "Parking folder could not be added", str(error),
+                self.parking_snapshot(),
+            )
+        return ParkingOperationResult(
+            not result.conflicts, f"Parked {added}", conflicts, self.parking_snapshot()
+        )
+
+    def remove_parking_path(self, path: str) -> ParkingOperationResult:
+        try:
+            removed = self.parking.remove(Path(path))
+            self.parking.sync_watchers()
+            self.parking.reconcile(CaddyProjector(self.store.paths, self.runner))
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return ParkingOperationResult(
+                False, "Parking folder could not be removed", str(error),
+                self.parking_snapshot(),
+            )
+        return ParkingOperationResult(
+            True, f"Forgot {removed}", None, self.parking_snapshot()
+        )
+
+    def set_linked_site_php(
+        self, name: str, version: str
+    ) -> LinkedSitesOperationResult:
+        manager = SiteManager(self.store, CaddyProjector(self.store.paths, self.runner))
+        try:
+            site = next((item for item in manager.list() if item.name == name), None)
+            if site is None:
+                raise ValueError(f"linked site does not exist: {name}")
+            manager.link(site.root, site.name, version, site.node)
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return LinkedSitesOperationResult(
+                False, "PHP version could not be changed", str(error),
+                self.linked_sites_snapshot(),
+            )
+        return LinkedSitesOperationResult(
+            True, f"Switched {site.name}.test to PHP {version}", None,
+            self.linked_sites_snapshot(),
+        )
+
+    def set_linked_site_node(self, name: str, version: str) -> LinkedSitesOperationResult:
+        manager = SiteManager(self.store, CaddyProjector(self.store.paths, self.runner))
+        try:
+            site = next((item for item in manager.list() if item.name == name), None)
+            if site is None: raise ValueError(f"linked site does not exist: {name}")
+            manager.link(site.root, site.name, site.php, version)
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return LinkedSitesOperationResult(False, "Node version could not be changed", str(error), self.linked_sites_snapshot())
+        return LinkedSitesOperationResult(True, f"Switched {site.name}.test to Node {version}", None, self.linked_sites_snapshot())
+
+    def set_linked_site_secured(
+        self, name: str, secured: bool
+    ) -> LinkedSitesOperationResult:
+        projector = CaddyProjector(self.store.paths, self.runner)
+        security = SecurityManager(self.store, projector, self.runner)
+        try:
+            if secured:
+                security.secure(name)
+            else:
+                security.unsecure(name)
+            ReverbManager(self.store, self.runner, self.port_available).sync_environment(name)
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return LinkedSitesOperationResult(
+                False, "Site security could not be changed", str(error),
+                self.linked_sites_snapshot(),
+            )
+        protocol = "HTTPS" if secured else "HTTP"
+        return LinkedSitesOperationResult(
+            True, f"Switched {name}.test to {protocol}", None,
+            self.linked_sites_snapshot(),
+        )
 
     def create_service_instance(
         self, type: str, label: str, port: int | None, autostart: bool

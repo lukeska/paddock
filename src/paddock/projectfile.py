@@ -27,7 +27,7 @@ from .sites import normalize_site_name
 
 PROJECT_FILE = "paddock.yml"
 
-TOP_LEVEL = {"name", "php", "secure", "services"}
+TOP_LEVEL = {"name", "php", "node", "secure", "services"}
 SERVICE_KEYS = {"version", "port"}
 
 # Declared but not implemented. Named explicitly so the error says "not yet"
@@ -60,6 +60,7 @@ class DeclaredService:
 class ProjectFile:
     name: str | None = None
     php: str | None = None
+    node: str | None = None
     secure: bool = False
     services: tuple[DeclaredService, ...] = field(default_factory=tuple)
 
@@ -104,6 +105,11 @@ def parse(raw: Any) -> ProjectFile:
         if not isinstance(php, str):
             raise ProjectFileError(f'php must be a quoted string, e.g. php: "8.5"')
         php = normalize_minor(php)
+    node = value.get("node")
+    if node is not None:
+        if not isinstance(node, str) or not node.isdigit():
+            raise ProjectFileError('node must be a quoted major, e.g. node: "24"')
+        node = str(int(node))
 
     secure = value.get("secure", False)
     if not isinstance(secure, bool):
@@ -130,7 +136,7 @@ def parse(raw: Any) -> ProjectFile:
                 raise ProjectFileError(f"services.{service_name}.port must be an integer")
             declared.append(DeclaredService(service_name, version, port))
 
-    return ProjectFile(name=name, php=php, secure=secure, services=tuple(declared))
+    return ProjectFile(name=name, php=php, node=node, secure=secure, services=tuple(declared))
 
 
 def find(directory: Path) -> Path | None:
@@ -195,7 +201,7 @@ class Reconciler:
         if current is None:
             steps.append(Step("changed", f"link {root} as {site_name}.test"))
             if not dry_run:
-                self.sites.link(root, site_name, declared.php)
+                self.sites.link(root, site_name, declared.php, declared.node)
                 current = {site.name: site for site in self.sites.list()}[site_name]
         else:
             steps.append(Step("unchanged", f"{site_name}.test already linked"))
@@ -207,6 +213,12 @@ class Reconciler:
                     self.sites.link(root, site_name, declared.php)
             elif declared.php:
                 steps.append(Step("unchanged", f"already on PHP {declared.php}"))
+            if declared.node and current.node != declared.node:
+                steps.append(Step("changed", f"switch {site_name}.test to Node {declared.node}"))
+                if not dry_run:
+                    self.sites.link(root, site_name, declared.php or current.php, declared.node)
+            elif declared.node:
+                steps.append(Step("unchanged", f"already on Node {declared.node}"))
 
         secured = current.secured if current and not dry_run else bool(current and current.secured)
         if declared.secure and not secured:

@@ -124,26 +124,52 @@ def lingering(user: str) -> bool:
     return result.stdout.strip() == "yes"
 
 
+def owned_installation(user: str, data: Path, state: Path) -> dict | None:
+    if not INSTALLATION.is_file():
+        return None
+    try:
+        record = json.loads(INSTALLATION.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit(f"refusing to replace invalid Paddock installation record: {error}")
+    expected = {
+        "version": 1,
+        "user": user,
+        "data_dir": str(data),
+        "state_dir": str(state),
+    }
+    actual = {key: record.get(key) for key in expected}
+    if actual != expected:
+        raise SystemExit(
+            "refusing to replace Paddock integration owned by another user or location"
+        )
+    return record
+
+
 def install(user: str, data_value: str, state_value: str) -> None:
     account, data, state = directories(user, data_value, state_value)
     home = Path(account.pw_dir)
     ca = data / "pki/rootCA.pem"
     if not ca.is_file():
         raise SystemExit(f"public CA does not exist: {ca}")
-    for path in OWNED:
-        if Path(path).exists():
-            raise SystemExit(f"refusing to replace existing path: {path}")
+    previous_installation = owned_installation(user, data, state)
+    managed_upgrade = previous_installation is not None
+    if not managed_upgrade:
+        for path in OWNED:
+            if Path(path).exists():
+                raise SystemExit(f"refusing to replace existing path: {path}")
     existing_connections = subprocess.run(
         ["nmcli", "-t", "-f", "NAME", "connection", "show"],
         check=True, text=True, capture_output=True,
     ).stdout.splitlines()
-    if "paddock-dns" in existing_connections:
+    if "paddock-dns" in existing_connections and not managed_upgrade:
         raise SystemExit("refusing to replace existing NetworkManager connection: paddock-dns")
+    if managed_upgrade and "paddock-dns" in existing_connections:
+        run(["nmcli", "connection", "delete", "paddock-dns"])
 
     write("/etc/paddock/dnsmasq.conf", "port=53\nlisten-address=127.0.0.1\nbind-interfaces\nno-hosts\nno-resolv\ndomain-needed\nlocal=/test/\naddress=/.test/127.0.0.1\n")
     write("/etc/systemd/system/paddock.target", """[Unit]\nDescription=Paddock local development stack\nWants=paddock-dns.service paddock-dns-route.service paddock-caddy.service paddock-php@8.4.service paddock-php@8.5.service\nAfter=network-online.target\n[Install]\nWantedBy=multi-user.target\n""")
     write("/etc/systemd/system/paddock-dns.service", """[Unit]\nDescription=Paddock .test DNS\nPartOf=paddock.target\n[Service]\nExecStart=/usr/bin/dnsmasq --no-daemon --conf-file=/etc/paddock/dnsmasq.conf\nRestart=on-failure\nNoNewPrivileges=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=yes\n""")
-    write("/etc/systemd/system/paddock-dns-route.service", """[Unit]\nDescription=Paddock route-only DNS\nPartOf=paddock.target\nRequires=paddock-dns.service NetworkManager.service\nAfter=paddock-dns.service NetworkManager.service systemd-resolved.service\n[Service]\nType=oneshot\nExecStart=/usr/bin/nmcli connection up paddock-dns\nRemainAfterExit=yes\n""")
+    write("/etc/systemd/system/paddock-dns-route.service", """[Unit]\nDescription=Paddock route-only DNS\nPartOf=paddock.target\nRequires=paddock-dns.service NetworkManager.service systemd-resolved.service\nAfter=paddock-dns.service NetworkManager.service systemd-resolved.service\n[Service]\nType=oneshot\nExecStart=/usr/bin/nmcli connection up paddock-dns\nExecStart=/usr/bin/resolvectl dns paddock0 127.0.0.1\nExecStart=/usr/bin/resolvectl domain paddock0 ~test\nExecStop=/usr/bin/resolvectl revert paddock0\nRemainAfterExit=yes\n""")
     write("/etc/systemd/system/paddock-caddy.service", f"""[Unit]\nDescription=Paddock Caddy\nPartOf=paddock.target\nAfter=paddock-dns-route.service\n[Service]\nType=notify\nUser={user}\nGroup={account.pw_gid}\nEnvironment=XDG_DATA_HOME={state}/caddy-data\nEnvironment=XDG_CONFIG_HOME={state}/caddy-config\nExecStartPre=+/usr/lib/paddock/check-ports\nExecStartPre=/usr/bin/caddy validate --config={state}/caddy/Caddyfile --adapter=caddyfile\nExecStart=/usr/bin/caddy run --config={state}/caddy/Caddyfile --adapter=caddyfile\nExecReload=/usr/bin/caddy reload --config={state}/caddy/Caddyfile --adapter=caddyfile --address=127.0.0.1:20195\nRestart=on-failure\nAmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\nNoNewPrivileges=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=read-only\nReadWritePaths={state} {data}\n""")
     write("/etc/systemd/system/paddock-php@.service", php_unit(user, account.pw_gid, home, data, state))
     allowed = json.dumps(user)
@@ -164,7 +190,10 @@ def install(user: str, data_value: str, state_value: str) -> None:
                 "user": user,
                 "data_dir": str(data),
                 "state_dir": str(state),
-                "linger_enabled_by_paddock": not linger_was_enabled,
+                "linger_enabled_by_paddock": (
+                    previous_installation.get("linger_enabled_by_paddock", False)
+                    if previous_installation is not None else not linger_was_enabled
+                ),
             },
             sort_keys=True,
         ) + "\n",
@@ -177,9 +206,16 @@ def install(user: str, data_value: str, state_value: str) -> None:
     if not (nss / "cert9.db").exists():
         run(["certutil", "-N", "--empty-password", "-d", f"sql:{nss}"], user=user)
     run(["trust", "anchor", str(SYSTEM_CA)])
+    if managed_upgrade:
+        run(
+            ["certutil", "-D", "-d", f"sql:{nss}", "-n", "Paddock Local CA"],
+            user=user, check=False,
+        )
     run(["certutil", "-A", "-d", f"sql:{nss}", "-n", "Paddock Local CA", "-t", "C,,", "-i", str(ca)], user=user)
     run(["systemctl", "daemon-reload"])
     run(["systemctl", "enable", "--now", "paddock.target"])
+    if managed_upgrade:
+        run(["systemctl", "restart", "paddock.target"])
 
 
 def uninstall(user: str, data_value: str, state_value: str) -> None:

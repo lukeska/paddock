@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import subprocess
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from paddock.application import (
     PaddockController,
     RedisConfigCandidate,
     validate_redis,
 )
+from paddock.artifacts import normalized_architecture
 from paddock.paths import Paths
 from paddock.runtimes import RuntimeRegistry
 from paddock.services import CATALOG, Service
@@ -215,6 +218,93 @@ class RedisSnapshotTests(ApplicationFixture, unittest.TestCase):
         self.assertFalse(snapshot.lingering)
 
 
+class LinkedSitesSnapshotTests(ApplicationFixture, unittest.TestCase):
+    def test_it_lists_all_sites_sorted_with_urls_and_roots(self) -> None:
+        root = self.store.paths.data / "projects"
+        self.store.write("sites", {
+            "schema_version": 1,
+            "sites": {
+                "shop": {
+                    "name": "shop", "root": str(root / "shop"),
+                    "php": "8.5", "secured": True,
+                },
+                "api": {
+                    "name": "api", "root": str(root / "api"),
+                    "php": "8.4", "secured": False,
+                },
+            },
+        })
+        snapshot = self.controller(StateRunner()).linked_sites_snapshot()
+        self.assertEqual(("api", "shop"), tuple(site.name for site in snapshot.sites))
+        self.assertEqual("http://api.test", snapshot.sites[0].url)
+        self.assertEqual("https://shop.test", snapshot.sites[1].url)
+        self.assertEqual(str(root / "shop"), snapshot.sites[1].root)
+
+    def test_php_change_relinks_the_site_and_refreshes_the_snapshot(self) -> None:
+        project = self.store.paths.data / "projects" / "shop"
+        (project / "public").mkdir(parents=True)
+        for version in ("8.4", "8.5"):
+            php = self.store.paths.data / "php" / version / "bin/php"
+            php.parent.mkdir(parents=True)
+            php.write_text("#!/bin/sh\n", encoding="utf-8")
+            php.chmod(0o755)
+            RuntimeRegistry(self.store).register(version, php, version.replace(".", "") * 32)
+        self.store.write("sites", {
+            "schema_version": 1,
+            "sites": {
+                "shop": {
+                    "name": "shop", "root": str(project),
+                    "php": "8.4", "secured": True,
+                },
+            },
+        })
+        result = self.controller(StateRunner()).set_linked_site_php("shop", "8.5")
+        self.assertTrue(result.ok, result.detail)
+        self.assertEqual("8.5", result.snapshot.sites[0].php)
+        self.assertEqual(("8.4", "8.5"), result.snapshot.php_versions)
+        self.assertTrue(result.snapshot.sites[0].secured)
+
+    def test_security_toggle_updates_the_protocol(self) -> None:
+        project = self.store.paths.data / "projects" / "shop"
+        (project / "public").mkdir(parents=True)
+        self.store.write("sites", {
+            "schema_version": 1,
+            "sites": {
+                "shop": {
+                    "name": "shop", "root": str(project),
+                    "php": "8.4", "secured": True,
+                },
+            },
+        })
+        result = self.controller(StateRunner()).set_linked_site_secured("shop", False)
+        self.assertTrue(result.ok, result.detail)
+        self.assertFalse(result.snapshot.sites[0].secured)
+        self.assertEqual("http://shop.test", result.snapshot.sites[0].url)
+
+    def test_snapshot_reconciles_new_children_of_parked_folders(self) -> None:
+        projects = self.store.paths.data / "Paddock"
+        (projects / "new-app" / "public").mkdir(parents=True)
+        controller = self.controller(StateRunner())
+        controller.parking.add(projects)
+        self.store.update("settings", lambda value: {**value, "default_php": "8.4"})
+        snapshot = controller.linked_sites_snapshot()
+        self.assertEqual(("new-app",), tuple(site.name for site in snapshot.sites))
+        record = self.store.read("sites")["sites"]["new-app"]
+        self.assertEqual("parked", record["origin"])
+
+    def test_parking_folder_operations_do_not_delete_the_folder(self) -> None:
+        projects = self.store.paths.data / "Client Projects"
+        projects.mkdir()
+        controller = self.controller(StateRunner())
+        added = controller.add_parking_path(str(projects))
+        self.assertTrue(added.ok, added.detail)
+        self.assertIn(str(projects), added.snapshot.paths)
+        removed = controller.remove_parking_path(str(projects))
+        self.assertTrue(removed.ok, removed.detail)
+        self.assertTrue(projects.is_dir())
+        self.assertNotIn(str(projects), removed.snapshot.paths)
+
+
 class DashboardTests(ApplicationFixture, unittest.TestCase):
     def install_php(self, version: str = "8.4") -> None:
         path = self.store.paths.data / "releases" / f"php-{version}.23-abcdef" / "bin/php"
@@ -284,6 +374,95 @@ class DashboardTests(ApplicationFixture, unittest.TestCase):
         target_stop = runner.calls.index(["systemctl", "stop", "paddock.target"])
         self.assertLess(user_stop, target_stop)
         self.assertFalse(result.snapshot.all_active)
+
+
+class PhpVersionsSnapshotTests(ApplicationFixture, unittest.TestCase):
+    def test_lists_published_and_installed_versions_newest_first(self) -> None:
+        manifest = Path(self.temporary.name) / "artifacts.json"
+        architecture = normalized_architecture()
+        manifest.write_text(json.dumps({
+            "schema_version": 1,
+            "artifacts": [
+                {
+                    "php": "8.4.23", "minor": "8.4",
+                    "architecture": architecture,
+                    "url": "https://example.test/php-8.4.tar.gz", "sha256": "1" * 64,
+                },
+                {
+                    "php": "8.5.8", "minor": "8.5",
+                    "architecture": architecture,
+                    "url": "https://example.test/php-8.5.tar.gz", "sha256": "2" * 64,
+                },
+            ],
+        }), encoding="utf-8")
+        php = self.store.paths.data / "php-8.4"
+        php.write_text("#!/bin/sh\n", encoding="utf-8")
+        php.chmod(0o755)
+        RuntimeRegistry(self.store).register("8.4", php, "0" * 64)
+
+        snapshot = PaddockController(
+            self.store, StateRunner(), artifact_paths=(manifest,)
+        ).php_versions_snapshot()
+
+        self.assertEqual(["8.5.8", "8.4.23"], [item.release for item in snapshot.versions])
+        self.assertFalse(snapshot.versions[0].installed)
+        self.assertTrue(snapshot.versions[0].available)
+        self.assertTrue(snapshot.versions[1].installed)
+        self.assertEqual(str(php.resolve()), snapshot.versions[1].path)
+
+    def test_keeps_an_installed_version_absent_from_the_catalog(self) -> None:
+        manifest = Path(self.temporary.name) / "missing.json"
+        php = self.store.paths.data / "php-8.3"
+        php.write_text("#!/bin/sh\n", encoding="utf-8")
+        php.chmod(0o755)
+        RuntimeRegistry(self.store).register("8.3", php, "0" * 64)
+
+        snapshot = PaddockController(
+            self.store, StateRunner(), artifact_paths=(manifest,)
+        ).php_versions_snapshot()
+
+        self.assertEqual("8.3", snapshot.versions[0].release)
+        self.assertTrue(snapshot.versions[0].installed)
+        self.assertFalse(snapshot.versions[0].available)
+
+    def test_install_uses_the_published_catalog_and_returns_a_fresh_snapshot(self) -> None:
+        manifest = Path(self.temporary.name) / "artifacts.json"
+        architecture = normalized_architecture()
+        manifest.write_text(json.dumps({
+            "schema_version": 1,
+            "artifacts": [{
+                "php": "8.5.8", "minor": "8.5", "architecture": architecture,
+                "url": "https://example.test/php-8.5.tar.gz", "sha256": "2" * 64,
+            }],
+        }), encoding="utf-8")
+        controller = PaddockController(
+            self.store, StateRunner(), artifact_paths=(manifest,)
+        )
+        destination = self.store.paths.data / "runtimes/releases/php-8.5.8-test"
+
+        def installed(_installer, minor, _manifest):
+            php = destination / "bin/php"
+            php.parent.mkdir(parents=True)
+            php.write_text("#!/bin/sh\n", encoding="utf-8")
+            php.chmod(0o755)
+            RuntimeRegistry(self.store).register(minor, php, "2" * 64)
+            return destination
+
+        with patch("paddock.application.RuntimeInstaller.install", autospec=True) as install:
+            install.side_effect = installed
+            result = controller.install_php("8.5")
+
+        self.assertTrue(result.ok, result.detail)
+        self.assertTrue(result.snapshot.versions[0].installed)
+        install.assert_called_once()
+
+    def test_install_without_a_catalog_is_an_actionable_failure(self) -> None:
+        controller = PaddockController(
+            self.store, StateRunner(), artifact_paths=(Path("/missing/catalog.json"),)
+        )
+        result = controller.install_php("8.5")
+        self.assertFalse(result.ok)
+        self.assertIn("no PHP runtime catalog", result.detail)
 
 
 class RedisValidationTests(unittest.TestCase):

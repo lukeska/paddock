@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import gi
 
@@ -16,8 +17,15 @@ from paddock.application import (
     DashboardSnapshot,
     FieldError,
     LogResult,
+    LinkedSitesSnapshot,
+    LinkedSitesOperationResult,
     OperationResult,
+    ParkingOperationResult,
     PaddockController,
+    PhpInstallResult,
+    PhpVersionsSnapshot,
+    NodeInstallResult,
+    NodeVersionsSnapshot,
     RedisConfigCandidate,
     RedisSnapshot,
     ServiceInstanceOperationResult,
@@ -43,6 +51,50 @@ def dispatch(callback):
     return GLib.idle_add(lambda: (callback(), GLib.SOURCE_REMOVE)[1])
 
 
+def terminal_command(root: str) -> list[str]:
+    """Use Omarchy's configured terminal without involving a shell."""
+    return ["xdg-terminal-exec", f"--dir={root}"]
+
+
+def zed_command(root: str) -> list[str]:
+    """Open one project in Zed without involving a shell."""
+    return ["zeditor", root]
+
+
+def site_name_matches(name: str, query: str) -> bool:
+    return query.strip().casefold() in name.casefold()
+
+
+def site_worker_summary(site) -> str:
+    statuses = []
+    if site.queue_available or site.queue_configured:
+        if not site.queue_configured:
+            statuses.append("Queue available")
+        elif site.queue_state == "active":
+            statuses.append("Queue running")
+        elif site.queue_state == "failed":
+            statuses.append("Queue failed")
+        else:
+            statuses.append("Queue stopped")
+    if site.reverb_available or site.reverb_configured:
+        if not site.reverb_configured:
+            statuses.append("Reverb available")
+        elif site.reverb_state == "active":
+            statuses.append("Reverb running")
+        elif site.reverb_state == "failed":
+            statuses.append("Reverb failed")
+        else:
+            statuses.append("Reverb stopped")
+    if not statuses:
+        return "No workers"
+    return " · ".join(statuses)
+
+
+def error_clipboard_text(heading: str, detail: str) -> str:
+    """Keep copied errors complete and useful when pasted into a report."""
+    return f"{heading}\n\n{detail}\n"
+
+
 class PaddockWindow(Adw.ApplicationWindow):
     def __init__(self, application: Adw.Application, controller: PaddockController):
         super().__init__(application=application, title="Paddock")
@@ -52,6 +104,11 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.redis_snapshot: RedisSnapshot | None = None
         self.dashboard_snapshot: DashboardSnapshot | None = None
         self.service_instances_snapshot: ServiceInstancesSnapshot | None = None
+        self.linked_sites_snapshot: LinkedSitesSnapshot | None = None
+        self.php_versions_snapshot: PhpVersionsSnapshot | None = None
+        self.php_install_buttons: dict[str, Gtk.Button] = {}
+        self.node_versions_snapshot: NodeVersionsSnapshot | None = None
+        self.node_install_buttons: dict[str, Gtk.Button] = {}
         self.mutation_busy = False
         self.redis_transitioning = False
         self.refresh_source = 0
@@ -67,8 +124,14 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.stack = Adw.ViewStack()
         self.dashboard_page = self._build_dashboard()
         self.services_page = self._build_services()
+        self.sites_page = self._build_sites()
+        self.php_page = self._build_php_versions()
+        self.node_page = self._build_node_versions()
         self.stack.add_titled(self.dashboard_page, "dashboard", "Dashboard")
         self.stack.add_titled(self.services_page, "services", "Services")
+        self.stack.add_titled(self.sites_page, "sites", "Sites")
+        self.stack.add_titled(self.php_page, "php", "PHP")
+        self.stack.add_titled(self.node_page, "node", "Node.js")
 
         self.split_view.set_sidebar(
             Adw.NavigationPage(child=self._build_sidebar(), title="Paddock")
@@ -89,6 +152,9 @@ class PaddockWindow(Adw.ApplicationWindow):
         for name, title, icon in (
             ("dashboard", "Dashboard", "view-grid-symbolic"),
             ("services", "Services", "network-server-symbolic"),
+            ("sites", "Sites", "web-browser-symbolic"),
+            ("php", "PHP", "application-x-executable-symbolic"),
+            ("node", "Node.js", "utilities-terminal-symbolic"),
         ):
             row = Adw.ActionRow(title=title)
             row.set_name(name)
@@ -147,12 +213,189 @@ class PaddockWindow(Adw.ApplicationWindow):
         content.append(self.dashboard_services)
         return page
 
+    def _build_php_versions(self) -> Gtk.Widget:
+        page = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+        )
+        clamp = Adw.Clamp(maximum_size=760, tightening_threshold=600)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        content.add_css_class("paddock-page")
+        clamp.set_child(content)
+        page.set_child(clamp)
+
+        title = Gtk.Label(label="PHP", xalign=0)
+        title.add_css_class("paddock-dashboard-heading")
+        content.append(title)
+        self.php_versions_section = PaddockSection("Available versions")
+        content.append(self.php_versions_section)
+        return page
+
+    def _build_node_versions(self) -> Gtk.Widget:
+        page = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vscrollbar_policy=Gtk.PolicyType.AUTOMATIC)
+        clamp = Adw.Clamp(maximum_size=760, tightening_threshold=600)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        content.add_css_class("paddock-page"); clamp.set_child(content); page.set_child(clamp)
+        title = Gtk.Label(label="Node.js", xalign=0); title.add_css_class("paddock-dashboard-heading"); content.append(title)
+        self.node_versions_section = PaddockSection("Available LTS versions"); content.append(self.node_versions_section)
+        return page
+
     def _build_services(self) -> Gtk.Widget:
         self.services_view = Gtk.Stack()
         self.services_view.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
         self.services_view.add_named(self._build_service_catalog(), "catalog")
         self.services_view.add_named(self._build_instance_detail(), "detail")
         return self.services_view
+
+    def _build_sites(self) -> Gtk.Widget:
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        rail = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        rail.add_css_class("paddock-sites-rail")
+        self.site_search = Gtk.SearchEntry(
+            placeholder_text="Search sites by name…",
+            hexpand=True,
+        )
+        self.site_search.set_max_width_chars(48)
+        self.site_search.connect("search-changed", self._site_search_changed)
+        rail.append(self.site_search)
+        self.parking_button = Gtk.Button(label="Parking Folders")
+        self.parking_button.connect("clicked", self._open_parking_folders)
+        rail.append(self.parking_button)
+        page.append(rail)
+
+        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        paned.set_position(250)
+        paned.set_wide_handle(True)
+        paned.set_vexpand(True)
+
+        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        left.add_css_class("paddock-page")
+        left.set_size_request(220, -1)
+        title = Gtk.Label(label="Sites", xalign=0)
+        title.add_css_class("paddock-dashboard-heading")
+        left.append(title)
+        self.linked_sites_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+        self.linked_sites_list.add_css_class("paddock-card")
+        self.linked_sites_list.connect("row-selected", self._site_selected)
+        left_scroller = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+        )
+        left_scroller.set_child(self.linked_sites_list)
+        left_scroller.set_vexpand(True)
+        left.append(left_scroller)
+        paned.set_start_child(left)
+
+        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        right.add_css_class("paddock-page")
+        self.site_detail_stack = Gtk.Stack()
+        self.site_detail_stack.set_vexpand(True)
+        empty = Adw.StatusPage(
+            title="Select a site",
+            description="Choose a linked site to see its configuration and actions.",
+            icon_name="web-browser-symbolic",
+        )
+        self.site_detail_stack.add_named(empty, "empty")
+
+        details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        self.site_detail_title = Gtk.Label(label="Site", xalign=0)
+        self.site_detail_title.add_css_class("paddock-dashboard-heading")
+        details.append(self.site_detail_title)
+        configuration = PaddockSection("Details")
+        self.site_secured_row = Adw.ActionRow(title="Secured")
+        self.site_secured_button = Gtk.Button(label="No")
+        self.site_secured_button.set_valign(Gtk.Align.CENTER)
+        self.site_secured_button.connect("clicked", self._toggle_site_secured)
+        self.site_secured_row.add_suffix(self.site_secured_button)
+        self.site_php_row = Adw.ActionRow(title="PHP version")
+        self.site_php_button = Gtk.Button(label="Select")
+        self.site_php_button.set_valign(Gtk.Align.CENTER)
+        self.site_php_button.connect("clicked", self._toggle_site_php_options)
+        self.site_php_row.add_suffix(self.site_php_button)
+        self.site_php_options_row = Gtk.ListBoxRow(selectable=False, activatable=False)
+        self.site_php_revealer = Gtk.Revealer()
+        self.site_php_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.site_php_options = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=4,
+            margin_top=6, margin_bottom=6, margin_start=10, margin_end=10,
+        )
+        self.site_php_revealer.set_child(self.site_php_options)
+        self.site_php_options_row.set_child(self.site_php_revealer)
+        self.site_node_row = Adw.ActionRow(title="Node.js version")
+        self.site_node_button = Gtk.Button(label="Select"); self.site_node_button.set_valign(Gtk.Align.CENTER)
+        self.site_node_button.connect("clicked", self._toggle_site_node_options); self.site_node_row.add_suffix(self.site_node_button)
+        self.site_node_options_row = Gtk.ListBoxRow(selectable=False, activatable=False)
+        self.site_node_revealer = Gtk.Revealer(); self.site_node_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.site_node_options = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin_top=6, margin_bottom=6, margin_start=10, margin_end=10)
+        self.site_node_revealer.set_child(self.site_node_options); self.site_node_options_row.set_child(self.site_node_revealer)
+        self.site_reverb_row = Adw.ActionRow(title="Reverb")
+        self.site_reverb_toggle = Gtk.Button(label="Start")
+        self.site_reverb_toggle.set_valign(Gtk.Align.CENTER)
+        self.site_reverb_toggle.connect("clicked", self._toggle_site_reverb)
+        self.site_reverb_logs = Gtk.Button(label="Logs")
+        self.site_reverb_logs.set_valign(Gtk.Align.CENTER)
+        self.site_reverb_logs.connect("clicked", self._open_site_reverb_logs)
+        self.site_reverb_autostart = Gtk.CheckButton(valign=Gtk.Align.CENTER)
+        self.site_reverb_autostart.set_tooltip_text("Start Reverb automatically")
+        self.site_reverb_autostart.connect("toggled", self._toggle_site_reverb_autostart)
+        self.site_reverb_row.add_suffix(self.site_reverb_autostart)
+        self.site_reverb_row.add_suffix(self.site_reverb_logs)
+        self.site_reverb_row.add_suffix(self.site_reverb_toggle)
+        self.site_queue_row = Adw.ActionRow(title="Queue")
+        self.site_queue_toggle = Gtk.Button(label="Start")
+        self.site_queue_toggle.set_valign(Gtk.Align.CENTER)
+        self.site_queue_toggle.connect("clicked", self._toggle_site_queue)
+        self.site_queue_logs = Gtk.Button(label="Logs")
+        self.site_queue_logs.set_valign(Gtk.Align.CENTER)
+        self.site_queue_logs.connect("clicked", self._open_site_queue_logs)
+        self.site_queue_autostart = Gtk.CheckButton(valign=Gtk.Align.CENTER)
+        self.site_queue_autostart.set_tooltip_text("Start the queue worker automatically")
+        self.site_queue_autostart.connect("toggled", self._toggle_site_queue_autostart)
+        self.site_queue_row.add_suffix(self.site_queue_autostart)
+        self.site_queue_row.add_suffix(self.site_queue_logs)
+        self.site_queue_row.add_suffix(self.site_queue_toggle)
+        self.site_url_row = Adw.ActionRow(title="URL")
+        self.site_url_link = Gtk.LinkButton(uri="http://localhost", label="Open")
+        self.site_url_link.add_css_class("paddock-text-link")
+        self.site_url_row.add_suffix(self.site_url_link)
+        self.site_terminal_row = Adw.ActionRow(title="Terminal")
+        self.site_terminal_button = Gtk.Button(label="Open")
+        self.site_terminal_button.set_valign(Gtk.Align.CENTER)
+        self.site_terminal_button.connect("clicked", self._open_site_terminal)
+        self.site_terminal_row.add_suffix(self.site_terminal_button)
+        self.site_path_row = Adw.ActionRow(title="Path")
+        self.site_path_link = Gtk.LinkButton(uri="file:///", label="/")
+        self.site_path_link.add_css_class("paddock-text-link")
+        self.site_path_row.add_suffix(self.site_path_link)
+        self.site_zed_row = Adw.ActionRow(title="Zed")
+        self.site_zed_button = Gtk.Button(label="Open")
+        self.site_zed_button.set_valign(Gtk.Align.CENTER)
+        self.site_zed_button.connect("clicked", self._open_site_in_zed)
+        self.site_zed_row.add_suffix(self.site_zed_button)
+        for row in (
+            self.site_secured_row,
+            self.site_php_row,
+            self.site_php_options_row,
+            self.site_node_row,
+            self.site_node_options_row,
+            self.site_url_row,
+            self.site_terminal_row,
+            self.site_path_row,
+            self.site_zed_row,
+        ):
+            if isinstance(row, Adw.ActionRow):
+                row.set_subtitle_selectable(True)
+            configuration.add(row)
+        details.append(configuration)
+        self.site_workers_section = PaddockSection("Workers")
+        self.site_workers_section.add(self.site_queue_row)
+        self.site_workers_section.add(self.site_reverb_row)
+        details.append(self.site_workers_section)
+        self.site_detail_stack.add_named(details, "details")
+        right.append(self.site_detail_stack)
+        paned.set_end_child(right)
+        page.append(paned)
+        return page
 
     def _build_service_catalog(self) -> Gtk.Widget:
         page = Gtk.ScrolledWindow(
@@ -773,6 +1016,23 @@ class PaddockWindow(Adw.ApplicationWindow):
             self._show_service_instances,
             lambda error: self.show_error("Service refresh failed", str(error)),
         )
+        self.tasks.submit(
+            "linked-sites-snapshot",
+            self.controller.linked_sites_snapshot,
+            self._show_linked_sites,
+            lambda error: self.show_error("Sites refresh failed", str(error)),
+        )
+        self.tasks.submit(
+            "php-versions-snapshot",
+            self.controller.php_versions_snapshot,
+            self._show_php_versions,
+            lambda error: self.show_error("PHP refresh failed", str(error)),
+        )
+        self.tasks.submit(
+            "node-versions-snapshot", self.controller.node_versions_snapshot,
+            self._show_node_versions,
+            lambda error: self.show_error("Node.js refresh failed", str(error)),
+        )
 
     def _show_dashboard(self, snapshot: DashboardSnapshot) -> None:
         self.dashboard_snapshot = snapshot
@@ -854,6 +1114,562 @@ class PaddockWindow(Adw.ApplicationWindow):
         if not any(item.type != "redis" for item in snapshot.instances):
             self.service_database_section.add(Adw.ActionRow(title="No databases added"))
         self._update_action_sensitivity()
+
+    def _show_linked_sites(self, snapshot: LinkedSitesSnapshot) -> None:
+        self.linked_sites_snapshot = snapshot
+        self._render_linked_sites()
+
+    def _show_php_versions(self, snapshot: PhpVersionsSnapshot) -> None:
+        self.php_versions_snapshot = snapshot
+        self.php_versions_section.clear()
+        self.php_install_buttons.clear()
+        for version in snapshot.versions:
+            if version.installed:
+                subtitle = f"{version.architecture} · Installed"
+            elif version.available:
+                subtitle = f"{version.architecture} · Available to install"
+            else:
+                subtitle = f"{version.architecture} · Locally installed"
+            row = Adw.ActionRow(title=f"PHP {version.release}", subtitle=subtitle)
+            if version.path:
+                row.set_tooltip_text(version.path)
+            if version.available and not version.installed:
+                install = Gtk.Button(label="Install")
+                install.set_valign(Gtk.Align.CENTER)
+                install.add_css_class("suggested-action")
+                install.set_sensitive(not self.mutation_busy)
+                install.connect("clicked", self._install_php, version.minor)
+                row.add_suffix(install)
+                self.php_install_buttons[version.minor] = install
+            self.php_versions_section.add(row)
+        if not snapshot.versions:
+            self.php_versions_section.add(
+                Adw.ActionRow(title="No PHP versions available")
+            )
+
+    def _install_php(self, _button, minor: str) -> None:
+        if self.mutation_busy:
+            return
+        self.operation_spinner.set_tooltip_text(f"Installing PHP {minor}")
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            f"php-install-{minor}",
+            lambda: self.controller.install_php(minor),
+            self._php_install_finished,
+            lambda error: self._php_install_failed(minor, error),
+        )
+
+    def _show_node_versions(self, snapshot: NodeVersionsSnapshot) -> None:
+        self.node_versions_snapshot = snapshot
+        self.node_versions_section.clear(); self.node_install_buttons.clear()
+        for version in snapshot.versions:
+            subtitle = f"{version.architecture} · " + ("Installed" if version.installed else "Available to install")
+            row = Adw.ActionRow(title=f"Node.js {version.release}", subtitle=subtitle)
+            if version.path: row.set_tooltip_text(version.path)
+            if version.available and not version.installed:
+                install = Gtk.Button(label="Install"); install.set_valign(Gtk.Align.CENTER)
+                install.add_css_class("suggested-action"); install.set_sensitive(not self.mutation_busy)
+                install.connect("clicked", self._install_node, version.major); row.add_suffix(install)
+                self.node_install_buttons[version.major] = install
+            self.node_versions_section.add(row)
+        if not snapshot.versions: self.node_versions_section.add(Adw.ActionRow(title="No Node.js versions available"))
+
+    def _install_node(self, _button, major: str) -> None:
+        if self.mutation_busy: return
+        self.operation_spinner.set_tooltip_text(f"Installing Node.js {major}"); self._set_mutation_busy(True)
+        self.tasks.submit(f"node-install-{major}", lambda: self.controller.install_node(major), self._node_install_finished, lambda error: self._node_install_failed(major, error))
+
+    def _node_install_finished(self, result: NodeInstallResult) -> None:
+        self._set_mutation_busy(False); self._show_node_versions(result.snapshot)
+        if result.ok: self.show_toast(result.summary); self.refresh()
+        else: self.show_error(result.summary, result.detail or "Unknown installation error")
+
+    def _node_install_failed(self, major: str, error: BaseException) -> None:
+        self._set_mutation_busy(False); self.show_error(f"Node {major} could not be installed", str(error)); self.refresh()
+
+    def _php_install_finished(self, result: PhpInstallResult) -> None:
+        self._set_mutation_busy(False)
+        self._show_php_versions(result.snapshot)
+        if result.ok:
+            self.show_toast(result.summary)
+            self.refresh()
+        else:
+            self.show_error(result.summary, result.detail or "Unknown installation error")
+
+    def _php_install_failed(self, minor: str, error: BaseException) -> None:
+        self._set_mutation_busy(False)
+        self.show_error(f"PHP {minor} could not be installed", str(error))
+
+    def _site_search_changed(self, _entry=None) -> None:
+        if self.linked_sites_snapshot is not None:
+            self._render_linked_sites()
+
+    def _render_linked_sites(self) -> None:
+        previous = getattr(self, "selected_site_name", None)
+        query = self.site_search.get_text().strip().casefold()
+        sites = tuple(
+            site for site in self.linked_sites_snapshot.sites
+            if site_name_matches(site.name, query)
+        )
+        while child := self.linked_sites_list.get_first_child():
+            self.linked_sites_list.remove(child)
+        selected_row = None
+        for site in sites:
+            row = Adw.ActionRow(
+                title=site.host,
+                subtitle=f"PHP {site.php} · {site_worker_summary(site)}",
+            )
+            row.set_name(site.name)
+            row.set_activatable(True)
+            self.linked_sites_list.append(row)
+            if site.name == previous:
+                selected_row = row
+        if sites:
+            self.linked_sites_list.select_row(
+                selected_row or self.linked_sites_list.get_row_at_index(0)
+            )
+        else:
+            self.selected_site_name = None
+            self.site_detail_stack.set_visible_child_name("empty")
+
+    def _site_selected(self, _list, row) -> None:
+        if row is None or self.linked_sites_snapshot is None:
+            self.selected_site_name = None
+            self.site_detail_stack.set_visible_child_name("empty")
+            return
+        name = row.get_name()
+        site = next(
+            (item for item in self.linked_sites_snapshot.sites if item.name == name),
+            None,
+        )
+        if site is None:
+            return
+        self.selected_site_name = site.name
+        self.site_detail_title.set_label(site.host)
+        self.site_secured_button.set_label("Yes" if site.secured else "No")
+        self.site_secured_button.set_sensitive(not self.mutation_busy)
+        versions = list(self.linked_sites_snapshot.php_versions)
+        if site.php not in versions:
+            versions.append(site.php)
+            versions.sort()
+        self.site_php_button.set_label(site.php)
+        self.site_php_button.set_sensitive(not self.mutation_busy and bool(versions))
+        self.site_php_revealer.set_reveal_child(False)
+        while child := self.site_php_options.get_first_child():
+            self.site_php_options.remove(child)
+        for version in versions:
+            choice = Gtk.Button(label=f"{version}{'  ✓' if version == site.php else ''}")
+            choice.connect("clicked", self._choose_site_php, version)
+            self.site_php_options.append(choice)
+        node_versions = list(self.linked_sites_snapshot.node_versions)
+        if site.node and site.node not in node_versions: node_versions.append(site.node); node_versions.sort(key=int)
+        self.site_node_button.set_label(site.node or "Default")
+        self.site_node_button.set_sensitive(not self.mutation_busy and bool(node_versions))
+        self.site_node_revealer.set_reveal_child(False)
+        while child := self.site_node_options.get_first_child(): self.site_node_options.remove(child)
+        for version in node_versions:
+            choice = Gtk.Button(label=f"{version}{'  ✓' if version == site.node else ''}")
+            choice.connect("clicked", self._choose_site_node, version); self.site_node_options.append(choice)
+        self.site_reverb_row.set_visible(site.reverb_available or site.reverb_configured)
+        self.site_workers_section.set_visible(
+            site.reverb_available or site.reverb_configured
+        )
+        if site.reverb_configured:
+            detail = site.reverb_state.replace("-", " ").capitalize()
+            if site.reverb_port is not None:
+                detail += f" · Proxied through {site.host} · Internal port {site.reverb_port}"
+            self.site_reverb_row.set_subtitle(detail)
+        else:
+            self.site_reverb_row.set_subtitle("Available · not running")
+        active = site.reverb_state == "active"
+        self.site_reverb_toggle.set_label("Stop" if active else "Start")
+        self.site_reverb_toggle.set_sensitive(not self.mutation_busy)
+        self.site_reverb_logs.set_sensitive(not self.mutation_busy and site.reverb_configured)
+        self._updating_reverb_autostart = True
+        self.site_reverb_autostart.set_active(site.reverb_autostart)
+        self._updating_reverb_autostart = False
+        self.site_reverb_autostart.set_sensitive(not self.mutation_busy)
+        self.site_queue_row.set_visible(site.queue_available or site.queue_configured)
+        self.site_queue_row.set_subtitle(
+            site.queue_state.replace("-", " ").capitalize()
+            if site.queue_configured else "Available · not running"
+        )
+        queue_active = site.queue_state == "active"
+        self.site_queue_toggle.set_label("Stop" if queue_active else "Start")
+        self.site_queue_toggle.set_sensitive(not self.mutation_busy)
+        self.site_queue_logs.set_sensitive(not self.mutation_busy and site.queue_configured)
+        self._updating_queue_autostart = True
+        self.site_queue_autostart.set_active(site.queue_autostart)
+        self._updating_queue_autostart = False
+        self.site_queue_autostart.set_sensitive(not self.mutation_busy)
+        self.site_workers_section.set_visible(
+            site.reverb_available or site.reverb_configured
+            or site.queue_available or site.queue_configured
+        )
+        self.site_url_link.set_uri(site.url)
+        self.site_url_link.set_label(site.url)
+        self.site_path_link.set_uri(Path(site.root).as_uri())
+        self.site_path_link.set_label(site.root)
+        self.site_detail_stack.set_visible_child_name("details")
+
+    def _toggle_site_php_options(self, _button=None) -> None:
+        if self.mutation_busy:
+            return
+        self.site_php_revealer.set_reveal_child(
+            not self.site_php_revealer.get_reveal_child()
+        )
+
+    def _toggle_site_node_options(self, _button=None) -> None:
+        if not self.mutation_busy: self.site_node_revealer.set_reveal_child(not self.site_node_revealer.get_reveal_child())
+
+    def _selected_site(self):
+        if self.linked_sites_snapshot is None:
+            return None
+        selected = getattr(self, "selected_site_name", None)
+        return next(
+            (item for item in self.linked_sites_snapshot.sites if item.name == selected),
+            None,
+        )
+
+    def _toggle_site_reverb(self, _button=None) -> None:
+        if self.mutation_busy:
+            return
+        site = self._selected_site()
+        if site is None:
+            return
+        active = site.reverb_state != "active"
+        self.operation_spinner.set_tooltip_text(
+            f"{'Starting' if active else 'Stopping'} Reverb for {site.host}"
+        )
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            f"site-reverb-{site.name}",
+            lambda: self.controller.set_reverb_active(site.name, active),
+            self._site_reverb_finished,
+            self._site_reverb_failed,
+        )
+
+    def _toggle_site_reverb_autostart(self, button) -> None:
+        if getattr(self, "_updating_reverb_autostart", False) or self.mutation_busy:
+            return
+        site = self._selected_site()
+        if site is None:
+            return
+        enabled = button.get_active()
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            f"site-reverb-autostart-{site.name}",
+            lambda: self.controller.set_reverb_autostart(site.name, enabled),
+            self._site_reverb_finished,
+            self._site_reverb_failed,
+        )
+
+    def _open_site_reverb_logs(self, _button=None) -> None:
+        if self.mutation_busy:
+            return
+        site = self._selected_site()
+        if site is None:
+            return
+        self.tasks.submit(
+            f"site-reverb-logs-{site.name}",
+            lambda: self.controller.reverb_logs(site.name, 200),
+            lambda lines: self.show_error(
+                f"Reverb logs · {site.host}",
+                "\n".join(lines) or "No log entries were found.",
+            ),
+            lambda error: self.show_error("Reverb logs unavailable", str(error)),
+        )
+
+    def _site_reverb_finished(self, result: LinkedSitesOperationResult) -> None:
+        self._set_mutation_busy(False)
+        self._show_linked_sites(result.snapshot)
+        if result.ok:
+            self.show_toast(result.summary)
+        else:
+            self.show_error(result.summary, result.detail or "Unknown Reverb error")
+
+    def _site_reverb_failed(self, error: BaseException) -> None:
+        self._set_mutation_busy(False)
+        self.show_error("Reverb could not be changed", str(error))
+        self.refresh()
+
+    def _toggle_site_queue(self, _button=None) -> None:
+        if self.mutation_busy:
+            return
+        site = self._selected_site()
+        if site is None:
+            return
+        active = site.queue_state != "active"
+        self.operation_spinner.set_tooltip_text(
+            f"{'Starting' if active else 'Stopping'} queue worker for {site.host}"
+        )
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            f"site-queue-{site.name}",
+            lambda: self.controller.set_queue_active(site.name, active),
+            self._site_queue_finished,
+            self._site_queue_failed,
+        )
+
+    def _toggle_site_queue_autostart(self, button) -> None:
+        if getattr(self, "_updating_queue_autostart", False) or self.mutation_busy:
+            return
+        site = self._selected_site()
+        if site is None:
+            return
+        enabled = button.get_active()
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            f"site-queue-autostart-{site.name}",
+            lambda: self.controller.set_queue_autostart(site.name, enabled),
+            self._site_queue_finished,
+            self._site_queue_failed,
+        )
+
+    def _open_site_queue_logs(self, _button=None) -> None:
+        if self.mutation_busy:
+            return
+        site = self._selected_site()
+        if site is None:
+            return
+        self.tasks.submit(
+            f"site-queue-logs-{site.name}",
+            lambda: self.controller.queue_logs(site.name, 200),
+            lambda lines: self.show_error(
+                f"Queue logs · {site.host}",
+                "\n".join(lines) or "No log entries were found.",
+            ),
+            lambda error: self.show_error("Queue logs unavailable", str(error)),
+        )
+
+    def _site_queue_finished(self, result: LinkedSitesOperationResult) -> None:
+        self._set_mutation_busy(False)
+        self._show_linked_sites(result.snapshot)
+        if result.ok:
+            self.show_toast(result.summary)
+        else:
+            self.show_error(result.summary, result.detail or "Unknown queue error")
+
+    def _site_queue_failed(self, error: BaseException) -> None:
+        self._set_mutation_busy(False)
+        self.show_error("Queue worker could not be changed", str(error))
+        self.refresh()
+
+    def _choose_site_node(self, _button, version: str) -> None:
+        if self.mutation_busy: return
+        self.site_node_revealer.set_reveal_child(False)
+        selected = getattr(self, "selected_site_name", None)
+        site = next((item for item in self.linked_sites_snapshot.sites if item.name == selected), None) if self.linked_sites_snapshot else None
+        if site is None or version == site.node: return
+        self.operation_spinner.set_tooltip_text(f"Switching {site.host} to Node {version}"); self._set_mutation_busy(True)
+        self.tasks.submit(f"site-node-{site.name}", lambda: self.controller.set_linked_site_node(site.name, version), self._site_node_finished, self._site_node_failed)
+
+    def _site_node_finished(self, result: LinkedSitesOperationResult) -> None:
+        self._set_mutation_busy(False); self._show_linked_sites(result.snapshot)
+        if result.ok: self.show_toast(result.summary)
+        else: self.show_error(result.summary, result.detail or "Unknown site error")
+
+    def _site_node_failed(self, error: BaseException) -> None:
+        self._set_mutation_busy(False); self.show_error("Node version could not be changed", str(error)); self.refresh()
+
+    def _choose_site_php(self, _button, version: str) -> None:
+        if self.mutation_busy:
+            return
+        self.site_php_revealer.set_reveal_child(False)
+        selected = getattr(self, "selected_site_name", None)
+        site = next(
+            (
+                candidate for candidate in self.linked_sites_snapshot.sites
+                if candidate.name == selected
+            ),
+            None,
+        ) if self.linked_sites_snapshot else None
+        if site is None:
+            return
+        if version == site.php:
+            return
+        self.operation_spinner.set_tooltip_text(
+            f"Switching {site.host} to PHP {version}"
+        )
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            f"site-php-{site.name}",
+            lambda: self.controller.set_linked_site_php(site.name, version),
+            self._site_php_finished,
+            self._site_php_failed,
+        )
+
+    def _site_php_finished(self, result: LinkedSitesOperationResult) -> None:
+        self._set_mutation_busy(False)
+        self._show_linked_sites(result.snapshot)
+        if result.ok:
+            self.show_toast(result.summary)
+        else:
+            self.show_error(result.summary, result.detail or "Unknown site error")
+
+    def _site_php_failed(self, error: BaseException) -> None:
+        self._set_mutation_busy(False)
+        self.show_error("PHP version could not be changed", str(error))
+        self.refresh()
+
+    def _toggle_site_secured(self, _button=None) -> None:
+        if self.mutation_busy or self.linked_sites_snapshot is None:
+            return
+        selected = getattr(self, "selected_site_name", None)
+        site = next(
+            (item for item in self.linked_sites_snapshot.sites if item.name == selected),
+            None,
+        )
+        if site is None:
+            return
+        secured = not site.secured
+        self.operation_spinner.set_tooltip_text(
+            f"Switching {site.host} to {'HTTPS' if secured else 'HTTP'}"
+        )
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            f"site-security-{site.name}",
+            lambda: self.controller.set_linked_site_secured(site.name, secured),
+            self._site_security_finished,
+            self._site_security_failed,
+        )
+
+    def _site_security_finished(self, result: LinkedSitesOperationResult) -> None:
+        self._set_mutation_busy(False)
+        self._show_linked_sites(result.snapshot)
+        if result.ok:
+            self.show_toast(result.summary)
+        else:
+            self.show_error(result.summary, result.detail or "Unknown site error")
+
+    def _site_security_failed(self, error: BaseException) -> None:
+        self._set_mutation_busy(False)
+        self.show_error("Site security could not be changed", str(error))
+        self.refresh()
+
+    def _open_site_terminal(self, _button=None) -> None:
+        if self.linked_sites_snapshot is None:
+            return
+        selected = getattr(self, "selected_site_name", None)
+        site = next(
+            (item for item in self.linked_sites_snapshot.sites if item.name == selected),
+            None,
+        )
+        if site is None:
+            return
+        if not Path(site.root).is_dir():
+            self.show_error("Project path unavailable", f"Directory does not exist: {site.root}")
+            return
+        try:
+            Gio.Subprocess.new(terminal_command(site.root), Gio.SubprocessFlags.NONE)
+        except GLib.Error as error:
+            self.show_error("Could not open terminal", str(error))
+
+    def _open_site_in_zed(self, _button=None) -> None:
+        if self.linked_sites_snapshot is None:
+            return
+        selected = getattr(self, "selected_site_name", None)
+        site = next(
+            (item for item in self.linked_sites_snapshot.sites if item.name == selected),
+            None,
+        )
+        if site is None:
+            return
+        if not Path(site.root).is_dir():
+            self.show_error("Project path unavailable", f"Directory does not exist: {site.root}")
+            return
+        try:
+            Gio.Subprocess.new(zed_command(site.root), Gio.SubprocessFlags.NONE)
+        except GLib.Error as error:
+            self.show_error("Could not open Zed", str(error))
+
+    def _open_parking_folders(self, _button=None) -> None:
+        if self.mutation_busy:
+            return
+        snapshot = self.controller.parking_snapshot()
+        dialog = Adw.AlertDialog(
+            heading="Parking Folders",
+            body="Every immediate subfolder is served as <folder-name>.test.",
+        )
+        dialog.add_css_class("paddock-dialog")
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        content.set_size_request(560, -1)
+        folders = PaddockSection("Folders")
+        for path in snapshot.paths:
+            row = Adw.ActionRow(title=path)
+            row.set_title_selectable(True)
+            remove = Gtk.Button(label="Remove")
+            remove.set_valign(Gtk.Align.CENTER)
+            remove.add_css_class("destructive-action")
+            remove.connect("clicked", self._remove_parking_folder, path, dialog)
+            row.add_suffix(remove)
+            folders.add(row)
+        if not snapshot.paths:
+            folders.add(Adw.ActionRow(title="No parking folders"))
+        content.append(folders)
+        if snapshot.conflicts:
+            warning = Gtk.Label(
+                label="\n".join(snapshot.conflicts), xalign=0, wrap=True, selectable=True
+            )
+            warning.add_css_class("error")
+            content.append(warning)
+        add = Gtk.Button(label="Add Folder")
+        add.set_halign(Gtk.Align.END)
+        add.add_css_class("suggested-action")
+        add.connect("clicked", self._choose_parking_folder, dialog)
+        content.append(add)
+        dialog.set_extra_child(content)
+        dialog.add_response("close", "Close")
+        dialog.set_default_response("close")
+        dialog.present(self)
+
+    def _choose_parking_folder(self, _button, parent_dialog) -> None:
+        chooser = Gtk.FileDialog(title="Add Parking Folder")
+
+        def selected(file_dialog, result) -> None:
+            try:
+                folder = file_dialog.select_folder_finish(result)
+            except GLib.Error as error:
+                if not error.matches(Gtk.DialogError.quark(), Gtk.DialogError.DISMISSED):
+                    self.show_error("Folder could not be selected", str(error))
+                return
+            path = folder.get_path()
+            if path is None:
+                self.show_error("Folder could not be selected", "Choose a local folder.")
+                return
+            parent_dialog.close()
+            self._set_mutation_busy(True)
+            self.tasks.submit(
+                "parking-folder-add",
+                lambda: self.controller.add_parking_path(path),
+                self._parking_operation_finished,
+                self._parking_operation_failed,
+            )
+
+        chooser.select_folder(self, None, selected)
+
+    def _remove_parking_folder(self, _button, path: str, parent_dialog) -> None:
+        parent_dialog.close()
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            "parking-folder-remove",
+            lambda: self.controller.remove_parking_path(path),
+            self._parking_operation_finished,
+            self._parking_operation_failed,
+        )
+
+    def _parking_operation_finished(self, result: ParkingOperationResult) -> None:
+        self._set_mutation_busy(False)
+        if result.ok:
+            self.show_toast(result.summary)
+        else:
+            self.show_error(result.summary, result.detail or "Unknown parking error")
+        self.refresh()
+
+    def _parking_operation_failed(self, error: BaseException) -> None:
+        self._set_mutation_busy(False)
+        self.show_error("Parking folder operation failed", str(error))
+        self.refresh()
 
     def _toggle_dashboard_services(self, _button) -> None:
         if self.mutation_busy or self.dashboard_snapshot is None:
@@ -971,7 +1787,21 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.add_service_button.set_sensitive(sensitive)
         self.instance_save_button.set_sensitive(sensitive)
         self.instance_remove_button.set_sensitive(sensitive)
+        self.parking_button.set_sensitive(sensitive)
+        self.site_php_button.set_sensitive(
+            sensitive and bool(
+                self.linked_sites_snapshot and self.linked_sites_snapshot.php_versions
+            )
+        )
+        self.site_secured_button.set_sensitive(
+            sensitive and getattr(self, "selected_site_name", None) is not None
+        )
+        self.site_node_button.set_sensitive(sensitive and bool(self.linked_sites_snapshot and self.linked_sites_snapshot.node_versions))
         for button in self.service_toggle_buttons.values():
+            button.set_sensitive(sensitive)
+        for button in self.php_install_buttons.values():
+            button.set_sensitive(sensitive)
+        for button in self.node_install_buttons.values():
             button.set_sensitive(sensitive)
         if hasattr(self, "service_open_logs"):
             selected = getattr(self, "selected_service_key", None)
@@ -1266,8 +2096,16 @@ class PaddockWindow(Adw.ApplicationWindow):
 
     def show_error(self, heading: str, detail: str) -> None:
         dialog = Adw.AlertDialog(heading=heading, body=detail)
+        dialog.add_css_class("paddock-dialog")
+        dialog.add_response("copy", "Copy Error")
         dialog.add_response("close", "Close")
         dialog.set_default_response("close")
+
+        def response(_dialog, response_name: str) -> None:
+            if response_name == "copy":
+                self.get_clipboard().set(error_clipboard_text(heading, detail))
+
+        dialog.connect("response", response)
         dialog.present(self)
 
     def _closed(self, _window) -> bool:
@@ -1297,7 +2135,9 @@ class PaddockApplication(Adw.Application):
         if self.window is None:
             store = StateStore(Paths.from_environment())
             store.initialize()
-            self.window = PaddockWindow(self, PaddockController(store))
+            controller = PaddockController(store)
+            controller.parking.ensure_default(Path.home())
+            self.window = PaddockWindow(self, controller)
         self.window.present()
 
     def _refresh(self, *_args) -> None:

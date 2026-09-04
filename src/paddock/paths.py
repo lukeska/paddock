@@ -26,6 +26,7 @@ class Paths:
     state: Path
     cache: Path
     runtime: Path
+    home: Path | None = None
 
     @classmethod
     def from_environment(
@@ -45,6 +46,7 @@ class Paths:
             state=Path(env.get("XDG_STATE_HOME", home / ".local/state")) / "paddock",
             cache=Path(env.get("XDG_CACHE_HOME", home / ".cache")) / "paddock",
             runtime=runtime_root,
+            home=home,
         )
 
     def initialize(self) -> None:
@@ -53,4 +55,3 @@ class Paths:
         for root in (self.config, self.data, self.state, self.cache):
             root.mkdir(parents=True, exist_ok=True, mode=0o700)
             root.chmod(0o700)
-

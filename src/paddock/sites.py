@@ -6,7 +6,8 @@ import re
 
 from .atomic import exclusive_lock
 from .caddy import CaddyProjector
-from .projects import select_php
+from .projects import ProjectError, select_node, select_php
+from .node_runtime import NodeRegistry, normalize_major
 from .runtimes import RuntimeRegistry
 from .state import StateStore
 
@@ -24,6 +25,7 @@ class Site:
     root: Path
     php: str
     secured: bool
+    node: str | None = None
 
 
 class SiteManager:
@@ -47,6 +49,7 @@ class SiteManager:
                 root=Path(record["root"]),
                 php=record["php"],
                 secured=record["secured"],
+                node=record.get("node"),
             )
             for _, record in sorted(records.items())
         ]
@@ -56,6 +59,7 @@ class SiteManager:
         root: Path,
         name: str | None = None,
         php: str | None = None,
+        node: str | None = None,
         *,
         reload: bool = True,
     ) -> Site:
@@ -68,6 +72,11 @@ class SiteManager:
         site_name = normalize_site_name(name or canonical_root.name)
         version = php or select_php(canonical_root, self.store).version
         RuntimeRegistry(self.store).resolve(version)
+        node_version = normalize_major(node) if node else None
+        if node_version is None:
+            try: node_version = select_node(canonical_root, self.store).version
+            except ProjectError: pass
+        if node_version is not None: NodeRegistry(self.store).resolve(node_version)
 
         with exclusive_lock(self.transaction_lock):
             registry = self.store.read("sites")
@@ -77,12 +86,24 @@ class SiteManager:
                     raise SiteError(
                         f"project is already linked as {existing_name}.test: {canonical_root}"
                     )
+            secured = bool(sites.get(site_name, {}).get("secured", False))
+            previous = sites.get(site_name, {})
             record = {
                 "name": site_name,
                 "root": str(canonical_root),
                 "php": version,
-                "secured": False,
+                "secured": secured,
             }
+            if node_version is not None: record["node"] = node_version
+            if previous.get("reverb") is not None:
+                record["reverb"] = previous["reverb"]
+            if previous.get("queue") is not None:
+                record["queue"] = previous["queue"]
+            if previous.get("origin") == "parked" and Path(previous["root"]) == canonical_root:
+                record.update({
+                    "origin": "parked",
+                    "parking_path": previous["parking_path"],
+                })
             sites[site_name] = record
             candidate = self.projector.render(sites)
             self.projector.validate(candidate)
@@ -92,7 +113,13 @@ class SiteManager:
             self.projector.write(candidate)
             if reload:
                 self.projector.reload()
-        return Site(site_name, canonical_root, version, False)
+        if previous.get("reverb") is not None:
+            from .reverb import ReverbManager
+            ReverbManager(self.store, self.projector.runner).reproject(site_name)
+        if previous.get("queue") is not None:
+            from .queue_worker import QueueWorkerManager
+            QueueWorkerManager(self.store, self.projector.runner).reproject(site_name)
+        return Site(site_name, canonical_root, version, secured, node_version)
 
     def unlink(
         self, name: str | None = None, directory: Path | None = None, *, reload: bool = True
@@ -115,7 +142,7 @@ class SiteManager:
             self.projector.write(candidate)
             if reload:
                 self.projector.reload()
-        return Site(site_name, Path(record["root"]), record["php"], record["secured"])
+        return Site(site_name, Path(record["root"]), record["php"], record["secured"], record.get("node"))
 
     @staticmethod
     def _name_for_directory(sites: dict[str, dict], directory: Path) -> str:

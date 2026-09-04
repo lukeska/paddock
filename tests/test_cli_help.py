@@ -87,6 +87,17 @@ class HelpOutputTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertIn("locally trusted certificate", output)
 
+    def test_tui_executes_before_state_is_initialized(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            executable = Path(temporary) / "paddock-tui"
+            executable.touch()
+            with mock.patch.dict(os.environ, {"PADDOCK_TUI_BIN": str(executable)}), \
+                    mock.patch.object(os, "execv") as execute, \
+                    mock.patch.object(cli.StateStore, "initialize") as initialize:
+                self.assertEqual(0, cli.run(["tui"]))
+            execute.assert_called_once_with(str(executable), [str(executable)])
+            initialize.assert_not_called()
+
     def test_help_reaches_commands_argparse_cannot(self) -> None:
         # `paddock php --help` is swallowed by REMAINDER, so this is the only
         # route to the runtime subcommands.
@@ -98,6 +109,23 @@ class HelpOutputTests(unittest.TestCase):
         with self.assertRaises(ValueError) as caught:
             invoke("help", "nope")
         self.assertIn("nope", str(caught.exception))
+
+    def test_parking_commands_accept_optional_paths(self) -> None:
+        self.assertEqual("/tmp/projects", cli.parser().parse_args(
+            ["park", "/tmp/projects"]
+        ).path)
+        self.assertIsNone(cli.parser().parse_args(["forget"]).path)
+
+    def test_uninstall_data_deletion_is_separately_explicit(self) -> None:
+        ordinary = cli.parser().parse_args(["uninstall"])
+        self.assertFalse(ordinary.purge)
+        self.assertFalse(ordinary.delete_service_data)
+        destructive = cli.parser().parse_args([
+            "uninstall", "--purge", "--delete-service-data"
+        ])
+        self.assertTrue(destructive.purge)
+        self.assertTrue(destructive.delete_service_data)
+        self.assertIn("never project sources", cli.build()[1]["uninstall"].epilog)
 
     def test_documented_exit_codes_match_the_implementation(self) -> None:
         # doctor and status return nonzero on failure; help says which.

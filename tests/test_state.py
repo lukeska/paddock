@@ -33,7 +33,7 @@ class StateTests(unittest.TestCase):
 
     def test_initializes_v1_records_with_private_modes(self) -> None:
         self.store.initialize()
-        for record in ("settings", "runtimes", "sites"):
+        for record in ("settings", "runtimes", "sites", "services", "parking"):
             path = self.store.path_for(record)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
@@ -104,6 +104,9 @@ class StateTests(unittest.TestCase):
             '{"schema_version": 1, "default_php": "8.4"}\n', encoding="utf-8"
         )
         self.assertEqual({}, self.store.read("settings")["service_labels"])
+        self.assertFalse(
+            self.store.read("settings")["initial_php_setup_complete"]
+        )
 
 
 if __name__ == "__main__":
