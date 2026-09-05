@@ -3,6 +3,11 @@
 - Status: accepted for implementation
 - Date: 2026-08-16
 - Experiment: [Local TLS and browser trust](../../experiments/phase-0/tls/README.md)
+- Amended by: [ADR 0011](0011-nginx-http-server.md). This record's decision
+  stands — Paddock owns a mkcert CA and the server is handed leaf files it
+  does not own — but the server is now nginx, so the serving directive is
+  `ssl_certificate`/`ssl_certificate_key` rather than `tls <cert> <key>`,
+  and the internal-issuer trust hazard described below no longer exists.
 
 ## Context
 

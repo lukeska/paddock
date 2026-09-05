@@ -206,7 +206,7 @@ class HealthTests(ReportFixture, unittest.TestCase):
     def test_the_cli_never_reports_unknown(self) -> None:
         # `unknown` means the report could not be produced, which only the
         # caller can observe. The rollup itself must not emit it.
-        for states in ({}, {"paddock.target": "inactive"}, {"paddock-caddy.service": "x"}):
+        for states in ({}, {"paddock.target": "inactive"}, {"paddock-web.service": "x"}):
             self.assertIn(self.build(states)["health"], {"ok", "degraded", "down"})
 
 

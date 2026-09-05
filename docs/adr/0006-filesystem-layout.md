@@ -4,6 +4,13 @@
 - Date: 2026-08-16
 - Amended: 2026-08-19 (sockets/PIDs moved out of `$XDG_RUNTIME_DIR`)
 - Experiment: [XDG layout](../../experiments/phase-0/layout/README.md)
+- Amended by: [ADR 0011](0011-nginx-http-server.md), which replaced the
+  single generated Caddyfile with a tree of numbered nginx generations
+  under state, promoted by renaming one symlink. The rule it illustrates is
+  unchanged: generated configuration is reproducible from durable records
+  and never the only copy of anything. [ADR 0012](0012-per-site-web-configuration.md)
+  adds user-authored nginx fragments, which live under config rather than
+  state precisely because they are not generated and must survive a reset.
 
 ## Decision
 

@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import unittest
 
-from paddock.caddy import CaddyProjector
+from paddock.web import WebProjector
 from paddock.paths import Paths
 from paddock.projectfile import (
     DeclaredService, ProjectFile, ProjectFileError, Reconciler, parse,
@@ -116,7 +116,7 @@ class ReconcilerFixture:
         self.root = base / "my-app"
         (self.root / "public").mkdir(parents=True)
 
-        projector = CaddyProjector(self.paths, runner)
+        projector = WebProjector(self.paths, runner)
         self.sites = SiteManager(self.store, projector)
         self.security = SecurityManager(self.store, projector)
         tokens = iter(("11111111", "22222222", "33333333", "44444444"))

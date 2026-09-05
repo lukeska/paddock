@@ -4,12 +4,15 @@ import argparse
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 from . import __version__
 from .execution import plan_composer, plan_php
-from .caddy import CaddyProjector
+from . import siteconfig
+from .atomic import atomic_write
 from .diagnostics import doctor, service_status
+from .drivers import DRIVERS, resolve as resolve_driver
 from .lifecycle import Lifecycle
 from .integration import INSTALL_CHANGES, REMOVE_CHANGES, Integration
 from .paths import Paths
@@ -25,9 +28,10 @@ from .queue_worker import QueueWorkerManager
 from .runtimes import RuntimeRegistry
 from .service_instances import ServiceInstanceManager
 from .state import StateStore
-from .sites import SiteManager
+from .sites import SiteError, SiteManager
 from .tls import SecurityManager
 from .uninstall import PurgePlan
+from .web import WebProjector
 
 
 SUMMARY = "Serve Laravel projects on .test domains with managed PHP runtimes."
@@ -46,6 +50,7 @@ OVERVIEW: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("unlink [NAME]", "Stop serving a linked project"),
         ("secure [NAME]", "Serve a site over locally trusted HTTPS"),
         ("unsecure [NAME]", "Serve a site over plain HTTP again"),
+        ("config [ACTION]", "Show, edit, or trust a site's own nginx directives"),
         ("sites", "List linked sites, their PHP version and URL"),
         ("park [PATH]", "Serve every immediate child of a directory"),
         ("paths", "List parked directories"),
@@ -88,6 +93,7 @@ OVERVIEW: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("start", "Start the Paddock services"),
         ("stop", "Stop the Paddock services"),
         ("restart", "Restart the Paddock services"),
+        ("reload", "Re-generate the web configuration and reload it"),
         ("logs", "Show the Paddock service journal"),
         ("doctor", "Check the environment and report what to fix"),
         ("report", "Print one JSON snapshot for scripts and the Omarchy plugin"),
@@ -180,6 +186,14 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
     link.add_argument("name", nargs="?", help="site name; defaults to the directory name")
     link.add_argument("--php", help="PHP minor version to serve this project with")
     link.add_argument("--node", help="Node.js major version for this project")
+    link.add_argument(
+        "--type", dest="driver",
+        help=f"project type; detected when omitted ({', '.join(sorted(DRIVERS))})",
+    )
+    link.add_argument(
+        "--root", dest="document_root",
+        help="document root relative to the project; the type's default when omitted",
+    )
     unlink = command("unlink", "Stop serving a linked project.")
     unlink.add_argument("name", nargs="?", help="site name; defaults to the site rooted here")
     secure = command(
@@ -189,6 +203,20 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
     secure.add_argument("name", nargs="?", help="site name; defaults to the site rooted here")
     unsecure = command("unsecure", "Serve the site over plain HTTP again.")
     unsecure.add_argument("name", nargs="?", help="site name; defaults to the site rooted here")
+    configure = command(
+        "config",
+        "Show or edit a site's own nginx directives, and trust the ones a "
+        "project ships.",
+    )
+    configure.add_argument(
+        "action", nargs="?", default="show",
+        choices=("show", "edit", "trust", "revoke"),
+    )
+    configure.add_argument(
+        "name", nargs="?",
+        help="site name; defaults to the site rooted here, or every site",
+    )
+    command("reload", "Re-generate the web configuration and reload it.")
     command(
         "doctor",
         "Check runtimes, state, sites, and generated configuration.",
@@ -258,7 +286,7 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
     worker.add_argument("action", choices=("start", "stop", "restart", "logs"))
     worker.add_argument("type", choices=("reverb", "queue"))
     worker.add_argument("site", nargs="?", help="site name; defaults to the site rooted here")
-    logs = command("logs", "Show the journal for the Caddy, PHP-FPM, and DNS services.")
+    logs = command("logs", "Show the journal for the web, PHP-FPM, and DNS services.")
     logs.add_argument("--follow", action="store_true", help="keep printing new entries")
     setup = command(
         "setup",
@@ -377,7 +405,7 @@ def run(argv: list[str] | None = None) -> int:
         plan_node(Path.cwd(), "node", forwarded, store).execute()
     if arguments.command == "composer":
         plan_composer(Path.cwd(), forwarded, store).execute()
-    manager = SiteManager(store, CaddyProjector(store.paths))
+    manager = SiteManager(store, WebProjector(store.paths))
     if arguments.command == "worker":
         records = store.read("sites")["sites"]
         site_name = (
@@ -402,9 +430,23 @@ def run(argv: list[str] | None = None) -> int:
             )
         return 0
     if arguments.command == "link":
-        site = manager.link(Path.cwd(), arguments.name, arguments.php, arguments.node)
-        node_detail = f" and Node {site.node}" if site.node else ""
-        print(f"Linked {site.root} as http://{site.name}.test using PHP {site.php}{node_detail}")
+        site = manager.link(
+            Path.cwd(), arguments.name, arguments.php, arguments.node,
+            driver=arguments.driver, document_root=arguments.document_root,
+        )
+        # A static site runs no PHP, so naming a version it never uses would
+        # be a lie about what was configured.
+        detail = [site.driver]
+        if resolve_driver(site.driver).php:
+            detail.append(f"PHP {site.php}")
+        if site.node:
+            detail.append(f"Node {site.node}")
+        if site.document_root != ".":
+            detail.append(f"root {site.document_root}")
+        print(
+            f"Linked {site.root} as http://{site.name}.test "
+            f"({', '.join(detail)})"
+        )
     if arguments.command == "unlink":
         site_name = (
             arguments.name.removesuffix(".test").lower()
@@ -415,7 +457,13 @@ def run(argv: list[str] | None = None) -> int:
         QueueWorkerManager(store).remove(site_name)
         site = manager.unlink(arguments.name, Path.cwd())
         print(f"Unlinked {site.name}.test")
-    security = SecurityManager(store, CaddyProjector(store.paths))
+    if arguments.command == "reload":
+        manager.reproject()
+        print("Reloaded the web configuration")
+        return 0
+    if arguments.command == "config":
+        return _configure(manager, arguments)
+    security = SecurityManager(store, WebProjector(store.paths))
     if arguments.command == "secure":
         site = security.secure(arguments.name, Path.cwd())
         ReverbManager(store).sync_environment(site.name)
@@ -490,18 +538,18 @@ def run(argv: list[str] | None = None) -> int:
             print("\nAlready up to date.")
         return 1 if blocked else 0
     if arguments.command == "sites":
-        parking.reconcile(CaddyProjector(store.paths))
+        parking.reconcile(WebProjector(store.paths))
         for site in manager.list():
             scheme = "https" if site.secured else "http"
-            print(f"{site.name}\t{site.php}\t{scheme}\t{site.root}")
+            print(f"{site.name}\t{site.driver}\t{site.php}\t{scheme}\t{site.root}")
         return 0
     if arguments.command == "park":
         if arguments.refresh:
-            result = parking.reconcile(CaddyProjector(store.paths))
+            result = parking.reconcile(WebProjector(store.paths))
             return 1 if result.conflicts else 0
         path = parking.add(Path(arguments.path) if arguments.path else Path.cwd())
         parking.sync_watchers()
-        result = parking.reconcile(CaddyProjector(store.paths))
+        result = parking.reconcile(WebProjector(store.paths))
         print(f"Parked {path}")
         for conflict in result.conflicts:
             print(f"! {conflict.name or conflict.roots[0]}: {conflict.reason}")
@@ -513,11 +561,11 @@ def run(argv: list[str] | None = None) -> int:
     if arguments.command == "forget":
         path = parking.remove(Path(arguments.path) if arguments.path else Path.cwd())
         parking.sync_watchers()
-        parking.reconcile(CaddyProjector(store.paths))
+        parking.reconcile(WebProjector(store.paths))
         print(f"Forgot {path}")
         return 0
     if arguments.command == "report":
-        parking.reconcile(CaddyProjector(store.paths))
+        parking.reconcile(WebProjector(store.paths))
         print(json.dumps(build_report(store), indent=2, sort_keys=True))
         return 0
     if arguments.command == "doctor":
@@ -585,10 +633,77 @@ def run(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _configure(manager: SiteManager, arguments) -> int:
+    """Show, edit, or trust per-site nginx configuration."""
+    if arguments.action == "show" and not arguments.name:
+        try:
+            name = manager.resolve_name(None, Path.cwd())
+        except SiteError:
+            # Outside a linked project, showing every site is more useful than
+            # complaining about where the user happens to be standing.
+            for site_name, configuration in manager.configurations().items():
+                print(f"{site_name}\t{_config_summary(configuration)}")
+            return 0
+        _print_configuration(name, manager.configuration(name))
+        return 0
+
+    name = manager.resolve_name(arguments.name, Path.cwd())
+    if arguments.action == "show":
+        _print_configuration(name, manager.configuration(name))
+        return 0
+
+    if arguments.action == "edit":
+        configuration = manager.configuration(name)
+        path = configuration.user
+        if not path.exists():
+            atomic_write(path, siteconfig.template(name).encode())
+        editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+        subprocess.call([editor, str(path)] if editor else ["xdg-open", str(path)])
+        # Re-projecting validates the edit, so a mistake is reported here
+        # rather than by whatever unrelated operation reloads next.
+        manager.reproject()
+        print(f"Applied {path}")
+        return 0
+
+    configuration = manager.trust_project_configuration(
+        name, trusted=arguments.action == "trust"
+    )
+    _print_configuration(name, configuration)
+    return 0
+
+
+def _config_summary(configuration) -> str:
+    parts = []
+    if configuration.user_present:
+        parts.append(str(configuration.user))
+    if configuration.project_relative:
+        parts.append(f"{configuration.project_relative} ({configuration.status})")
+    return "\t".join(parts) if parts else "none"
+
+
+def _print_configuration(name: str, configuration) -> None:
+    state = "present" if configuration.user_present else "absent"
+    print(f"{name}.test")
+    print(f"  yours      {configuration.user} ({state})")
+    if configuration.project_relative is None:
+        print("  project    none declared")
+        return
+    print(f"  project    {configuration.project_relative} ({configuration.status})")
+    if configuration.status == siteconfig.TRUSTED:
+        return
+    if configuration.status == siteconfig.MISSING:
+        print(f"             declared but not present at {configuration.project}")
+        return
+    # Say plainly that nothing from the repository is being served, because the
+    # safe outcome is the one most likely to be mistaken for a bug.
+    print("             not applied. Review it, then run:")
+    print(f"               paddock config trust {name}")
+
+
 def main() -> int:
     try:
         return run()
-    # LifecycleError, CaddyError, TlsError, IntegrationError and
+    # LifecycleError, WebError, TlsError, IntegrationError and
     # RuntimeInstallError all subclass RuntimeError and used to escape as a
     # traceback, which is hostile to anyone parsing this CLI and tells a user
     # nothing. Every deliberate failure is one line and exit 78.

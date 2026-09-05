@@ -1,6 +1,6 @@
 # ADR 0003: HTTP Server and Standard-Port Boundary
 
-- Status: accepted for implementation
+- Status: superseded by [ADR 0011](0011-nginx-http-server.md)
 - Date: 2026-08-16
 - Experiments: [Caddy routing](../../experiments/phase-0/fpm/README.md),
   [reload safety](../../experiments/phase-0/caddy/README.md), and

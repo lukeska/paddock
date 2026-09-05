@@ -27,6 +27,14 @@ a mouse click.
   control shows a spinner and the pending action until the operation finishes.
 - up/down or `j`/`k` select a site.
 - `enter` opens the selected site's detail view; `esc` returns to the table.
+- In the detail view, `Type` and `Document root` report what the project was
+  detected as and which directory is served; both are read-only, because
+  changing one is `paddock link --type`. `Nginx config` creates the site's own
+  fragment if it does not exist yet and opens it. `From the project` appears
+  only when the project ships a fragment, and says whether it is applied before
+  activating it changes that. `Apply config edits` re-checks every fragment and
+  reloads; a rejection is shown with nginx's own message, naming the file and
+  line.
 - `o` opens the selected site in the system browser.
 - With mouse reporting available, clicking a row opens its detail view and
   clicking its Open link launches the site directly.

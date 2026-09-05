@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 from typing import Callable
 
 from .artifacts import ArtifactManifest, ManifestError, normalized_architecture
-from .caddy import CaddyProjector
 from .composer import install_composer
 from .php_runtime import RuntimeInstaller
 from .parking import ParkingManager
@@ -14,6 +14,7 @@ from .services import ServiceManager
 from .shell import install_shell_integration, remove_shell_integration
 from .node_runtime import NodeInstaller, NodeManifest
 from .state import StateStore
+from .web import WebProjector
 
 
 SYSTEM_HELPER = Path("/usr/lib/paddock/system-helper")
@@ -27,7 +28,7 @@ Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 INSTALL_CHANGES = (
-    "install Paddock-only systemd target, DNS, Caddy, and PHP-FPM units",
+    "install Paddock-only systemd target, DNS, web, and PHP-FPM units",
     "add a NetworkManager dummy connection routing only ~test to 127.0.0.1",
     "trust the Paddock public CA in system and current-user NSS stores",
     "allow the desktop user to manage only Paddock systemd units",
@@ -76,19 +77,18 @@ class Integration:
             Path(__file__).resolve().parents[2] / "resources/node-artifacts.json",
         )
 
+    # Written by releases that served sites with Caddy. Removed after the
+    # nginx tree is promoted, never before: a failed projection must leave a
+    # machine able to roll back to the previous package.
+    LEGACY_STATE = ("caddy", "caddy-data", "caddy-config")
+
     def prepare(self) -> None:
         self.store.initialize()
-        for directory in (
-            self.store.paths.state / "caddy-data",
-            self.store.paths.state / "caddy-config",
-        ):
-            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-            directory.chmod(0o700)
-        # Always reproject. The Caddyfile is derived from durable site records
+        # Always reproject. The nginx tree is derived from durable site records
         # and the socket layout, so keeping a stale generation would point
-        # Caddy at sockets the current units never bind. Validation still runs
-        # first, so an invalid render never replaces the last-known-good file.
-        projector = CaddyProjector(self.store.paths, self.runner)
+        # nginx at sockets the current units never bind. Validation still runs
+        # first, so an invalid render never replaces the promoted generation.
+        projector = WebProjector(self.store.paths, self.runner)
         parking = ParkingManager(self.store, self.runner)
         if self.store.paths.home is not None:
             parking.ensure_default(self.store.paths.home)
@@ -97,6 +97,8 @@ class Integration:
         candidate = projector.render(self.store.read("sites")["sites"])
         projector.validate(candidate)
         projector.write(candidate)
+        for legacy in self.LEGACY_STATE:
+            shutil.rmtree(self.store.paths.state / legacy, ignore_errors=True)
         RuntimeInstaller(self.store, self.runner).reproject()
         ServiceManager(self.store, self.runner).reproject()
         self._ensure_ca()

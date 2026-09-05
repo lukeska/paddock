@@ -9,9 +9,9 @@ import subprocess
 from typing import Callable
 
 from .atomic import atomic_write, exclusive_lock
-from .caddy import CaddyProjector
 from .runtimes import RuntimeRegistry
 from .state import StateStore
+from .web import WebProjector
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -108,7 +108,7 @@ class ReverbManager:
                 port = self._select_port(used)
                 record = {**record, "reverb": {"port": port}}
                 registry["sites"][site] = record
-                projector = CaddyProjector(self.store.paths, self.runner)
+                projector = WebProjector(self.store.paths, self.runner)
                 candidate = projector.render(registry["sites"])
                 projector.validate(candidate)
                 self.store.write("sites", registry)
@@ -207,7 +207,7 @@ class ReverbManager:
         registry["sites"][site].pop("reverb", None)
         self.store.write("sites", registry)
         self._reload()
-        self._project_caddy()
+        self._project_web()
 
     def _project(self, worker: ReverbWorker, php_version: str) -> None:
         runtime = RuntimeRegistry(self.store).resolve(php_version)
@@ -242,8 +242,8 @@ class ReverbManager:
         )
         self._reload()
 
-    def _project_caddy(self) -> None:
-        projector = CaddyProjector(self.store.paths, self.runner)
+    def _project_web(self) -> None:
+        projector = WebProjector(self.store.paths, self.runner)
         candidate = projector.render(self.store.read("sites")["sites"])
         projector.validate(candidate)
         projector.write(candidate)

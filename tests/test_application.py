@@ -318,7 +318,7 @@ class DashboardTests(ApplicationFixture, unittest.TestCase):
             "paddock.target": value,
             "paddock-dns.service": value,
             "paddock-dns-route.service": value,
-            "paddock-caddy.service": value,
+            "paddock-web.service": value,
             "paddock-php@8.4.service": value,
             "paddock-service-redis.service": value,
         }
@@ -333,7 +333,7 @@ class DashboardTests(ApplicationFixture, unittest.TestCase):
         snapshot = controller.dashboard_snapshot()
         by_key = {service.key: service for service in snapshot.services}
         self.assertEqual(
-            {"caddy", "dns", "php-8.4", instance.id},
+            {"web", "dns", "php-8.4", instance.id},
             set(by_key),
         )
         self.assertTrue(by_key[instance.id].active)

@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 
-from paddock.caddy import CaddyProjector
+from paddock.web import WebProjector
 from paddock.paths import Paths
 from paddock.queue_worker import QueueWorkerError, QueueWorkerManager, detects_laravel
 from paddock.runtimes import RuntimeRegistry
@@ -57,7 +57,7 @@ class QueueWorkerTests(unittest.TestCase):
         (self.root / "composer.json").write_text(json.dumps({
             "require": {"laravel/framework": "^12.0"},
         }), encoding="utf-8")
-        SiteManager(self.store, CaddyProjector(paths, self.runner)).link(
+        SiteManager(self.store, WebProjector(paths, self.runner)).link(
             self.root, "demo", reload=False
         )
         self.manager = QueueWorkerManager(self.store, self.runner)

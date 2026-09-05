@@ -13,7 +13,21 @@ fields are rejected so that package upgrades cannot silently misinterpret state.
 | Parking | `$XDG_CONFIG_HOME/paddock/parking.json` | `schema_version`, absolute parked-path array |
 
 A site record contains its lowercase name, canonical absolute project root,
-selected PHP minor, optional Node major, and TLS state. A PHP runtime record
+selected PHP minor, optional Node major, and TLS state. It may also carry
+`type`, the project type it is served as, and `document_root`, the served
+directory relative to the project root with `.` meaning the root itself. Both
+are optional: a record written before project types existed reads as `laravel`
+served from `public`, which is what every such record described, so no
+migration is needed. A `document_root` is validated as a normalized relative
+path that stays inside the project, because it can originate in a committed
+`paddock.yml`.
+
+A site may carry an `nginx` object recording the fragment its project declares:
+`path`, relative to the project root, and `sha256` once that fragment has been
+trusted on this machine. A declaration with no digest has been noticed but not
+reviewed, and contributes nothing to what is served. The digest is compared
+against the file on every projection, so an edit or a pull withdraws trust
+without any further record. See [ADR 0012](adr/0012-per-site-web-configuration.md). A PHP runtime record
 contains its minor version, while a Node runtime record contains its major;
 both contain an absolute activation path and artifact SHA-256 digest. A service record
 contains its lowercase name, registry-qualified container image, published

@@ -6,12 +6,13 @@ import subprocess
 import tempfile
 import unittest
 
-from paddock.caddy import CaddyProjector
+from paddock.web import WebProjector
 from paddock.paths import Paths
 from paddock.reverb import ReverbError, ReverbManager, detects_reverb
 from paddock.runtimes import RuntimeRegistry
 from paddock.sites import SiteManager
 from paddock.state import StateStore
+from support import site_configuration
 
 
 class Runner:
@@ -55,7 +56,7 @@ class ReverbTests(unittest.TestCase):
         self.root = root / "demo"
         (self.root / "public").mkdir(parents=True)
         (self.root / "artisan").write_text("artisan", encoding="utf-8")
-        self.projector = CaddyProjector(self.paths, self.runner)
+        self.projector = WebProjector(self.paths, self.runner)
         SiteManager(self.store, self.projector).link(self.root, "demo", reload=False)
         self.manager = ReverbManager(
             self.store, self.runner,
@@ -81,7 +82,7 @@ class ReverbTests(unittest.TestCase):
         )
         self.assertTrue(detects_reverb(self.root))
 
-    def test_configure_allocates_port_projects_unit_env_and_caddy(self) -> None:
+    def test_configure_allocates_port_projects_unit_env_and_web(self) -> None:
         self.install_reverb()
         worker = self.manager.configure("demo")
         self.assertEqual(8081, worker.port)
@@ -97,9 +98,14 @@ class ReverbTests(unittest.TestCase):
         self.assertIn("REVERB_HOST=demo.test", env)
         self.assertIn("REVERB_PORT=80", env)
         self.assertIn("REVERB_SCHEME=http", env)
-        caddy = self.projector.path.read_text(encoding="utf-8")
-        self.assertIn("@reverb path /app/* /apps/*", caddy)
-        self.assertIn("reverse_proxy @reverb 127.0.0.1:8081", caddy)
+        rendered = site_configuration(self.projector, "demo")
+        # ^~ outranks the regex PHP location, so an upgrade request cannot be
+        # handed to FPM instead of the worker.
+        self.assertIn("location ^~ /app/ {", rendered)
+        self.assertIn("location ^~ /apps/ {", rendered)
+        self.assertIn("proxy_pass http://127.0.0.1:8081;", rendered)
+        self.assertIn("proxy_set_header Connection $paddock_connection;",
+                      (self.projector.current / "snippets/proxy.conf").read_text())
 
     def test_start_configures_and_controls_site_worker(self) -> None:
         self.install_reverb()

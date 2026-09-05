@@ -19,7 +19,7 @@ import tempfile
 from types import ModuleType
 import unittest
 
-from paddock.caddy import CaddyProjector
+from paddock.web import WebProjector
 from paddock.paths import SYSTEM_RUNTIME_ROOT, Paths
 from paddock.php_runtime import RuntimeInstaller
 from paddock.runtimes import RuntimeRegistry
@@ -84,7 +84,7 @@ class PhpUnitRuntimeDirectoryTests(unittest.TestCase):
                 )
 
     def test_unit_and_cli_agree_on_the_socket_directory(self) -> None:
-        # Drift here silently routes Caddy at a socket FPM never binds.
+        # Drift here silently routes nginx at a socket FPM never binds.
         declared = directives(self.unit, "RuntimeDirectory")
         self.assertEqual(1, len(declared))
         systemd_owned = Path("/run") / declared[0].replace("%i", "8.4")
@@ -103,8 +103,8 @@ class PhpUnitReadinessTests(unittest.TestCase):
         )
 
     def test_startup_gates_on_the_socket_it_actually_binds(self) -> None:
-        # php-fpm is Type=simple, so without this gate Caddy orders against a
-        # socket that does not exist yet and boots serve 502s.
+        # php-fpm is Type=simple, so without this gate the web server orders
+        # against a socket that does not exist yet and boots serve 502s.
         gates = directives(self.unit, "ExecStartPost")
         self.assertEqual(1, len(gates))
         command, socket = gates[0].split()
@@ -118,12 +118,13 @@ class PhpUnitReadinessTests(unittest.TestCase):
         self.assertTrue(helper.is_file())
         self.assertTrue(helper.stat().st_mode & 0o111)
 
-    def test_caddy_is_ordered_after_the_gate_without_requiring_it(self) -> None:
-        # Ordering only: a later FPM failure must 502 one version, not stop Caddy.
-        self.assertIn("paddock-caddy.service", directives(self.unit, "Before"))
+    def test_web_is_ordered_after_the_gate_without_requiring_it(self) -> None:
+        # Ordering only: a later FPM failure must 502 one version, not stop the
+        # web server.
+        self.assertIn("paddock-web.service", directives(self.unit, "Before"))
         for requirement in ("Requires", "BindsTo", "Requisite"):
             for value in directives(self.unit, requirement):
-                self.assertNotIn("paddock-caddy", value)
+                self.assertNotIn("paddock-web", value)
 
     def test_restart_policy_is_bounded_and_in_the_correct_sections(self) -> None:
         # systemd reads StartLimit* from [Unit]; in [Service] they are ignored.
@@ -160,12 +161,18 @@ class AbsentRuntimeRootTests(unittest.TestCase):
     def test_initialize_does_not_create_the_systemd_owned_root(self) -> None:
         self.assertFalse(self.runtime_root.exists())
 
-    def test_caddy_projection_targets_the_systemd_owned_socket(self) -> None:
-        rendered = CaddyProjector(self.paths).render(
+    def test_web_projection_targets_the_systemd_owned_socket(self) -> None:
+        candidate = WebProjector(self.paths).render(
             {"demo": {"root": str(Path(self.temporary.name) / "demo"), "php": "8.4", "secured": False}}
         )
-        self.assertIn(f"unix/{self.runtime_root / 'php' / '8.4' / 'fpm.sock'}", rendered)
+        socket = self.runtime_root / "php" / "8.4" / "fpm.sock"
+        self.assertIn(
+            f'fastcgi_pass "unix:{socket}";', candidate.files["sites/demo.conf"]
+        )
+        # Rendering is pure: it must not create the systemd-owned root, and it
+        # must not touch the generation directory it merely reserved.
         self.assertFalse(self.runtime_root.exists())
+        self.assertFalse(candidate.directory.exists())
 
     def test_fpm_configuration_is_written_without_the_socket_directory(self) -> None:
         installer = RuntimeInstaller(
@@ -295,8 +302,8 @@ class UnitVersionStampTests(unittest.TestCase):
     # Regenerate both together when php_unit() changes:
     #   ./system/system-helper unit-version
     #   python -c "import hashlib,pathlib;..."  (see the failure message)
-    EXPECTED_VERSION = 2
-    EXPECTED_DIGEST = "793a332e8970850fa40916501c997387e9a0776bcdb210419d80a96828daef4f"
+    EXPECTED_VERSION = 3
+    EXPECTED_DIGEST = "b636a935afda07ea7acaf8a6c62bde7649ab07164220a57042480b7be1e73d43"
 
     def setUp(self) -> None:
         self.helper = load_helper()

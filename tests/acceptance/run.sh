@@ -36,7 +36,7 @@ for site in alpha beta; do
 done
 
 echo "== system units =="
-for unit in paddock.target paddock-dns.service paddock-caddy.service \
+for unit in paddock.target paddock-dns.service paddock-web.service \
             paddock-php@8.4.service paddock-php@8.5.service; do
   state=$(systemctl is-active "$unit" 2>&1)
   check "$([ "$state" = active ]; echo $?)" "unit:$unit" "$state"

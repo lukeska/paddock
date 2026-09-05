@@ -3,6 +3,11 @@
 - Status: accepted for implementation
 - Date: 2026-08-16
 - Experiment: [systemd lifecycle and recovery](../../experiments/phase-0/lifecycle/README.md)
+- Amended by: [ADR 0011](0011-nginx-http-server.md). Every ownership rule
+  here still holds — the web server is a system unit running as the desktop
+  user with only `CAP_NET_BIND_SERVICE`, ordered after the FPM socket
+  readiness gate, with access logs user-owned. Only the server itself
+  changed: read "Caddy" below as `paddock-web.service`, running nginx.
 
 ## Context
 

@@ -5,13 +5,14 @@ import subprocess
 import tempfile
 import unittest
 
-from paddock.caddy import CaddyProjector
+from paddock.web import WebProjector
 from paddock.diagnostics import doctor, service_status
 from paddock.lifecycle import Lifecycle, LifecycleError
 from paddock.paths import Paths
 from paddock.runtimes import RuntimeRegistry
 from paddock.state import StateStore
 from paddock.tls import SecurityManager, TlsError
+from support import site_configuration
 
 
 class FakeCommands:
@@ -27,7 +28,7 @@ class FakeCommands:
                 return subprocess.CompletedProcess(command, 1, "", "issuance rejected")
             Path(command[2]).write_text("certificate", encoding="utf-8")
             Path(command[4]).write_text("private key", encoding="utf-8")
-        failed = self.fail_validate and "validate" in command
+        failed = self.fail_validate and "-t" in command
         if "is-active" in command:
             # systemctl answers one line per unit, in the order given.
             units = command[command.index("is-active") + 1:]
@@ -70,8 +71,10 @@ class TlsDiagnosticTests(unittest.TestCase):
             },
         )
         self.fake = FakeCommands()
-        self.projector = CaddyProjector(paths, self.fake)
-        self.projector.write(self.projector.render(self.store.read("sites")["sites"]))
+        self.projector = WebProjector(paths, self.fake)
+        candidate = self.projector.render(self.store.read("sites")["sites"])
+        self.projector.validate(candidate)
+        self.projector.write(candidate)
         self.security = SecurityManager(self.store, self.projector, self.fake)
 
     def tearDown(self):
@@ -81,8 +84,19 @@ class TlsDiagnosticTests(unittest.TestCase):
         self.security.secure("demo", reload=False)
         record = self.store.read("sites")["sites"]["demo"]
         self.assertTrue(record["secured"])
-        self.assertIn("https://demo.test", self.projector.path.read_text(encoding="utf-8"))
-        mkcert = self.fake.calls[0]
+        rendered = site_configuration(self.projector, "demo")
+        self.assertIn("listen 127.0.0.1:443 ssl;", rendered)
+        self.assertIn("server_name demo.test;", rendered)
+        self.assertIn(
+            'ssl_certificate "'
+            + str(self.store.paths.data / "pki/sites/demo/certificate.pem")
+            + '";',
+            rendered,
+        )
+        # Caddy served no plaintext listener for a secured host; nginx answers
+        # on 80 and redirects, so an http:// bookmark still resolves.
+        self.assertIn("return 301 https://$host$request_uri;", rendered)
+        mkcert = next(call for call in self.fake.calls if call[0] == "mkcert")
         self.assertEqual(mkcert[-2:], ["demo.test", "*.demo.test"])
         key = self.store.paths.data / "pki/sites/demo/private-key.pem"
         self.assertEqual(key.stat().st_mode & 0o777, 0o600)
@@ -105,13 +119,13 @@ class TlsDiagnosticTests(unittest.TestCase):
         self.assertFalse(self.store.read("sites")["sites"]["demo"]["secured"])
         self.assertFalse((self.store.paths.data / "pki/sites/demo").exists())
 
-    def test_doctor_reports_state_runtime_site_and_caddy(self):
+    def test_doctor_reports_state_runtime_site_and_web(self):
         checks = doctor(self.store, self.fake)
         names = {check.name: check.ok for check in checks}
         self.assertTrue(names["state:sites"])
         self.assertTrue(names["php:8.4"])
         self.assertTrue(names["site:demo"])
-        self.assertTrue(names["caddy:config"])
+        self.assertTrue(names["web:config"])
 
     def test_status_covers_php_units_and_lifecycle_is_fixed(self):
         statuses = service_status(self.store, self.fake)

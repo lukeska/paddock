@@ -4,7 +4,7 @@
 
 Paddock is a native local Laravel development environment for
 [Omarchy](https://omarchy.org/). It provides managed PHP runtimes, `.test`
-domains, HTTPS, Caddy routing, and project-specific PHP selection through one
+domains, HTTPS, nginx routing, and project-specific PHP selection through one
 CLI, with optional supporting services and an Omarchy status widget.
 
 ```bash
@@ -34,7 +34,11 @@ signing, CI attestations, and automated publication are still being completed.
 - An Arch package owns the CLI and fixed privileged helpers.
 - Per-user state follows the XDG directory conventions.
 - `dnsmasq` and NetworkManager route `.test` domains locally.
-- Caddy serves linked projects over HTTP or locally trusted HTTPS.
+- nginx serves linked projects over HTTP or locally trusted HTTPS, from a
+  generated configuration tree Paddock owns.
+- A project's type — Laravel, Statamic, Symfony, WordPress, plain PHP, or a
+  static site — is detected from committed files and decides its document
+  root and routing rules.
 - Each managed PHP minor runs in an isolated PHP-FPM service.
 - Supporting services (Redis, MySQL, PostgreSQL) run as rootless containers
   in user systemd units, published on loopback only.

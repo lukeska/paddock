@@ -4,6 +4,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .drivers import DRIVERS, DriverError, normalize_document_root
+
 
 SCHEMA_VERSION = 1
 
@@ -141,7 +143,10 @@ def validate_sites(raw: Any) -> dict[str, Any]:
             raise SchemaError("site names must be non-empty lowercase strings")
         record = _object(record_raw, f"site {name}")
         required = {"name", "root", "php", "secured"}
-        allowed = required | {"origin", "parking_path", "node", "reverb", "queue"}
+        allowed = required | {
+            "origin", "parking_path", "node", "reverb", "queue",
+            "type", "document_root", "nginx",
+        }
         missing = required - set(record)
         unknown = set(record) - allowed
         if missing:
@@ -176,6 +181,56 @@ def validate_sites(raw: Any) -> dict[str, Any]:
             raise SchemaError(f"site {name}.queue must be a configured worker record")
         if not isinstance(record["secured"], bool):
             raise SchemaError(f"site {name}.secured must be a boolean")
+        # Both are optional so records written before drivers existed stay
+        # readable; an absent pair reads as Laravel served from `public`, which
+        # is what every such record described.
+        driver = record.get("type")
+        if driver is not None and driver not in DRIVERS:
+            raise SchemaError(
+                f"site {name}.type must be one of {', '.join(sorted(DRIVERS))}"
+            )
+        document_root = record.get("document_root")
+        if document_root is not None:
+            # A document root arrives from a committed project file, so it is
+            # confined to the project here as well as at the boundary.
+            try:
+                if normalize_document_root(document_root) != document_root:
+                    raise SchemaError(
+                        f"site {name}.document_root must be a normalized relative path"
+                    )
+            except DriverError as error:
+                raise SchemaError(f"site {name}.document_root is invalid: {error}") from None
+        declaration = record.get("nginx")
+        if declaration is not None:
+            if not isinstance(declaration, dict) or "path" not in declaration:
+                raise SchemaError(
+                    f"site {name}.nginx must be an object containing path"
+                )
+            unexpected = set(declaration) - {"path", "sha256"}
+            if unexpected:
+                raise SchemaError(
+                    f"site {name}.nginx has unknown fields: "
+                    f"{', '.join(sorted(unexpected))}"
+                )
+            try:
+                if normalize_document_root(declaration["path"]) != declaration["path"]:
+                    raise SchemaError(
+                        f"site {name}.nginx.path must be a normalized relative path"
+                    )
+            except DriverError as error:
+                raise SchemaError(f"site {name}.nginx.path is invalid: {error}") from None
+            trusted = declaration.get("sha256")
+            # Absent means declared but never reviewed. A present value is the
+            # digest trust was granted to, so it has to be exactly that shape
+            # or a comparison against a real digest would silently never match.
+            if trusted is not None and (
+                not isinstance(trusted, str)
+                or len(trusted) != 64
+                or any(character not in "0123456789abcdef" for character in trusted)
+            ):
+                raise SchemaError(
+                    f"site {name}.nginx.sha256 must be a lowercase hex SHA-256"
+                )
         origin = record.get("origin", "linked")
         if origin not in {"linked", "parked"}:
             raise SchemaError(f"site {name}.origin must be linked or parked")

@@ -8,11 +8,12 @@ from pathlib import Path
 import subprocess
 from typing import Callable
 
+from . import drivers
 from .atomic import atomic_write
-from .caddy import CaddyProjector
 from .runtimes import RuntimeRegistry
 from .sites import normalize_site_name
 from .state import StateStore
+from .web import WebProjector
 
 
 class ParkingError(ValueError):
@@ -151,7 +152,7 @@ class ParkingManager:
         return ParkingDiscovery(paths, tuple(discovered), tuple(conflicts))
 
     def reconcile(
-        self, projector: CaddyProjector, *, reload: bool = True
+        self, projector: WebProjector, *, reload: bool = True
     ) -> ParkingDiscovery:
         """Materialize the current child folders without touching explicit links."""
         discovery = self.discover()
@@ -189,11 +190,26 @@ class ParkingManager:
                 php = default_php
                 node = default_node
                 secured = False
+            # A parked folder gets the same detection an explicit link
+            # does, or a WordPress folder would be served as Laravel. This
+            # runs on a filesystem event, so resolution must not raise for a
+            # folder that is mid-clone: `document_root` always answers,
+            # falling back to the driver's last candidate.
+            if old is not None and old.get("type"):
+                driver = drivers.resolve(old["type"])
+                relative = drivers.document_root(
+                    site.root, driver, old.get("document_root")
+                )
+            else:
+                driver = drivers.detect(site.root)
+                relative = drivers.document_root(site.root, driver)
             parked[site.name] = {
                 "name": site.name,
                 "root": str(site.root),
                 "php": php,
                 "secured": secured,
+                "type": driver.name,
+                "document_root": relative,
                 "origin": "parked",
                 "parking_path": str(site.parking_path),
             }

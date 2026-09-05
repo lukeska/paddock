@@ -304,7 +304,7 @@ class ServiceManager:
     def reproject(self) -> list[str]:
         """Rewrite every configured service's unit.
 
-        Called by `paddock setup` for the same reason the Caddyfile and the FPM
+        Called by `paddock setup` for the same reason the nginx tree and the FPM
         configuration are reprojected: a unit written by an older version must
         not survive an upgrade that changed what it should say.
         """
