@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from paddock.ui.app import (
+from paddock.ui.site_presenter import (
     error_clipboard_text,
     site_name_matches,
     site_worker_summary,

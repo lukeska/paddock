@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from paddock.ui.components import design_css
+from paddock.ui.design import design_css
 
 
 class DesignCssTests(unittest.TestCase):

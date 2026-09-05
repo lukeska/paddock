@@ -68,8 +68,8 @@ jobs:
       - name: Install package dependencies
         run: >-
           pacman -Syu --needed --noconfirm
-          git go python python-yaml caddy dnsmasq mkcert nss p11-kit networkmanager
-          polkit podman
+          git go python python-yaml python-gobject gtk4 libadwaita caddy dnsmasq
+          mkcert nss p11-kit networkmanager polkit podman
 
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
