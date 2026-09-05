@@ -11,7 +11,10 @@ import (
 	"sync"
 )
 
-const ProtocolVersion = 1
+// Moves with tui_bridge.PROTOCOL_VERSION. Both sides check for equality
+// rather than a minimum, because the bridge and this client ship in the
+// same package and a mismatch means a broken install, not an old peer.
+const ProtocolVersion = 2
 
 type rpcError struct {
 	Code    string `json:"code"`
@@ -160,6 +163,28 @@ func (c *Client) SetSiteSecured(site string, secured bool) (OperationResult, err
 	err := c.call("site.set_secured", map[string]interface{}{
 		"site": site, "secured": secured,
 	}, &result)
+	return result, err
+}
+
+func (c *Client) SetSiteConfigurationTrusted(site string, trusted bool) (OperationResult, error) {
+	var result OperationResult
+	err := c.call("site.set_configuration_trusted", map[string]interface{}{
+		"site": site, "trusted": trusted,
+	}, &result)
+	return result, err
+}
+
+func (c *Client) EnsureSiteConfiguration(site string) (OperationResult, error) {
+	var result OperationResult
+	err := c.call("site.ensure_configuration", map[string]interface{}{
+		"site": site,
+	}, &result)
+	return result, err
+}
+
+func (c *Client) ReloadWeb() (DashboardOperationResult, error) {
+	var result DashboardOperationResult
+	err := c.call("web.reload", map[string]interface{}{}, &result)
 	return result, err
 }
 

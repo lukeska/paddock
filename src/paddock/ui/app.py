@@ -330,6 +330,9 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.site_path_link = Gtk.LinkButton(uri="file:///", label="/")
         self.site_path_link.add_css_class("paddock-text-link")
         self.site_path_row.add_suffix(self.site_path_link)
+        # Read-only: both follow from the project's own files, and changing
+        # one is `paddock link --type`, not a click in a dashboard.
+        self.site_type_row = Adw.ActionRow(title="Type")
         self.site_zed_row = Adw.ActionRow(title="Zed")
         self.site_zed_button = Gtk.Button(label="Open")
         self.site_zed_button.set_valign(Gtk.Align.CENTER)
@@ -341,6 +344,7 @@ class PaddockWindow(Adw.ApplicationWindow):
             self.site_php_options_row,
             self.site_node_row,
             self.site_node_options_row,
+            self.site_type_row,
             self.site_url_row,
             self.site_terminal_row,
             self.site_path_row,
@@ -350,6 +354,38 @@ class PaddockWindow(Adw.ApplicationWindow):
                 row.set_subtitle_selectable(True)
             configuration.add(row)
         details.append(configuration)
+
+        self.site_nginx_section = PaddockSection("Nginx")
+        self.site_config_row = Adw.ActionRow(title="Your configuration")
+        self.site_config_row.set_subtitle_selectable(True)
+        self.site_config_button = Gtk.Button(label="Edit")
+        self.site_config_button.set_valign(Gtk.Align.CENTER)
+        self.site_config_button.connect("clicked", self._edit_site_configuration)
+        self.site_config_row.add_suffix(self.site_config_button)
+        self.site_project_config_row = Adw.ActionRow(title="From the project")
+        self.site_project_config_row.set_subtitle_selectable(True)
+        self.site_project_config_button = Gtk.Button(label="Trust")
+        self.site_project_config_button.set_valign(Gtk.Align.CENTER)
+        self.site_project_config_button.connect(
+            "clicked", self._toggle_project_configuration
+        )
+        self.site_project_config_row.add_suffix(self.site_project_config_button)
+        self.site_reload_row = Adw.ActionRow(
+            title="Apply edits",
+            subtitle="Re-check every fragment and reload nginx",
+        )
+        self.site_reload_button = Gtk.Button(label="Reload")
+        self.site_reload_button.set_valign(Gtk.Align.CENTER)
+        self.site_reload_button.connect("clicked", self._reload_web_configuration)
+        self.site_reload_row.add_suffix(self.site_reload_button)
+        for row in (
+            self.site_config_row,
+            self.site_project_config_row,
+            self.site_reload_row,
+        ):
+            self.site_nginx_section.add(row)
+        details.append(self.site_nginx_section)
+
         self.site_workers_section = PaddockSection("Workers")
         self.site_workers_section.add(self.site_queue_row)
         self.site_workers_section.add(self.site_reverb_row)
@@ -1273,6 +1309,7 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.site_url_link.set_label(site.url)
         self.site_path_link.set_uri(Path(site.root).as_uri())
         self.site_path_link.set_label(site.root)
+        self._show_site_configuration(site)
         self.site_detail_stack.set_visible_child_name("details")
 
     def _toggle_site_php_options(self, _button=None) -> None:
@@ -1527,6 +1564,117 @@ class PaddockWindow(Adw.ApplicationWindow):
             Gio.Subprocess.new(terminal_command(site.root), Gio.SubprocessFlags.NONE)
         except GLib.Error as error:
             self.show_error("Could not open terminal", str(error))
+
+    def _show_site_configuration(self, site) -> None:
+        """Say plainly whether each fragment is being served.
+
+        A project fragment that is present but untrusted serves nothing, and
+        that safe outcome is the one most likely to be mistaken for a bug, so
+        the row states it rather than only naming the file.
+        """
+        self.site_type_row.set_subtitle(
+            f"{site.type} · document root: "
+            f"{'the project root' if site.document_root == '.' else site.document_root}"
+        )
+        self.site_config_row.set_subtitle(
+            site.custom_config
+            + ("" if site.custom_config_present else "  (not created yet)")
+        )
+        self.site_config_button.set_label(
+            "Edit" if site.custom_config_present else "Create"
+        )
+        self.site_config_button.set_sensitive(not self.mutation_busy)
+
+        declared = site.project_config is not None and site.project_config_status != "none"
+        self.site_project_config_row.set_visible(declared)
+        self.site_project_config_button.set_sensitive(
+            not self.mutation_busy and site.project_config_status != "missing"
+        )
+        if declared:
+            explanation = {
+                "trusted": "applied",
+                "pending": "not reviewed yet, so nothing from it is served",
+                "changed": "changed since you trusted it, so it is not served",
+                "missing": "declared but not present",
+            }.get(site.project_config_status, site.project_config_status)
+            self.site_project_config_row.set_subtitle(
+                f"{site.project_config} · {explanation}"
+            )
+            self.site_project_config_button.set_label(
+                "Stop using" if site.project_config_status == "trusted" else "Trust"
+            )
+        self.site_reload_button.set_sensitive(not self.mutation_busy)
+
+    def _edit_site_configuration(self, _button=None) -> None:
+        site = self._selected_site()
+        if site is None or self.mutation_busy:
+            return
+        self.operation_spinner.set_tooltip_text(f"Preparing {site.host} configuration")
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            f"site-config-{site.name}",
+            lambda: self.controller.ensure_site_configuration(site.name),
+            self._site_configuration_prepared,
+            lambda error: self._site_configuration_failed(error),
+        )
+
+    def _site_configuration_prepared(self, result: LinkedSitesOperationResult) -> None:
+        self._set_mutation_busy(False)
+        self._show_linked_sites(result.snapshot)
+        if not result.ok:
+            self.show_error(result.summary, result.detail or "Unknown error")
+            return
+        # `detail` carries the path the controller made sure exists.
+        try:
+            Gio.AppInfo.launch_default_for_uri(Path(result.detail).as_uri(), None)
+        except GLib.Error as error:
+            self.show_error("Could not open the configuration", str(error))
+            return
+        self.show_toast(f"Opened {result.detail}")
+
+    def _site_configuration_failed(self, error: BaseException) -> None:
+        self._set_mutation_busy(False)
+        self.show_error("Site configuration could not be prepared", str(error))
+        self.refresh()
+
+    def _toggle_project_configuration(self, _button=None) -> None:
+        site = self._selected_site()
+        if site is None or self.mutation_busy:
+            return
+        trusted = site.project_config_status != "trusted"
+        self.operation_spinner.set_tooltip_text(
+            f"{'Trusting' if trusted else 'Withdrawing trust in'} "
+            f"{site.project_config}"
+        )
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            f"site-trust-{site.name}",
+            lambda: self.controller.set_site_configuration_trusted(site.name, trusted),
+            self._site_security_finished,
+            self._site_configuration_failed,
+        )
+
+    def _reload_web_configuration(self, _button=None) -> None:
+        if self.mutation_busy:
+            return
+        self.operation_spinner.set_tooltip_text("Reloading the web configuration")
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            "web-reload",
+            self.controller.reload_web,
+            self._web_reload_finished,
+            self._site_configuration_failed,
+        )
+
+    def _web_reload_finished(self, result) -> None:
+        self._set_mutation_busy(False)
+        if result.ok:
+            self.show_toast(result.summary)
+        else:
+            # Verbatim: `nginx: [emerg] ... in /path/to/file:12` names the file
+            # and the line, and paraphrasing it throws that away.
+            self.show_error(result.summary, result.detail or "Unknown nginx error")
+        self.refresh()
 
     def _open_site_in_zed(self, _button=None) -> None:
         if self.linked_sites_snapshot is None:

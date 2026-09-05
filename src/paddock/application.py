@@ -22,7 +22,6 @@ from typing import Callable
 
 from .artifacts import ArtifactManifest, ManifestError, normalized_architecture
 from .atomic import atomic_write, exclusive_lock
-from .caddy import CaddyProjector
 from .parking import ParkingManager
 from .php_runtime import RuntimeInstaller
 from .node_runtime import NodeInstaller, NodeManifest, NodeRegistry
@@ -36,6 +35,9 @@ from .service_instances import ServiceInstanceManager
 from .state import StateError, StateStore
 from .sites import SiteManager
 from .tls import SecurityManager
+from . import siteconfig
+from . import web
+from .web import WebProjector
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -233,6 +235,30 @@ class LinkedSiteView:
     queue_configured: bool = False
     queue_state: str = "not-configured"
     queue_autostart: bool = False
+    # Project type and the directory served, from the driver that identified
+    # the project.
+    type: str = "laravel"
+    document_root: str = "public"
+    # The user's own nginx fragment: always addressable, whether or not it
+    # exists yet, so a client can offer to create it.
+    custom_config: str = ""
+    custom_config_present: bool = False
+    # A fragment the project ships. `project_config_status` is one of none,
+    # missing, pending, changed, trusted; anything but trusted means nothing
+    # from the repository is being served.
+    project_config: str | None = None
+    project_config_status: str = "none"
+
+
+def _configuration_view(configuration) -> tuple[str, bool, str | None, str]:
+    if configuration is None:
+        return ("", False, None, siteconfig.NONE)
+    return (
+        str(configuration.user),
+        configuration.user_present,
+        configuration.project_relative,
+        configuration.status,
+    )
 
 
 @dataclass(frozen=True)
@@ -413,7 +439,7 @@ class PaddockController:
     def linked_sites_snapshot(self) -> LinkedSitesSnapshot:
         """Return every linked site in stable display order without raising."""
         try:
-            projector = CaddyProjector(self.store.paths, self.runner)
+            projector = WebProjector(self.store.paths, self.runner)
             self.parking.reconcile(projector)
             sites = SiteManager(self.store, projector).list()
         except (OSError, StateError, ValueError):
@@ -426,6 +452,12 @@ class PaddockController:
         except (OSError, StateError, ValueError): node_versions = ()
         reverb = ReverbManager(self.store, self.runner, self.port_available)
         queue = QueueWorkerManager(self.store, self.runner)
+        try:
+            configurations = SiteManager(
+                self.store, WebProjector(self.store.paths, self.runner)
+            ).configurations()
+        except (OSError, StateError, ValueError):
+            configurations = {}
         return LinkedSitesSnapshot(tuple(
             LinkedSiteView(
                 site.name,
@@ -444,6 +476,9 @@ class PaddockController:
                 queue.worker(site.name) is not None,
                 queue.state(site.name),
                 queue.enabled(site.name),
+                site.driver,
+                site.document_root,
+                *_configuration_view(configurations.get(site.name)),
             )
             for site in sorted(sites, key=lambda item: item.name.casefold())
         ), versions, node_versions)
@@ -633,7 +668,7 @@ class PaddockController:
         try:
             added = self.parking.add(Path(path))
             self.parking.sync_watchers()
-            result = self.parking.reconcile(CaddyProjector(self.store.paths, self.runner))
+            result = self.parking.reconcile(WebProjector(self.store.paths, self.runner))
             conflicts = "\n".join(
                 f"{item.name or item.roots[0]}: {item.reason}" for item in result.conflicts
             ) or None
@@ -650,7 +685,7 @@ class PaddockController:
         try:
             removed = self.parking.remove(Path(path))
             self.parking.sync_watchers()
-            self.parking.reconcile(CaddyProjector(self.store.paths, self.runner))
+            self.parking.reconcile(WebProjector(self.store.paths, self.runner))
         except (OSError, RuntimeError, ValueError, StateError) as error:
             return ParkingOperationResult(
                 False, "Parking folder could not be removed", str(error),
@@ -663,7 +698,7 @@ class PaddockController:
     def set_linked_site_php(
         self, name: str, version: str
     ) -> LinkedSitesOperationResult:
-        manager = SiteManager(self.store, CaddyProjector(self.store.paths, self.runner))
+        manager = SiteManager(self.store, WebProjector(self.store.paths, self.runner))
         try:
             site = next((item for item in manager.list() if item.name == name), None)
             if site is None:
@@ -680,7 +715,7 @@ class PaddockController:
         )
 
     def set_linked_site_node(self, name: str, version: str) -> LinkedSitesOperationResult:
-        manager = SiteManager(self.store, CaddyProjector(self.store.paths, self.runner))
+        manager = SiteManager(self.store, WebProjector(self.store.paths, self.runner))
         try:
             site = next((item for item in manager.list() if item.name == name), None)
             if site is None: raise ValueError(f"linked site does not exist: {name}")
@@ -692,7 +727,7 @@ class PaddockController:
     def set_linked_site_secured(
         self, name: str, secured: bool
     ) -> LinkedSitesOperationResult:
-        projector = CaddyProjector(self.store.paths, self.runner)
+        projector = WebProjector(self.store.paths, self.runner)
         security = SecurityManager(self.store, projector, self.runner)
         try:
             if secured:
@@ -709,6 +744,70 @@ class PaddockController:
         return LinkedSitesOperationResult(
             True, f"Switched {name}.test to {protocol}", None,
             self.linked_sites_snapshot(),
+        )
+
+    def set_site_configuration_trusted(
+        self, name: str, trusted: bool
+    ) -> LinkedSitesOperationResult:
+        """Trust or withdraw trust in the nginx fragment a project ships.
+
+        Trust is the fragment's digest, so this is only ever granted to
+        contents someone has seen. A later edit or pull withdraws it without
+        anyone having to act.
+        """
+        manager = SiteManager(self.store, WebProjector(self.store.paths, self.runner))
+        try:
+            configuration = manager.trust_project_configuration(name, trusted=trusted)
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return LinkedSitesOperationResult(
+                False, "Project configuration could not be applied", str(error),
+                self.linked_sites_snapshot(),
+            )
+        summary = (
+            f"Applied {configuration.project_relative} for {name}.test"
+            if trusted
+            else f"Stopped reading {configuration.project_relative} for {name}.test"
+        )
+        return LinkedSitesOperationResult(
+            True, summary, None, self.linked_sites_snapshot()
+        )
+
+    def ensure_site_configuration(self, name: str) -> LinkedSitesOperationResult:
+        """Make the user's own fragment exist so a client can open it.
+
+        A UI cannot offer "edit this" for a file that is not there, and it must
+        not write one itself: the template explains nginx's precedence rules
+        and lives with the rest of the configuration logic.
+        """
+        manager = SiteManager(self.store, WebProjector(self.store.paths, self.runner))
+        try:
+            configuration = manager.configuration(name)
+            if not configuration.user.exists():
+                atomic_write(configuration.user, siteconfig.template(name).encode())
+                manager.reproject()
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return LinkedSitesOperationResult(
+                False, "Site configuration could not be prepared", str(error),
+                self.linked_sites_snapshot(),
+            )
+        return LinkedSitesOperationResult(
+            True, f"Ready to edit {configuration.user}", str(configuration.user),
+            self.linked_sites_snapshot(),
+        )
+
+    def reload_web(self) -> DashboardOperationResult:
+        """Re-generate and reload, which is how a fragment edited outside
+        Paddock takes effect and how its mistakes are surfaced."""
+        manager = SiteManager(self.store, WebProjector(self.store.paths, self.runner))
+        try:
+            manager.reproject()
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return DashboardOperationResult(
+                False, "The web configuration was rejected", str(error),
+                self.dashboard_snapshot(),
+            )
+        return DashboardOperationResult(
+            True, "Reloaded the web configuration", None, self.dashboard_snapshot()
         )
 
     def create_service_instance(
@@ -829,11 +928,11 @@ class PaddockController:
         units = {unit["name"]: unit["state"] for unit in payload["units"]}
         services: list[DashboardService] = [
             DashboardService(
-                "caddy",
-                "Caddy",
+                "web",
+                "Web",
                 "Infrastructure",
-                units.get("paddock-caddy.service", "unknown"),
-                "Web server · HTTPS and .test sites",
+                units.get(web.UNIT, "unknown"),
+                "Nginx · HTTPS and .test sites",
             ),
             DashboardService(
                 "dns",

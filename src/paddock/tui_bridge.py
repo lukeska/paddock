@@ -19,7 +19,11 @@ from .state import StateStore
 from .ui.theme import ThemeError, load_palette
 
 
-PROTOCOL_VERSION = 1
+# 2 added the project type, document root, and per-site nginx fragment
+# fields to the site payload, plus site.set_configuration_trusted,
+# site.ensure_configuration and web.reload. The bridge and the Go client ship in one package, so both
+# sides check for equality and move together.
+PROTOCOL_VERSION = 2
 WORKERS = {"queue", "reverb"}
 
 
@@ -120,6 +124,21 @@ def dispatch(
         site = _required_string(params, "site")
         secured = _required_bool(params, "secured")
         return asdict(controller.set_linked_site_secured(site, secured))
+
+    if method == "site.set_configuration_trusted":
+        _only(params, {"site", "trusted"})
+        site = _required_string(params, "site")
+        trusted = _required_bool(params, "trusted")
+        return asdict(controller.set_site_configuration_trusted(site, trusted))
+
+    if method == "site.ensure_configuration":
+        _only(params, {"site"})
+        site = _required_string(params, "site")
+        return asdict(controller.ensure_site_configuration(site))
+
+    if method == "web.reload":
+        _only(params, set())
+        return asdict(controller.reload_web())
 
     if method == "worker.logs":
         _only(params, {"site", "worker", "lines"})

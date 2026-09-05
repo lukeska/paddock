@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import siteconfig
+from .drivers import DRIVERS, DriverError, normalize_document_root
 from .runtimes import normalize_minor
 from .services import CATALOG
 from .sites import normalize_site_name
@@ -27,7 +29,7 @@ from .sites import normalize_site_name
 
 PROJECT_FILE = "paddock.yml"
 
-TOP_LEVEL = {"name", "php", "node", "secure", "services"}
+TOP_LEVEL = {"name", "php", "node", "secure", "services", "type", "root", "nginx"}
 SERVICE_KEYS = {"version", "port"}
 
 # Declared but not implemented. Named explicitly so the error says "not yet"
@@ -63,6 +65,14 @@ class ProjectFile:
     node: str | None = None
     secure: bool = False
     services: tuple[DeclaredService, ...] = field(default_factory=tuple)
+    # `type` and `root` in the file. Absent means detect the project type and
+    # take that type's document root, which is what most projects want.
+    driver: str | None = None
+    document_root: str | None = None
+    # A project-relative nginx fragment. Declaring it does not make it active:
+    # it is arbitrary server configuration arriving with a clone, so it stays
+    # inert until someone trusts it.
+    nginx: str | None = None
 
 
 def _object(value: Any, label: str) -> dict[str, Any]:
@@ -115,6 +125,37 @@ def parse(raw: Any) -> ProjectFile:
     if not isinstance(secure, bool):
         raise ProjectFileError("secure must be true or false")
 
+    driver = value.get("type")
+    if driver is not None:
+        if not isinstance(driver, str):
+            raise ProjectFileError('type must be a string, e.g. type: wordpress')
+        if driver not in DRIVERS:
+            raise ProjectFileError(
+                f"unknown project type '{driver}'; "
+                f"supported: {', '.join(sorted(DRIVERS))}"
+            )
+    fragment = value.get("nginx")
+    if fragment is not None:
+        if not isinstance(fragment, str):
+            raise ProjectFileError(
+                'nginx must be a string, e.g. nginx: .paddock/nginx.conf'
+            )
+        try:
+            fragment = siteconfig.normalize_project_path(fragment)
+        except DriverError as error:
+            raise ProjectFileError(str(error)) from None
+
+    document_root = value.get("root")
+    if document_root is not None:
+        if not isinstance(document_root, str):
+            raise ProjectFileError('root must be a string, e.g. root: web')
+        try:
+            # Confined to the project: this file arrives with a clone, so it
+            # must not be able to point a .test host anywhere else.
+            document_root = normalize_document_root(document_root)
+        except DriverError as error:
+            raise ProjectFileError(str(error)) from None
+
     declared = []
     services = value.get("services")
     if services is not None:
@@ -136,7 +177,10 @@ def parse(raw: Any) -> ProjectFile:
                 raise ProjectFileError(f"services.{service_name}.port must be an integer")
             declared.append(DeclaredService(service_name, version, port))
 
-    return ProjectFile(name=name, php=php, node=node, secure=secure, services=tuple(declared))
+    return ProjectFile(
+        name=name, php=php, node=node, secure=secure, services=tuple(declared),
+        driver=driver, document_root=document_root, nginx=fragment,
+    )
 
 
 def find(directory: Path) -> Path | None:
@@ -199,12 +243,40 @@ class Reconciler:
             return steps
 
         if current is None:
-            steps.append(Step("changed", f"link {root} as {site_name}.test"))
+            declared_type = f" as {declared.driver}" if declared.driver else ""
+            steps.append(
+                Step("changed", f"link {root} as {site_name}.test{declared_type}")
+            )
             if not dry_run:
-                self.sites.link(root, site_name, declared.php, declared.node)
+                self.sites.link(
+                    root, site_name, declared.php, declared.node,
+                    driver=declared.driver, document_root=declared.document_root,
+                )
                 current = {site.name: site for site in self.sites.list()}[site_name]
         else:
             steps.append(Step("unchanged", f"{site_name}.test already linked"))
+            wants_type = declared.driver and current.driver != declared.driver
+            wants_root = (
+                declared.document_root
+                and current.document_root != declared.document_root
+            )
+            if wants_type or wants_root:
+                steps.append(Step(
+                    "changed",
+                    f"serve {site_name}.test as "
+                    f"{declared.driver or current.driver} from "
+                    f"{declared.document_root or current.document_root}",
+                ))
+                if not dry_run:
+                    self.sites.link(
+                        root, site_name, declared.php or current.php, declared.node,
+                        driver=declared.driver,
+                        document_root=declared.document_root,
+                    )
+            elif declared.driver or declared.document_root:
+                steps.append(
+                    Step("unchanged", f"already served as {current.driver}")
+                )
             if declared.php and current.php != declared.php:
                 steps.append(
                     Step("changed", f"switch {site_name}.test to PHP {declared.php}")
@@ -228,7 +300,51 @@ class Reconciler:
         elif declared.secure:
             steps.append(Step("unchanged", f"{site_name}.test already served over HTTPS"))
 
+        steps.extend(self._nginx(site_name, declared, current, dry_run=dry_run))
         steps.extend(self._services(declared, dry_run=dry_run))
+        return steps
+
+    def _nginx(self, site_name, declared, current, *, dry_run: bool) -> list[Step]:
+        """Mirror the project's declaration, and never grant it trust.
+
+        Trust is a separate, explicit act. An unreviewed fragment is reported
+        with `!` — the same marker `init` already uses for something a project
+        asked for that Paddock declined to impose — so a scripted run exits
+        non-zero and says what is waiting.
+        """
+        declaration = declared.nginx
+        recorded = current.project_config if current else None
+        steps: list[Step] = []
+        if declaration is None:
+            if recorded is not None:
+                steps.append(Step("changed", f"stop reading {recorded}"))
+                if not dry_run:
+                    self.sites.declare_project_configuration(site_name, None)
+            return steps
+
+        if recorded != declaration:
+            steps.append(Step("changed", f"note that this project ships {declaration}"))
+            if not dry_run:
+                self.sites.declare_project_configuration(site_name, declaration)
+        if dry_run:
+            return steps
+
+        configuration = self.sites.configuration(site_name)
+        if configuration.status == siteconfig.TRUSTED:
+            steps.append(Step("unchanged", f"{declaration} is trusted and applied"))
+        elif configuration.status == siteconfig.MISSING:
+            steps.append(Step("blocked", f"{declaration} is declared but missing"))
+        else:
+            waiting = (
+                "changed since it was trusted"
+                if configuration.status == siteconfig.CHANGED
+                else "not reviewed yet"
+            )
+            steps.append(Step(
+                "blocked",
+                f"{declaration} is {waiting}; review it and run "
+                f"paddock config trust {site_name}",
+            ))
         return steps
 
     def _services(self, declared: ProjectFile, *, dry_run: bool) -> list[Step]:

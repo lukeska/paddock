@@ -55,9 +55,13 @@ class IntegrationTests(unittest.TestCase):
         integration.prepare()
         self.assertTrue((self.store.paths.data / "pki/rootCA.pem").is_file())
         self.assertFalse((self.store.paths.data / "pki/.bootstrap-key.pem").exists())
-        self.assertTrue((self.store.paths.state / "caddy/Caddyfile").is_file())
-        self.assertTrue((self.store.paths.state / "caddy-data").is_dir())
-        self.assertTrue((self.store.paths.state / "caddy-config").is_dir())
+        promoted = self.store.paths.state / "nginx/current"
+        self.assertTrue((promoted / "nginx.conf").is_file())
+        self.assertTrue((promoted / "sites/000-default.conf").is_file())
+        self.assertTrue((promoted / "snippets/php-fastcgi.conf").is_file())
+        # nginx will not create a log directory, and a missing one is a
+        # startup failure rather than something it recovers from.
+        self.assertTrue((self.store.paths.state / "logs/sites").is_dir())
         self.assertTrue((self.store.paths.home / "Paddock").is_dir())
         self.assertEqual(
             [self.store.paths.home / "Paddock"],
@@ -65,13 +69,32 @@ class IntegrationTests(unittest.TestCase):
         )
 
     def test_prepare_replaces_a_stale_projection(self):
-        # A Caddyfile generated before the socket layout changed must not
-        # survive setup, or Caddy dials a socket no unit binds.
-        projection = self.store.paths.state / "caddy/Caddyfile"
-        projection.parent.mkdir(parents=True, exist_ok=True)
-        projection.write_text("stale unix//run/user/1000/paddock", encoding="utf-8")
+        # A tree generated before the socket layout changed must not survive
+        # setup, or nginx dials a socket no unit binds.
+        stale = self.store.paths.state / "nginx/generations/00000001"
+        (stale / "sites").mkdir(parents=True, exist_ok=True)
+        (stale / "nginx.conf").write_text("stale", encoding="utf-8")
+        (stale / "sites/ghost.conf").write_text(
+            "stale unix//run/user/1000/paddock", encoding="utf-8"
+        )
+        current = self.store.paths.state / "nginx/current"
+        current.parent.mkdir(parents=True, exist_ok=True)
+        current.symlink_to(stale, target_is_directory=True)
         Integration(self.store, self.fake).prepare()
-        self.assertNotIn("stale", projection.read_text(encoding="utf-8"))
+        self.assertNotEqual(stale, current.resolve())
+        self.assertFalse((current / "sites/ghost.conf").exists())
+        self.assertNotIn("stale", (current / "nginx.conf").read_text(encoding="utf-8"))
+
+    def test_prepare_removes_state_from_the_previous_web_server(self):
+        # Removed only after the nginx tree is promoted, so a failed
+        # projection leaves a machine able to roll back to the old package.
+        for legacy in ("caddy", "caddy-data", "caddy-config"):
+            directory = self.store.paths.state / legacy
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "leftover").write_text("x", encoding="utf-8")
+        Integration(self.store, self.fake).prepare()
+        for legacy in ("caddy", "caddy-data", "caddy-config"):
+            self.assertFalse((self.store.paths.state / legacy).exists())
 
     def test_helper_invocations_are_fixed_and_user_scoped(self):
         integration = Integration(self.store, self.fake)

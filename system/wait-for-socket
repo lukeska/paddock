@@ -2,7 +2,7 @@
 # Block until an FPM master has bound its Unix socket.
 #
 # php-fpm is Type=simple, so systemd considers the unit started the moment the
-# process is forked, well before it listens. Without this gate Caddy's After=
+# process is forked, well before it listens. Without this gate the web server's
 # ordering is satisfied against a socket that does not exist yet, which shows
 # up as a burst of 502s during boot. Failing here is deliberate: a master that
 # never binds within the bound is broken, and Restart=on-failure should see it.

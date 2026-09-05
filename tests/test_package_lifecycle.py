@@ -75,6 +75,11 @@ class PackageLifecycleTests(unittest.TestCase):
                 encoding="utf-8",
             )
             unit.write_text("unit", encoding="utf-8")
+            # A machine upgraded from a release that served with Caddy still
+            # has that unit; removal must clean it even though it is no longer
+            # something this release installs.
+            legacy_unit = root / "paddock-caddy.service"
+            legacy_unit.write_text("unit", encoding="utf-8")
             calls = []
 
             def fake_run(command, **kwargs):
@@ -84,6 +89,7 @@ class PackageLifecycleTests(unittest.TestCase):
                 patch.object(helper, "INSTALLATION", installation),
                 patch.object(helper, "SYSTEM_CA", system_ca),
                 patch.object(helper, "OWNED", (str(installation), str(system_ca), str(unit))),
+                patch.object(helper, "LEGACY_UNITS", (str(legacy_unit),)),
                 patch.object(helper, "run", fake_run),
                 patch.object(
                     helper.pwd,
@@ -98,6 +104,7 @@ class PackageLifecycleTests(unittest.TestCase):
             self.assertFalse(installation.exists())
             self.assertFalse(system_ca.exists())
             self.assertFalse(unit.exists())
+            self.assertFalse(legacy_unit.exists())
             commands = [call[0] for call in calls]
             self.assertIn(["systemctl", "disable", "--now", "paddock.target"], commands)
             self.assertIn(["nmcli", "connection", "delete", "paddock-dns"], commands)
@@ -110,16 +117,20 @@ class PackageLifecycleTests(unittest.TestCase):
             installation = root / "missing.json"
             unit = root / "paddock.target"
             unit.write_text("unit", encoding="utf-8")
+            legacy_unit = root / "paddock-caddy.service"
+            legacy_unit.write_text("unit", encoding="utf-8")
             calls = []
             with (
                 patch.object(helper, "INSTALLATION", installation),
                 patch.object(helper, "SYSTEM_CA", root / "missing-ca.pem"),
                 patch.object(helper, "OWNED", (str(unit),)),
+                patch.object(helper, "LEGACY_UNITS", (str(legacy_unit),)),
                 patch.object(helper, "run", lambda command, **kwargs: calls.append(command)),
             ):
                 helper.package_remove()
 
             self.assertFalse(unit.exists())
+            self.assertFalse(legacy_unit.exists())
             self.assertIn(["systemctl", "disable", "--now", "paddock.target"], calls)
             self.assertIn(["systemctl", "daemon-reload"], calls)
 

@@ -32,7 +32,7 @@ class Lifecycle:
     def logs(self, follow: bool = False) -> int:
         command = [
             "journalctl",
-            "--unit", "paddock-caddy.service",
+            "--unit", "paddock-web.service",
             "--unit", "paddock-php@*.service",
             "--unit", "paddock-dns.service",
             "--no-pager",

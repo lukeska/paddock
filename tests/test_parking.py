@@ -6,10 +6,11 @@ import tempfile
 import unittest
 
 from paddock.parking import ParkingError, ParkingManager
-from paddock.caddy import CaddyProjector
+from paddock.web import WebProjector
 from paddock.paths import Paths
 from paddock.runtimes import RuntimeRegistry
 from paddock.state import StateStore
+from support import promoted
 
 
 class ParkingTests(unittest.TestCase):
@@ -30,7 +31,7 @@ class ParkingTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, "", "")
 
         self.manager = ParkingManager(self.store, runner)
-        self.projector = CaddyProjector(self.store.paths, runner)
+        self.projector = WebProjector(self.store.paths, runner)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -108,7 +109,7 @@ class ParkingTests(unittest.TestCase):
         self.assertEqual(str(projects), record["parking_path"])
         self.assertEqual("8.4", record["php"])
         self.assertEqual(("shop",), tuple(item.name for item in result.sites))
-        self.assertIn("http://shop.test", self.projector.path.read_text(encoding="utf-8"))
+        self.assertIn("server_name shop.test;", promoted(self.projector))
 
     def test_reconcile_preserves_parked_overrides_and_prunes_removed_folders(self) -> None:
         projects = self.home / "Paddock"

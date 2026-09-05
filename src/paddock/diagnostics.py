@@ -6,12 +6,12 @@ import shutil
 import subprocess
 from typing import Callable
 
-from .caddy import CaddyProjector
 from .report import active_states, units_for
 from .runtimes import RuntimeRegistry
 from .services import ENGINE, ENGINE_HINT, ServiceManager
 from .sites import SiteManager
 from .state import StateError, StateStore
+from .web import WebProjector
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ Runner = Callable[..., subprocess.CompletedProcess[str]]
 def doctor(store: StateStore, runner: Runner = subprocess.run) -> list[Check]:
     checks = [
         Check(command, shutil.which(command) is not None, shutil.which(command) or "not found")
-        for command in ("caddy", "dnsmasq", "mkcert")
+        for command in ("nginx", "dnsmasq", "mkcert")
     ]
     for record in ("settings", "runtimes", "sites", "services"):
         try:
@@ -44,12 +44,16 @@ def doctor(store: StateStore, runner: Runner = subprocess.run) -> list[Check]:
         executable = runtime.path.is_file() and runtime.path.stat().st_mode & 0o111 != 0
         checks.append(Check(f"php:{runtime.version}", executable, str(runtime.path)))
     try:
-        sites = SiteManager(store, CaddyProjector(store.paths, runner)).list()
+        sites = SiteManager(store, WebProjector(store.paths, runner)).list()
     except (StateError, ValueError):
         sites = []
     for site in sites:
-        public = site.root / "public"
-        checks.append(Check(f"site:{site.name}", public.is_dir(), str(public)))
+        # The document root, not `public`: which directory is served depends on
+        # the project type now.
+        served = site.served
+        checks.append(
+            Check(f"site:{site.name}", served.is_dir(), f"{site.driver} · {served}")
+        )
     # Only report on the container engine once a service actually wants it,
     # so a user who never configures one sees no failure for a missing podman.
     manager = ServiceManager(store, runner)
@@ -83,15 +87,15 @@ def doctor(store: StateStore, runner: Runner = subprocess.run) -> list[Check]:
         )
         unit = manager.unit_path(service.name)
         checks.append(Check(f"service:{service.name}:unit", unit.is_file(), str(unit)))
-    caddy = CaddyProjector(store.paths, runner)
-    if caddy.path.exists():
-        try:
-            caddy.validate(caddy.path.read_text(encoding="utf-8"))
-            checks.append(Check("caddy:config", True, str(caddy.path)))
-        except (OSError, RuntimeError) as error:
-            checks.append(Check("caddy:config", False, str(error)))
-    else:
-        checks.append(Check("caddy:config", False, f"not generated: {caddy.path}"))
+    # The promoted generation is checked in place rather than re-rendered, so
+    # doctor reports on what the unit would actually load, including any drift
+    # between state and the tree on disk.
+    web = WebProjector(store.paths, runner)
+    try:
+        web.check_live()
+        checks.append(Check("web:config", True, str(web.path)))
+    except (OSError, RuntimeError) as error:
+        checks.append(Check("web:config", False, str(error)))
     return checks
 
 

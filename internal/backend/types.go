@@ -87,6 +87,21 @@ type Site struct {
 	QueueConfigured  bool    `json:"queue_configured"`
 	QueueState       string  `json:"queue_state"`
 	QueueAutostart   bool    `json:"queue_autostart"`
+
+	// Project type and the directory served for it.
+	Type         string `json:"type"`
+	DocumentRoot string `json:"document_root"`
+
+	// The viewer's own nginx fragment. Always addressable so the UI can
+	// offer to create one; CustomConfigPresent says whether it exists yet.
+	CustomConfig        string `json:"custom_config"`
+	CustomConfigPresent bool   `json:"custom_config_present"`
+
+	// A fragment the project ships. Status is one of none, missing,
+	// pending, changed, trusted; anything but trusted means nothing from
+	// the repository is being served.
+	ProjectConfig       *string `json:"project_config"`
+	ProjectConfigStatus string  `json:"project_config_status"`
 }
 
 type OperationResult struct {

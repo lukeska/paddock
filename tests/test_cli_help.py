@@ -176,7 +176,7 @@ class ServiceMessageTests(unittest.TestCase):
 class ErrorHandlingTests(unittest.TestCase):
     """Every deliberate failure is one line and exit 78.
 
-    LifecycleError, CaddyError, TlsError, IntegrationError and
+    LifecycleError, WebError, TlsError, IntegrationError and
     RuntimeInstallError all subclass RuntimeError and used to escape main() as
     a traceback, which tells a user nothing and breaks anyone parsing this CLI.
     """
@@ -189,14 +189,14 @@ class ErrorHandlingTests(unittest.TestCase):
         return code, stderr.getvalue()
 
     def test_runtime_errors_are_reported_not_raised(self) -> None:
-        from paddock.caddy import CaddyError
+        from paddock.web import WebError
         from paddock.integration import IntegrationError
         from paddock.lifecycle import LifecycleError
         from paddock.php_runtime import RuntimeInstallError
         from paddock.tls import TlsError
 
         for error_type in (
-            LifecycleError, CaddyError, TlsError, IntegrationError, RuntimeInstallError,
+            LifecycleError, WebError, TlsError, IntegrationError, RuntimeInstallError,
         ):
             code, message = self._exit_code_for(error_type("boom"))
             self.assertEqual(78, code, error_type.__name__)

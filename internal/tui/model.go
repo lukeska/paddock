@@ -27,6 +27,9 @@ type API interface {
 	SetSitePHP(site, version string) (backend.OperationResult, error)
 	SetSiteNode(site, version string) (backend.OperationResult, error)
 	SetSiteSecured(site string, secured bool) (backend.OperationResult, error)
+	SetSiteConfigurationTrusted(site string, trusted bool) (backend.OperationResult, error)
+	EnsureSiteConfiguration(site string) (backend.OperationResult, error)
+	ReloadWeb() (backend.DashboardOperationResult, error)
 	Logs(site, worker string, lines int) (backend.LogsResult, error)
 	Close() error
 }
@@ -534,15 +537,34 @@ func (m Model) detailActions() []detailAction {
 	if site.Secured {
 		security = " HTTPS"
 	}
+	documentRoot := site.DocumentRoot
+	if documentRoot == "." {
+		documentRoot = "project root"
+	}
 	actions := []detailAction{
 		{"security", "Details", "Security", security},
 		{"php", "Details", "PHP version", site.PHP},
 		{"node", "Details", "Node.js version", node},
+		{"type", "Details", "Type", title(site.Type)},
+		{"docroot", "Details", "Document root", documentRoot},
 		{"url", "Details", "URL", site.URL},
 		{"path", "Details", "Path", site.Root},
 		{"terminal", "Details", "Terminal", "Open"},
 		{"zed", "Details", "Zed", "Open"},
+		{"nginx-edit", "Details", "Nginx config", nginxConfigLabel(site)},
 	}
+	// Only offered when the project actually ships a fragment, and the label
+	// says what activating it will do, because trusting arbitrary server
+	// configuration from a repository should never be a mystery keystroke.
+	if site.ProjectConfig != nil && site.ProjectConfigStatus != "none" {
+		actions = append(actions, detailAction{
+			"project-config", "Details", "From project",
+			projectConfigLabel(site.ProjectConfigStatus),
+		})
+	}
+	actions = append(actions, detailAction{
+		"nginx-reload", "Details", "Apply config edits", "Reload",
+	})
 	if site.QueueAvailable || site.QueueConfigured {
 		actions = append(actions,
 			detailAction{"queue-active", "Workers", "Queue", workerState(site.QueueConfigured, site.QueueState)},
@@ -608,6 +630,16 @@ func (m Model) activateDetailAction() (tea.Model, tea.Cmd) {
 		return m.openSelectedSite()
 	case "path", "terminal", "zed":
 		return m.launchDetailTool(action.id)
+	case "nginx-edit":
+		return m.editSiteConfiguration()
+	case "project-config":
+		return m.mutateProjectConfiguration()
+	case "nginx-reload":
+		return m.reloadWeb()
+	case "type", "docroot":
+		// Read-only: both follow from the project's own files, and changing
+		// one is `paddock link --type`, not a keystroke in a dashboard.
+		return m, nil
 	case "queue-active":
 		return m.mutateDetailWorker("queue", false)
 	case "queue-autostart":
@@ -759,6 +791,88 @@ func (m Model) launchDetailTool(tool string) (tea.Model, tea.Cmd) {
 	}
 	return m, func() tea.Msg {
 		return externalActionMsg{summary: summary, err: launcher(name, arguments...)}
+	}
+}
+
+func nginxConfigLabel(site backend.Site) string {
+	if site.CustomConfigPresent {
+		return "Edit"
+	}
+	return "Create"
+}
+
+func projectConfigLabel(status string) string {
+	switch status {
+	case "trusted":
+		return "Applied · Stop using"
+	case "pending":
+		return "Not reviewed · Trust"
+	case "changed":
+		return "Changed · Trust again"
+	case "missing":
+		return "Declared but missing"
+	}
+	return status
+}
+
+// editSiteConfiguration makes the fragment exist before handing it to the
+// viewer's editor, because a UI cannot offer to edit a file that is not there
+// and must not invent the template itself.
+func (m Model) editSiteConfiguration() (tea.Model, tea.Cmd) {
+	if m.busy || m.api == nil || m.launchCommand == nil {
+		return m, nil
+	}
+	site, ok := m.detailSelectedSite()
+	if !ok {
+		return m, nil
+	}
+	m.busy, m.status, m.err = true, "", ""
+	m.generation++
+	generation, api, launcher := m.generation, m.api, m.launchCommand
+	path := site.CustomConfig
+	return m, func() tea.Msg {
+		result, err := api.EnsureSiteConfiguration(site.Name)
+		if err == nil && result.OK {
+			// Ignored deliberately: the file is ready either way, and a
+			// missing handler must not read as a failure to prepare it.
+			_ = launcher("xdg-open", path)
+		}
+		return mutationMsg{generation, result, err}
+	}
+}
+
+func (m Model) mutateProjectConfiguration() (tea.Model, tea.Cmd) {
+	if m.busy || m.api == nil {
+		return m, nil
+	}
+	site, ok := m.detailSelectedSite()
+	if !ok {
+		return m, nil
+	}
+	if site.ProjectConfigStatus == "missing" {
+		m.err = "the project declares " + *site.ProjectConfig + ", but it is not there"
+		return m, nil
+	}
+	trusted := site.ProjectConfigStatus != "trusted"
+	m.busy, m.status, m.err = true, "", ""
+	m.generation++
+	generation, api := m.generation, m.api
+	return m, func() tea.Msg {
+		result, err := api.SetSiteConfigurationTrusted(site.Name, trusted)
+		return mutationMsg{generation, result, err}
+	}
+}
+
+func (m Model) reloadWeb() (tea.Model, tea.Cmd) {
+	if m.busy || m.api == nil {
+		return m, nil
+	}
+	m.busy, m.status, m.err = true, "", ""
+	m.generation++
+	generation, api := m.generation, m.api
+	return m, func() tea.Msg {
+		result, err := api.ReloadWeb()
+		return dashboardMutationMsg{generation, result, err}
 	}
 }
 
@@ -1073,7 +1187,7 @@ func (m Model) renderSiteDetail() string {
 		if ledState != "" {
 			value = m.stateDot(ledState) + " " + siteCell(action.value, max(1, valueWidth-2))
 		}
-		if action.id == "url" || action.id == "path" || action.id == "terminal" || action.id == "zed" || strings.HasSuffix(action.id, "-logs") {
+		if action.id == "url" || action.id == "path" || action.id == "terminal" || action.id == "zed" || action.id == "nginx-edit" || action.id == "nginx-reload" || strings.HasSuffix(action.id, "-logs") {
 			value = styledDetailValue(action.value, valueWidth, m.styles.accent.Underline(true))
 		}
 		line := marker + siteCell(action.label, labelWidth) + "  " + value

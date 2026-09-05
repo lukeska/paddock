@@ -11,7 +11,7 @@ import time
 def dashboard(state: str = "active") -> dict[str, object]:
     return {
         "services": [{
-            "key": "caddy", "title": "Caddy", "group": "web",
+            "key": "web", "title": "Web", "group": "web",
             "state": state, "detail": "Serving sites", "configured": True,
             "connection": [], "port": None, "autostart": False,
         }]
@@ -29,6 +29,11 @@ def sites() -> dict[str, object]:
             "reverb_port": 8080, "queue_available": True,
             "queue_configured": True, "queue_state": "active",
             "queue_autostart": True,
+            "type": "laravel", "document_root": "public",
+            "custom_config": "/home/demo/.config/paddock/nginx/linguine.custom.conf",
+            "custom_config_present": False,
+            "project_config": ".paddock/nginx.conf",
+            "project_config_status": "pending",
         }],
         "php_versions": ["8.4", "8.5"],
         "node_versions": ["20", "22"],
@@ -37,7 +42,7 @@ def sites() -> dict[str, object]:
 
 def snapshot(state: str = "active") -> dict[str, object]:
     return {
-        "protocol_version": 1,
+        "protocol_version": 2,
         "dashboard": dashboard(state),
         "services": {"instances": []},
         "sites": sites(),

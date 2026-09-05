@@ -22,12 +22,13 @@ import re
 import subprocess
 from typing import Any, Callable
 
-from .caddy import CaddyProjector
 from .runtimes import RuntimeRegistry
 from .service_instances import ServiceInstanceManager
 from .services import ENGINE, ServiceManager
 from .sites import SiteManager
 from .state import StateError, StateStore
+from . import web
+from .web import WebProjector
 
 
 SCHEMA_VERSION = 1
@@ -38,7 +39,7 @@ CORE_UNITS = (
     "paddock.target",
     "paddock-dns.service",
     "paddock-dns-route.service",
-    "paddock-caddy.service",
+    web.UNIT,
 )
 
 # Paddock-built runtimes unpack to `<name>-<major>.<minor>.<patch>-<digest>`.
@@ -124,7 +125,7 @@ def _php(store: StateStore, states: dict[str, str]) -> dict[str, Any]:
 
 def _sites(store: StateStore) -> list[dict[str, Any]]:
     try:
-        sites = SiteManager(store, CaddyProjector(store.paths)).list()
+        sites = SiteManager(store, WebProjector(store.paths)).list()
     except (StateError, ValueError):
         return []
     return [
@@ -135,6 +136,8 @@ def _sites(store: StateStore) -> list[dict[str, Any]]:
             "php": site.php,
             "secured": site.secured,
             "root": str(site.root),
+            "type": site.driver,
+            "document_root": str(site.served),
         }
         for site in sites
     ]
@@ -234,6 +237,16 @@ def build(store: StateStore, runner: Runner = subprocess.run) -> dict[str, Any]:
         "units": units,
         "php": _php(store, states),
         "services": services,
+        # `engine` is the container engine and predates this field; the web
+        # server is reported separately rather than overloading that name.
+        # Deliberately fork-free: the state is already in the batched
+        # `is-active` reply, and the version would cost a third subprocess
+        # call on every bar tick for decoration.
+        "web": {
+            "engine": "nginx",
+            "unit": web.UNIT,
+            "state": states.get(web.UNIT, "unknown"),
+        },
         "engine": ENGINE,
         "linger": linger,
         "sites": _sites(store),

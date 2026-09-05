@@ -41,6 +41,18 @@ func (f *fakeAPI) SetSiteSecured(site string, secured bool) (backend.OperationRe
 	f.calls = append(f.calls, fmt.Sprintf("secured:%s:%t", site, secured))
 	return backend.OperationResult{}, nil
 }
+func (f *fakeAPI) SetSiteConfigurationTrusted(site string, trusted bool) (backend.OperationResult, error) {
+	f.calls = append(f.calls, fmt.Sprintf("trusted:%s:%t", site, trusted))
+	return backend.OperationResult{OK: true}, nil
+}
+func (f *fakeAPI) EnsureSiteConfiguration(site string) (backend.OperationResult, error) {
+	f.calls = append(f.calls, "ensure:"+site)
+	return backend.OperationResult{OK: true}, nil
+}
+func (f *fakeAPI) ReloadWeb() (backend.DashboardOperationResult, error) {
+	f.calls = append(f.calls, "reload-web")
+	return backend.DashboardOperationResult{OK: true}, nil
+}
 func (f *fakeAPI) Logs(string, string, int) (backend.LogsResult, error) {
 	return backend.LogsResult{}, nil
 }
@@ -48,16 +60,20 @@ func (f *fakeAPI) Close() error { return nil }
 
 func sampleSnapshot() backend.Snapshot {
 	node := "22"
+	projectConfig := ".paddock/nginx.conf"
 	return backend.Snapshot{
-		ProtocolVersion: 1,
+		ProtocolVersion: 2,
 		Dashboard: backend.DashboardSnapshot{Services: []backend.DashboardService{{
-			Key: "caddy", Title: "Caddy", Group: "web", State: "active", Detail: "Serving sites", Configured: true,
+			Key: "web", Title: "Web", Group: "web", State: "active", Detail: "Serving sites", Configured: true,
 		}}},
 		Sites: backend.LinkedSitesSnapshot{Sites: []backend.Site{{
 			Name: "linguine", Host: "linguine.test", URL: "https://linguine.test",
 			PHP: "8.5", Node: &node, Secured: true, Root: "/srv/linguine",
 			QueueAvailable: true, QueueConfigured: true, QueueState: "active", QueueAutostart: true,
 			ReverbAvailable: true, ReverbConfigured: true, ReverbState: "inactive",
+			Type: "laravel", DocumentRoot: "public",
+			CustomConfig:  "/home/demo/.config/paddock/nginx/linguine.custom.conf",
+			ProjectConfig: &projectConfig, ProjectConfigStatus: "pending",
 		}}},
 	}
 }
@@ -75,7 +91,7 @@ func TestStaleSnapshotCannotOverwriteNewerState(t *testing.T) {
 func TestDashboardAndSitesRenderAtBothBreakpoints(t *testing.T) {
 	m := NewWithAPI(&fakeAPI{})
 	m.loaded, m.snapshot, m.width, m.height = true, sampleSnapshot(), 120, 30
-	if got := m.render(); !strings.Contains(got, "Caddy") {
+	if got := m.render(); !strings.Contains(got, "Web") {
 		t.Fatalf("dashboard missing service: %q", got)
 	}
 	m.tab = 1
@@ -269,37 +285,107 @@ func TestSiteDetailActionsUseControllerAndDesktopLaunchCommands(t *testing.T) {
 	m := NewWithAPI(api)
 	m.snapshot, m.detailOpen, m.detailSite = sampleSnapshot(), true, "linguine"
 	m.snapshot.Sites.PHPVersions = []string{"8.4", "8.5"}
-	m.detailCursor = 0
+
+	// Addressed by action id, not by position: the row order changes whenever
+	// the detail view gains a field, and an index-based test then exercises
+	// whatever moved into that slot instead of failing.
+	at := func(id string) {
+		t.Helper()
+		for index, action := range m.detailActions() {
+			if action.id == id {
+				m.busy, m.detailCursor = false, index
+				return
+			}
+		}
+		t.Fatalf("no detail action %q", id)
+	}
+	last := func() string {
+		t.Helper()
+		if len(api.calls) == 0 {
+			t.Fatal("no controller call was made")
+		}
+		return api.calls[len(api.calls)-1]
+	}
+
+	at("security")
 	_, command := m.activateDetailAction()
 	command()
-	if len(api.calls) != 1 || api.calls[0] != "secured:linguine:false" {
+	if last() != "secured:linguine:false" {
 		t.Fatalf("security action calls = %v", api.calls)
 	}
 
-	m.busy, m.detailCursor = false, 1
+	at("php")
 	_, command = m.changeDetailVersion(-1)
 	command()
-	if api.calls[len(api.calls)-1] != "php:linguine:8.4" {
+	if last() != "php:linguine:8.4" {
 		t.Fatalf("PHP action calls = %v", api.calls)
 	}
 
-	m.busy, m.detailCursor = false, 7
+	at("queue-active")
 	_, command = m.activateDetailAction()
 	command()
-	if api.calls[len(api.calls)-1] != "active:linguine:queue:false" {
+	if last() != "active:linguine:queue:false" {
 		t.Fatalf("queue action calls = %v", api.calls)
 	}
 
-	m.busy, m.detailCursor = false, 5
 	launched := ""
 	m.launchCommand = func(name string, arguments ...string) error {
 		launched = name + " " + strings.Join(arguments, " ")
 		return nil
 	}
+	at("terminal")
 	_, command = m.activateDetailAction()
 	command()
 	if launched != "xdg-terminal-exec --dir=/srv/linguine" {
 		t.Fatalf("terminal action launched %q", launched)
+	}
+
+	// Editing prepares the fragment through the controller before handing it
+	// to the desktop, so the editor never opens on a file that is not there.
+	at("nginx-edit")
+	_, command = m.activateDetailAction()
+	command()
+	if last() != "ensure:linguine" {
+		t.Fatalf("nginx edit calls = %v", api.calls)
+	}
+	if launched != "xdg-open /home/demo/.config/paddock/nginx/linguine.custom.conf" {
+		t.Fatalf("nginx edit launched %q", launched)
+	}
+
+	// The fixture's project fragment is pending, so activating trusts it.
+	at("project-config")
+	_, command = m.activateDetailAction()
+	command()
+	if last() != "trusted:linguine:true" {
+		t.Fatalf("project config calls = %v", api.calls)
+	}
+
+	at("nginx-reload")
+	_, command = m.activateDetailAction()
+	command()
+	if last() != "reload-web" {
+		t.Fatalf("reload calls = %v", api.calls)
+	}
+}
+
+func TestProjectConfigurationRowOnlyAppearsWhenOneIsDeclared(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.snapshot, m.detailOpen, m.detailSite = sampleSnapshot(), true, "linguine"
+	has := func() bool {
+		for _, action := range m.detailActions() {
+			if action.id == "project-config" {
+				return true
+			}
+		}
+		return false
+	}
+	if !has() {
+		t.Fatal("a declared project fragment should be offered for review")
+	}
+	m.snapshot.Sites.Sites[0].ProjectConfig = nil
+	m.snapshot.Sites.Sites[0].ProjectConfigStatus = "none"
+	if has() {
+		t.Fatal("a site with no project fragment should not offer the row")
 	}
 }
 

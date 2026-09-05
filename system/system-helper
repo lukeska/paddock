@@ -18,10 +18,16 @@ OWNED = (
     "/etc/systemd/system/paddock.target",
     "/etc/systemd/system/paddock-dns.service",
     "/etc/systemd/system/paddock-dns-route.service",
-    "/etc/systemd/system/paddock-caddy.service",
+    "/etc/systemd/system/paddock-web.service",
     "/etc/systemd/system/paddock-php@.service",
     "/etc/polkit-1/rules.d/49-paddock.rules",
 )
+
+# Units earlier releases installed under a different name. These are removed
+# on install and on uninstall, but are deliberately absent from OWNED: the
+# fresh-install guard refuses to proceed when an OWNED path already exists, and
+# a leftover unit from a previous engine must not block a clean installation.
+LEGACY_UNITS = ("/etc/systemd/system/paddock-caddy.service",)
 
 INSTALLATION = Path("/etc/paddock/integration.json")
 SYSTEM_CA = Path("/etc/paddock/rootCA.pem")
@@ -35,7 +41,7 @@ RUNTIME_ROOT = "paddock"
 # the template leaves the old unit in place and only breaks at the next boot,
 # because the unit is written during integration and is not owned by pacman.
 # A test pins the template digest to this number so it cannot drift.
-UNIT_VERSION = 2
+UNIT_VERSION = 3
 
 
 def php_unit(user: str, group: int, home: Path, data: Path, state: Path) -> str:
@@ -50,10 +56,10 @@ def php_unit(user: str, group: int, home: Path, data: Path, state: Path) -> str:
     that does not exist at boot and disappears on logout without linger.
 
     php-fpm is Type=simple, so the unit counts as started before the master
-    listens. `ExecStartPost=` blocks on the socket and `Before=` orders Caddy
-    after that gate, which is the readiness edge ADR 0005 specifies. The
+    listens. `ExecStartPost=` blocks on the socket and `Before=` orders the web
+    server after that gate, which is the readiness edge ADR 0005 specifies. The
     ordering carries no requirement, so a later FPM failure yields a 502 for
-    that version only instead of taking Caddy down.
+    that version only instead of taking the web server down.
 
     The home directory is writable because PHP applications write inside their
     own project: Laravel needs `storage/` and `bootstrap/cache/`, and a
@@ -71,7 +77,7 @@ def php_unit(user: str, group: int, home: Path, data: Path, state: Path) -> str:
     return (
         f"""[Unit]\nDescription=Paddock PHP %i\nPartOf=paddock.target\n"""
         f"""X-Paddock-Unit-Version={UNIT_VERSION}\n"""
-        f"""Before=paddock-caddy.service\n"""
+        f"""Before=paddock-web.service\n"""
         f"""StartLimitIntervalSec=10s\nStartLimitBurst=3\n"""
         f"""ConditionFileIsExecutable={data}/runtimes/active/%i/bin/php-fpm\n"""
         f"""ConditionPathExists={state}/fpm/php-%i.conf\n"""
@@ -86,6 +92,48 @@ def php_unit(user: str, group: int, home: Path, data: Path, state: Path) -> str:
         f"""ProtectSystem=strict\nProtectHome=no\n"""
         f"""ReadWritePaths={home} {state}\n"""
         f"""InaccessiblePaths=-{home}/.ssh -{home}/.gnupg -{data}/pki\n"""
+    )
+
+
+def web_unit(user: str, group: int, data: Path, state: Path) -> str:
+    """Render the nginx unit.
+
+    ADR 0003's boundary is unchanged: a fixed, root-owned unit launches the
+    server as the desktop user with only CAP_NET_BIND_SERVICE, and PID 1 never
+    interprets the generated site map. Only the server behind it changed.
+
+    `Type=simple` with `daemon off;` replaces `Type=notify`, because nginx has
+    no sd_notify. Nothing orders itself after web readiness — the FPM units
+    gate themselves on their own sockets — so no ordering guarantee is lost,
+    and keeping nginx in the foreground leaves systemd tracking the real main
+    process rather than a forked master behind a PID file.
+
+    The two ExecReload lines run in sequence, so a configuration that fails
+    `nginx -t` never reaches SIGHUP and the running generation keeps serving.
+
+    Paths beyond the config tree are Paddock-owned and must be writable: nginx
+    writes its pid file, error log, per-site access logs, and the three
+    request temporary directories, all of which ProtectSystem=strict would
+    otherwise deny.
+    """
+    configuration = f"{state}/nginx/current/nginx.conf"
+    prefix = f"{state}/nginx/current"
+    return (
+        f"""[Unit]\nDescription=Paddock web server\nPartOf=paddock.target\n"""
+        f"""After=paddock-dns-route.service\n"""
+        f"""[Service]\nType=simple\nUser={user}\nGroup={group}\n"""
+        f"""ExecStartPre=+/usr/lib/paddock/check-ports\n"""
+        f"""ExecStartPre=/usr/bin/nginx -t -c {configuration} -p {prefix}\n"""
+        f"""ExecStart=/usr/bin/nginx -c {configuration} -p {prefix}\n"""
+        f"""ExecReload=/usr/bin/nginx -t -c {configuration} -p {prefix}\n"""
+        f"""ExecReload=/bin/kill -s HUP $MAINPID\n"""
+        f"""KillSignal=SIGQUIT\n"""
+        f"""Restart=on-failure\n"""
+        f"""AmbientCapabilities=CAP_NET_BIND_SERVICE\n"""
+        f"""CapabilityBoundingSet=CAP_NET_BIND_SERVICE\n"""
+        f"""NoNewPrivileges=yes\nPrivateDevices=yes\n"""
+        f"""ProtectSystem=strict\nProtectHome=read-only\n"""
+        f"""ReadWritePaths={state} {data}\n"""
     )
 
 
@@ -145,6 +193,22 @@ def owned_installation(user: str, data: Path, state: Path) -> dict | None:
     return record
 
 
+def retire_legacy_units() -> None:
+    """Stop and delete units this release renamed.
+
+    The units are written during integration, not by pacman, so an upgrade
+    leaves the old file in place and both would be pulled in by
+    paddock.target. Two servers cannot share the loopback web ports, and
+    `check-ports` would fail whichever lost the race.
+    """
+    for path in LEGACY_UNITS:
+        unit = Path(path)
+        if not unit.exists():
+            continue
+        run(["systemctl", "disable", "--now", unit.name], check=False)
+        unit.unlink(missing_ok=True)
+
+
 def install(user: str, data_value: str, state_value: str) -> None:
     account, data, state = directories(user, data_value, state_value)
     home = Path(account.pw_dir)
@@ -166,11 +230,13 @@ def install(user: str, data_value: str, state_value: str) -> None:
     if managed_upgrade and "paddock-dns" in existing_connections:
         run(["nmcli", "connection", "delete", "paddock-dns"])
 
+    retire_legacy_units()
+
     write("/etc/paddock/dnsmasq.conf", "port=53\nlisten-address=127.0.0.1\nbind-interfaces\nno-hosts\nno-resolv\ndomain-needed\nlocal=/test/\naddress=/.test/127.0.0.1\n")
-    write("/etc/systemd/system/paddock.target", """[Unit]\nDescription=Paddock local development stack\nWants=paddock-dns.service paddock-dns-route.service paddock-caddy.service paddock-php@8.4.service paddock-php@8.5.service\nAfter=network-online.target\n[Install]\nWantedBy=multi-user.target\n""")
+    write("/etc/systemd/system/paddock.target", """[Unit]\nDescription=Paddock local development stack\nWants=paddock-dns.service paddock-dns-route.service paddock-web.service paddock-php@8.4.service paddock-php@8.5.service\nAfter=network-online.target\n[Install]\nWantedBy=multi-user.target\n""")
     write("/etc/systemd/system/paddock-dns.service", """[Unit]\nDescription=Paddock .test DNS\nPartOf=paddock.target\n[Service]\nExecStart=/usr/bin/dnsmasq --no-daemon --conf-file=/etc/paddock/dnsmasq.conf\nRestart=on-failure\nNoNewPrivileges=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=yes\n""")
     write("/etc/systemd/system/paddock-dns-route.service", """[Unit]\nDescription=Paddock route-only DNS\nPartOf=paddock.target\nRequires=paddock-dns.service NetworkManager.service systemd-resolved.service\nAfter=paddock-dns.service NetworkManager.service systemd-resolved.service\n[Service]\nType=oneshot\nExecStart=/usr/bin/nmcli connection up paddock-dns\nExecStart=/usr/bin/resolvectl dns paddock0 127.0.0.1\nExecStart=/usr/bin/resolvectl domain paddock0 ~test\nExecStop=/usr/bin/resolvectl revert paddock0\nRemainAfterExit=yes\n""")
-    write("/etc/systemd/system/paddock-caddy.service", f"""[Unit]\nDescription=Paddock Caddy\nPartOf=paddock.target\nAfter=paddock-dns-route.service\n[Service]\nType=notify\nUser={user}\nGroup={account.pw_gid}\nEnvironment=XDG_DATA_HOME={state}/caddy-data\nEnvironment=XDG_CONFIG_HOME={state}/caddy-config\nExecStartPre=+/usr/lib/paddock/check-ports\nExecStartPre=/usr/bin/caddy validate --config={state}/caddy/Caddyfile --adapter=caddyfile\nExecStart=/usr/bin/caddy run --config={state}/caddy/Caddyfile --adapter=caddyfile\nExecReload=/usr/bin/caddy reload --config={state}/caddy/Caddyfile --adapter=caddyfile --address=127.0.0.1:20195\nRestart=on-failure\nAmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\nNoNewPrivileges=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=read-only\nReadWritePaths={state} {data}\n""")
+    write("/etc/systemd/system/paddock-web.service", web_unit(user, account.pw_gid, data, state))
     write("/etc/systemd/system/paddock-php@.service", php_unit(user, account.pw_gid, home, data, state))
     allowed = json.dumps(user)
     write("/etc/polkit-1/rules.d/49-paddock.rules", f"""polkit.addRule(function(action, subject) {{\n  var unit = action.lookup('unit') || '';\n  if (action.id == 'org.freedesktop.systemd1.manage-units' && subject.user == {allowed} && (unit == 'paddock.target' || unit.indexOf('paddock-') == 0)) return polkit.Result.YES;\n}});\n""")
@@ -237,7 +303,7 @@ def uninstall(user: str, data_value: str, state_value: str) -> None:
             record = {}
         if record.get("linger_enabled_by_paddock") is True:
             run(["loginctl", "disable-linger", user], check=False)
-    for path in OWNED:
+    for path in (*OWNED, *LEGACY_UNITS):
         Path(path).unlink(missing_ok=True)
     run(["systemctl", "daemon-reload"])
 
@@ -260,7 +326,7 @@ def package_remove() -> None:
     run(["nmcli", "connection", "delete", "paddock-dns"], check=False)
     if SYSTEM_CA.is_file():
         run(["trust", "anchor", "--remove", str(SYSTEM_CA)], check=False)
-    for path in OWNED:
+    for path in (*OWNED, *LEGACY_UNITS):
         Path(path).unlink(missing_ok=True)
     run(["systemctl", "daemon-reload"])
 
