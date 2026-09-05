@@ -60,6 +60,18 @@ class FakeController:
         self.calls.append(("autostart", "reverb", site, enabled))
         return self._result("reverb autostart changed")
 
+    def set_linked_site_php(self, site, version):
+        self.calls.append(("site", "php", site, version))
+        return self._result("site php changed")
+
+    def set_linked_site_node(self, site, version):
+        self.calls.append(("site", "node", site, version))
+        return self._result("site node changed")
+
+    def set_linked_site_secured(self, site, secured):
+        self.calls.append(("site", "secured", site, secured))
+        return self._result("site security changed")
+
     def queue_logs(self, site, lines):
         self.calls.append(("logs", "queue", site, lines))
         return ("one", "two")
@@ -144,6 +156,19 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(responses[0]["ok"])
         self.assertEqual("dashboard changed", responses[0]["result"]["summary"])
         self.assertEqual([("dashboard", False)], controller.calls)
+
+    def test_site_configuration_mutations_are_dispatched(self):
+        responses, controller = self.invoke(
+            request(1, "site.set_php", {"site": "linguine", "version": "8.5"}),
+            request(2, "site.set_node", {"site": "linguine", "version": "24"}),
+            request(3, "site.set_secured", {"site": "linguine", "secured": False}),
+        )
+        self.assertTrue(all(response["ok"] for response in responses))
+        self.assertEqual([
+            ("site", "php", "linguine", "8.5"),
+            ("site", "node", "linguine", "24"),
+            ("site", "secured", "linguine", False),
+        ], controller.calls)
 
     def test_bad_request_does_not_end_the_stream(self):
         responses, _ = self.invoke(

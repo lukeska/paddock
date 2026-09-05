@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   test:
-    name: Python tests
+    name: Python and TUI tests
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -27,19 +27,32 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
       # The only Python runtime dependency, for reading paddock.yml. Packaged
       # as python-yaml, which the Arch job installs with the other depends.
       - name: Install runtime dependencies
         run: python -m pip install --disable-pip-version-check pyyaml
 
-      - name: Run tests
+      # Discovery includes the real PTY acceptance suite in test_tui_pty.py.
+      - name: Run Python and PTY tests
         env:
           PYTHONPATH: src
         run: python -m unittest discover -s tests -v
 
+      - name: Run Go TUI tests
+        run: |
+          go test ./...
+          go vet ./...
+
       - name: Check executable scripts
         run: |
           python -m py_compile system/system-helper
+          python -m py_compile tests/fixtures/tui_backend.py
           bash -n system/check-ports system/php-fpm-launcher system/wait-for-socket
           bash -n packaging/arch/build-local.sh packaging/arch/paddock.install
           bash -n tests/acceptance/run.sh
@@ -55,7 +68,7 @@ jobs:
       - name: Install package dependencies
         run: >-
           pacman -Syu --needed --noconfirm
-          git python python-yaml caddy dnsmasq mkcert nss p11-kit networkmanager
+          git go python python-yaml caddy dnsmasq mkcert nss p11-kit networkmanager
           polkit podman
 
       - name: Check out source

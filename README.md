@@ -51,7 +51,12 @@ Run the unit suite:
 
 ```bash
 PYTHONPATH=src python -m unittest discover -s tests -v
+go test ./...
+go vet ./...
 ```
+
+Python discovery includes the PTY acceptance tests for the compiled TUI. CI
+provisions the Go version declared in `go.mod` and runs both suites explicitly.
 
 Build the local Arch package:
 

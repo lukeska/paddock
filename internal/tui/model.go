@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,6 +24,9 @@ type API interface {
 	SetDashboardActive(active bool) (backend.DashboardOperationResult, error)
 	SetActive(site, worker string, active bool) (backend.OperationResult, error)
 	SetAutostart(site, worker string, enabled bool) (backend.OperationResult, error)
+	SetSitePHP(site, version string) (backend.OperationResult, error)
+	SetSiteNode(site, version string) (backend.OperationResult, error)
+	SetSiteSecured(site string, secured bool) (backend.OperationResult, error)
 	Logs(site, worker string, lines int) (backend.LogsResult, error)
 	Close() error
 }
@@ -37,6 +41,11 @@ type Model struct {
 	tab           int
 	cursor        int
 	worker        int
+	detailOpen    bool
+	detailSite    string
+	detailCursor  int
+	openURL       func(string) error
+	launchCommand func(string, ...string) error
 	filtering     bool
 	filter        string
 	logs          []string
@@ -82,11 +91,29 @@ type logsMsg struct {
 type tickMsg time.Time
 type toastExpiredMsg int
 type spinnerTickMsg int
+type openSiteMsg struct {
+	host string
+	err  error
+}
+type externalActionMsg struct {
+	summary string
+	err     error
+}
+
+type detailAction struct {
+	id, section, label, value string
+}
 
 func New(python string) Model {
 	return Model{
 		python: python, width: 80, height: 24, generation: 1,
 		terminalDark: true, styles: newStyles(true, nil),
+		openURL: func(url string) error {
+			return exec.Command("xdg-open", url).Run()
+		},
+		launchCommand: func(name string, arguments ...string) error {
+			return exec.Command(name, arguments...).Run()
+		},
 	}
 }
 
@@ -159,6 +186,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.snapshot, m.loaded, m.err = msg.snapshot, true, ""
 		m.styles = newStyles(m.terminalDark, msg.snapshot.Theme)
 		m.clampCursor()
+		m.clampDetailCursor()
 	case mutationMsg:
 		if msg.generation != m.generation {
 			return m, nil
@@ -216,6 +244,23 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.spinnerFrame++
 			return m, spinnerTick(m.generation)
 		}
+	case openSiteMsg:
+		if msg.err != nil {
+			m.err = "Could not open " + msg.host + ": " + msg.err.Error()
+			return m, nil
+		}
+		m.err = ""
+		m.status = "Opened " + msg.host
+		m.toastID++
+		return m, dismissToast(m.toastID)
+	case externalActionMsg:
+		if msg.err != nil {
+			m.err = msg.summary + ": " + msg.err.Error()
+			return m, nil
+		}
+		m.err, m.status = "", msg.summary
+		m.toastID++
+		return m, dismissToast(m.toastID)
 	case logsMsg:
 		m.busy = false
 		if msg.err != nil {
@@ -236,9 +281,39 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(command, load(m.api, m.generation))
 		}
 		return m, command
+	case tea.MouseClickMsg:
+		return m.handleMouseClick(msg)
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
+	return m, nil
+}
+
+func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	if msg.Button != tea.MouseLeft || m.tab != 1 || m.detailOpen {
+		return m, nil
+	}
+	if msg.Y >= 3 && msg.Y <= 5 {
+		m.filtering = true
+		return m, nil
+	}
+	if m.filtering {
+		return m, nil
+	}
+	sites := m.filteredSites()
+	start, _ := m.siteWindow(len(sites))
+	firstRow := 8
+	visibleRow := msg.Y - firstRow
+	if visibleRow < 0 || start+visibleRow >= len(sites) {
+		return m, nil
+	}
+	m.cursor = start + visibleRow
+	nameWidth := max(7, max(40, m.width-8)-33)
+	openColumn := 31 + nameWidth
+	if msg.X >= openColumn && msg.X < openColumn+4 {
+		return m.openSelectedSite()
+	}
+	m.detailOpen, m.detailSite = true, sites[m.cursor].Name
 	return m, nil
 }
 
@@ -286,6 +361,29 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.err = ""
 		return m, nil
 	}
+	if m.detailOpen {
+		switch key {
+		case "esc", "backspace":
+			m.detailOpen = false
+		case "j", "down":
+			if m.detailCursor < len(m.detailActions())-1 {
+				m.detailCursor++
+			}
+		case "k", "up":
+			if m.detailCursor > 0 {
+				m.detailCursor--
+			}
+		case "h", "left":
+			return m.changeDetailVersion(-1)
+		case "l", "right":
+			return m.changeDetailVersion(1)
+		case "enter", " ", "space":
+			return m.activateDetailAction()
+		case "o":
+			return m.openSelectedSite()
+		}
+		return m, nil
+	}
 	if key == "r" {
 		m.status = ""
 		m.toastID++
@@ -304,15 +402,19 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "tab":
 		m.tab = (m.tab + 1) % 2
 		m.cursor = 0
+		m.detailOpen = false
 	case "shift+tab":
 		m.tab = (m.tab + 2 - 1) % 2
 		m.cursor = 0
+		m.detailOpen = false
 	case "1":
 		m.tab = 0
 		m.cursor = 0
+		m.detailOpen = false
 	case "2":
 		m.tab = 1
 		m.cursor = 0
+		m.detailOpen = false
 	case "j", "down":
 		if m.tab == 1 && m.cursor < len(m.filteredSites())-1 {
 			m.cursor++
@@ -325,21 +427,16 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.tab == 1 {
 			m.filtering = true
 		}
-	case "left", "h":
-		if m.tab == 1 {
-			m.worker = 0
-		}
-	case "right", "l":
-		if m.tab == 1 {
-			m.worker = 1
-		}
 	case " ", "space":
 		if m.tab == 0 {
 			return m.mutateDashboard()
 		}
-		return m.mutateActive()
-	case "a":
-		return m.mutateAutostart()
+	case "enter":
+		if m.tab == 1 {
+			if site, ok := m.selected(); ok {
+				m.detailOpen, m.detailSite, m.detailCursor = true, site.Name, 0
+			}
+		}
 	case "g":
 		if m.tab == 1 {
 			m.cursor = 0
@@ -348,11 +445,32 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.tab == 1 {
 			m.cursor = max(0, len(m.filteredSites())-1)
 		}
-	case "o": // Browser launching remains explicit in the desktop UI.
-	case "L", "shift+l":
-		return m.openLogs()
+	case "o":
+		return m.openSelectedSite()
 	}
 	return m, nil
+}
+
+func (m Model) openSelectedSite() (tea.Model, tea.Cmd) {
+	if m.tab != 1 || m.openURL == nil {
+		return m, nil
+	}
+	site, ok := m.selected()
+	if m.detailOpen {
+		for _, candidate := range m.snapshot.Sites.Sites {
+			if candidate.Name == m.detailSite {
+				site, ok = candidate, true
+				break
+			}
+		}
+	}
+	if !ok {
+		return m, nil
+	}
+	opener, url, host := m.openURL, site.URL, site.Host
+	return m, func() tea.Msg {
+		return openSiteMsg{host: host, err: opener(url)}
+	}
 }
 
 func (m Model) dashboardAllActive() bool {
@@ -392,6 +510,256 @@ func (m Model) selected() (backend.Site, bool) {
 		return backend.Site{}, false
 	}
 	return sites[m.cursor], true
+}
+
+func (m Model) detailSelectedSite() (backend.Site, bool) {
+	for _, site := range m.snapshot.Sites.Sites {
+		if site.Name == m.detailSite {
+			return site, true
+		}
+	}
+	return backend.Site{}, false
+}
+
+func (m Model) detailActions() []detailAction {
+	site, ok := m.detailSelectedSite()
+	if !ok {
+		return nil
+	}
+	node := "Default"
+	if site.Node != nil {
+		node = *site.Node
+	}
+	security := " HTTP"
+	if site.Secured {
+		security = " HTTPS"
+	}
+	actions := []detailAction{
+		{"security", "Details", "Security", security},
+		{"php", "Details", "PHP version", site.PHP},
+		{"node", "Details", "Node.js version", node},
+		{"url", "Details", "URL", site.URL},
+		{"path", "Details", "Path", site.Root},
+		{"terminal", "Details", "Terminal", "Open"},
+		{"zed", "Details", "Zed", "Open"},
+	}
+	if site.QueueAvailable || site.QueueConfigured {
+		actions = append(actions,
+			detailAction{"queue-active", "Workers", "Queue", workerState(site.QueueConfigured, site.QueueState)},
+			detailAction{"queue-autostart", "Workers", "Queue autostart", onOff(site.QueueAutostart)},
+			detailAction{"queue-logs", "Workers", "Queue logs", "Open"},
+		)
+	}
+	if site.ReverbAvailable || site.ReverbConfigured {
+		actions = append(actions,
+			detailAction{"reverb-active", "Workers", "Reverb", workerState(site.ReverbConfigured, site.ReverbState)},
+			detailAction{"reverb-autostart", "Workers", "Reverb autostart", onOff(site.ReverbAutostart)},
+			detailAction{"reverb-logs", "Workers", "Reverb logs", "Open"},
+		)
+	}
+	return actions
+}
+
+func workerState(configured bool, state string) string {
+	if !configured {
+		return "Available · Start"
+	}
+	if state == "active" {
+		return "Active · Stop"
+	}
+	return strings.ReplaceAll(title(state), "-", " ") + " · Start"
+}
+
+func onOff(value bool) string {
+	if value {
+		return "On"
+	}
+	return "Off"
+}
+
+func (m *Model) clampDetailCursor() {
+	last := len(m.detailActions()) - 1
+	if last < 0 {
+		m.detailCursor = 0
+	} else if m.detailCursor > last {
+		m.detailCursor = last
+	}
+}
+
+func (m Model) selectedDetailAction() (detailAction, bool) {
+	actions := m.detailActions()
+	if m.detailCursor < 0 || m.detailCursor >= len(actions) {
+		return detailAction{}, false
+	}
+	return actions[m.detailCursor], true
+}
+
+func (m Model) activateDetailAction() (tea.Model, tea.Cmd) {
+	action, ok := m.selectedDetailAction()
+	if !ok || m.busy {
+		return m, nil
+	}
+	switch action.id {
+	case "security":
+		return m.mutateSiteSecurity()
+	case "php", "node":
+		return m.changeDetailVersion(1)
+	case "url":
+		return m.openSelectedSite()
+	case "path", "terminal", "zed":
+		return m.launchDetailTool(action.id)
+	case "queue-active":
+		return m.mutateDetailWorker("queue", false)
+	case "queue-autostart":
+		return m.mutateDetailWorker("queue", true)
+	case "queue-logs":
+		return m.openDetailLogs("queue")
+	case "reverb-active":
+		return m.mutateDetailWorker("reverb", false)
+	case "reverb-autostart":
+		return m.mutateDetailWorker("reverb", true)
+	case "reverb-logs":
+		return m.openDetailLogs("reverb")
+	}
+	return m, nil
+}
+
+func (m Model) mutateSiteSecurity() (tea.Model, tea.Cmd) {
+	if m.busy || m.api == nil {
+		return m, nil
+	}
+	site, ok := m.detailSelectedSite()
+	if !ok {
+		return m, nil
+	}
+	m.busy, m.status, m.err = true, "", ""
+	m.toastID++
+	m.generation++
+	generation, api := m.generation, m.api
+	return m, func() tea.Msg {
+		result, err := api.SetSiteSecured(site.Name, !site.Secured)
+		return mutationMsg{generation, result, err}
+	}
+}
+
+func (m Model) changeDetailVersion(direction int) (tea.Model, tea.Cmd) {
+	action, ok := m.selectedDetailAction()
+	if !ok || (action.id != "php" && action.id != "node") || m.busy || m.api == nil {
+		return m, nil
+	}
+	site, ok := m.detailSelectedSite()
+	if !ok {
+		return m, nil
+	}
+	versions, current := m.snapshot.Sites.PHPVersions, site.PHP
+	if action.id == "node" {
+		versions = m.snapshot.Sites.NodeVersions
+		current = ""
+		if site.Node != nil {
+			current = *site.Node
+		}
+	}
+	if len(versions) == 0 {
+		m.err = "No installed " + strings.ToUpper(action.id) + " versions are available"
+		return m, nil
+	}
+	index := 0
+	for candidate, version := range versions {
+		if version == current {
+			index = candidate
+			break
+		}
+	}
+	index = (index + direction + len(versions)) % len(versions)
+	version := versions[index]
+	if version == current {
+		return m, nil
+	}
+	m.busy, m.status, m.err = true, "", ""
+	m.toastID++
+	m.generation++
+	generation, api := m.generation, m.api
+	return m, func() tea.Msg {
+		var result backend.OperationResult
+		var err error
+		if action.id == "php" {
+			result, err = api.SetSitePHP(site.Name, version)
+		} else {
+			result, err = api.SetSiteNode(site.Name, version)
+		}
+		return mutationMsg{generation, result, err}
+	}
+}
+
+func (m Model) mutateDetailWorker(worker string, autostart bool) (tea.Model, tea.Cmd) {
+	if m.busy || m.api == nil {
+		return m, nil
+	}
+	site, ok := m.detailSelectedSite()
+	if !ok {
+		return m, nil
+	}
+	_, available, state, enabled := m.workerFor(site, worker)
+	if !available {
+		m.err = title(worker) + " is not available for this site"
+		return m, nil
+	}
+	m.busy, m.status, m.err = true, "", ""
+	m.toastID++
+	m.generation++
+	generation, api := m.generation, m.api
+	return m, func() tea.Msg {
+		var result backend.OperationResult
+		var err error
+		if autostart {
+			result, err = api.SetAutostart(site.Name, worker, !enabled)
+		} else {
+			result, err = api.SetActive(site.Name, worker, state != "active")
+		}
+		return mutationMsg{generation, result, err}
+	}
+}
+
+func (m Model) workerFor(site backend.Site, worker string) (string, bool, string, bool) {
+	if worker == "queue" {
+		return worker, site.QueueAvailable, site.QueueState, site.QueueAutostart
+	}
+	return worker, site.ReverbAvailable, site.ReverbState, site.ReverbAutostart
+}
+
+func (m Model) openDetailLogs(worker string) (tea.Model, tea.Cmd) {
+	if m.busy || m.api == nil {
+		return m, nil
+	}
+	site, ok := m.detailSelectedSite()
+	if !ok {
+		return m, nil
+	}
+	m.busy = true
+	return m, func() tea.Msg {
+		result, err := m.api.Logs(site.Name, worker, 200)
+		return logsMsg{site.Name, worker, result.Lines, err}
+	}
+}
+
+func (m Model) launchDetailTool(tool string) (tea.Model, tea.Cmd) {
+	if m.launchCommand == nil {
+		return m, nil
+	}
+	site, ok := m.detailSelectedSite()
+	if !ok {
+		return m, nil
+	}
+	launcher := m.launchCommand
+	name, arguments, summary := "xdg-open", []string{site.Root}, "Opened project path"
+	if tool == "terminal" {
+		name, arguments, summary = "xdg-terminal-exec", []string{"--dir=" + site.Root}, "Opened terminal"
+	} else if tool == "zed" {
+		name, arguments, summary = "zeditor", []string{site.Root}, "Opened project in Zed"
+	}
+	return m, func() tea.Msg {
+		return externalActionMsg{summary: summary, err: launcher(name, arguments...)}
+	}
 }
 
 func (m Model) selectedWorker(site backend.Site) (string, bool, string, bool) {
@@ -493,6 +861,7 @@ func (m Model) filteredSites() []backend.Site {
 func (m Model) View() tea.View {
 	view := tea.NewView(m.render())
 	view.AltScreen = true
+	view.MouseMode = tea.MouseModeCellMotion
 	view.WindowTitle = "Paddock"
 	if m.snapshot.Theme != nil {
 		view.BackgroundColor = paletteColor(m.snapshot.Theme.Background, nil)
@@ -511,6 +880,8 @@ func (m Model) render() string {
 		body = m.styles.muted.Render("Connecting to the Paddock backend…")
 	} else if m.tab == 0 {
 		body = m.renderDashboard()
+	} else if m.detailOpen {
+		body = m.renderSiteDetail()
 	} else {
 		body = m.renderSites()
 	}
@@ -572,18 +943,14 @@ func (m Model) renderDashboard() string {
 		}
 		sections = append(sections, m.renderFieldset(title(group), lines))
 	}
-	if len(m.snapshot.Services.Instances) > 0 {
-		lines := []string{}
-		for _, instance := range m.snapshot.Services.Instances {
-			lines = append(lines, fmt.Sprintf("%s  %-18s %s:%d", m.stateDot(instance.State), instance.Label, instance.Type, instance.Port))
-		}
-		sections = append(sections, m.renderFieldset("Service instances", lines))
-	}
 	return control + "\n\n" + strings.Join(sections, "\n\n")
 }
 
 func (m Model) renderFieldset(name string, lines []string) string {
-	boxWidth := max(20, m.width-8)
+	return m.renderFieldsetWidth(name, lines, max(20, m.width-8))
+}
+
+func (m Model) renderFieldsetWidth(name string, lines []string, boxWidth int) string {
 	label := truncate(name, boxWidth-6)
 	topFill := max(1, boxWidth-ansi.StringWidth(label)-5)
 	top := m.styles.muted.Render("┌─ ") + m.styles.section.Render(label) +
@@ -602,48 +969,165 @@ func (m Model) renderFieldset(name string, lines []string) string {
 
 func (m Model) renderSites() string {
 	sites := m.filteredSites()
-	filter := ""
-	if m.filtering || m.filter != "" {
-		cursor := ""
-		if m.filtering {
-			cursor = "_"
-		}
-		filter = m.styles.accent.Render("Filter: ") + m.filter + cursor + "\n\n"
-	}
+	search := m.renderSiteSearch() + "\n\n"
 	if len(sites) == 0 {
-		return filter + m.styles.muted.Render("No linked sites match.")
+		return search + m.styles.muted.Render("No linked sites match.")
 	}
-	availableHeight := max(3, m.height-11)
-	start := 0
-	if m.cursor >= availableHeight {
-		start = m.cursor - availableHeight + 1
-	}
-	end := min(len(sites), start+availableHeight)
-	lines := make([]string, 0, end-start)
+	tableWidth := max(40, m.width-8)
+	nameWidth := max(7, tableWidth-33)
+	header := "  " + siteCell("Name", nameWidth) + "  " + siteCell("PHP", 5) + "  " +
+		siteCell("Node", 5) + "  " + siteCell("HTTP(S)", 9) + "  Open"
+	start, end := m.siteWindow(len(sites))
+	lines := []string{m.styles.muted.Render(truncate(header, tableWidth))}
 	for index := start; index < end; index++ {
 		site := sites[index]
 		marker := "  "
-		style := lipgloss.NewStyle()
-		if index == m.cursor {
+		selected := index == m.cursor
+		if selected {
 			marker = "› "
-			style = m.styles.selected
 		}
 		node := "—"
 		if site.Node != nil {
 			node = *site.Node
 		}
-		if m.width >= 100 {
-			workers := m.workerSummary(site)
-			line := fmt.Sprintf("%s%-20s PHP %-5s Node %-4s %-10s %s", marker, site.Host, site.PHP, node, secureLabel(site.Secured), workers)
-			lines = append(lines, style.Render(truncate(line, m.width-8)))
-		} else {
-			lines = append(lines, style.Render(fmt.Sprintf("%s%s  PHP %s · Node %s", marker, site.Host, site.PHP, node)))
-			if index == m.cursor {
-				lines = append(lines, "    "+m.workerSummary(site))
+		protocol := " HTTP"
+		if site.Secured {
+			protocol = " HTTPS"
+		}
+		open := "Open"
+		if !selected {
+			open = m.styles.accent.Underline(true).Render(open)
+		}
+		line := marker + siteCell(site.Name, nameWidth) + "  " + siteCell(site.PHP, 5) + "  " +
+			siteCell(node, 5) + "  " + siteCell(protocol, 9) + "  " + open
+		line = truncate(line, tableWidth)
+		if selected {
+			line = m.styles.selected.Width(tableWidth).Render(line)
+		}
+		lines = append(lines, line)
+	}
+	return search + strings.Join(lines, "\n")
+}
+
+func (m Model) renderSiteSearch() string {
+	boxWidth := max(40, m.width-8)
+	innerWidth := boxWidth - 4
+	value := m.filter
+	if value == "" && !m.filtering {
+		value = m.styles.muted.Render("Type / to search sites")
+	} else if m.filtering {
+		value += m.styles.accent.Render("_")
+	}
+	value = truncate(value, innerWidth)
+	padding := strings.Repeat(" ", max(0, innerWidth-ansi.StringWidth(value)))
+	topFill := max(1, boxWidth-len("Search")-5)
+	top := m.styles.muted.Render("┌─ ") + m.styles.section.Render("Search") +
+		m.styles.muted.Render(" "+strings.Repeat("─", topFill)+"┐")
+	middle := m.styles.muted.Render("│ ") + value + m.styles.muted.Render(padding+" │")
+	bottom := m.styles.muted.Render("└" + strings.Repeat("─", boxWidth-2) + "┘")
+	return strings.Join([]string{top, middle, bottom}, "\n")
+}
+
+func (m Model) siteWindow(siteCount int) (int, int) {
+	availableHeight := max(2, m.height-16)
+	start := 0
+	if m.cursor >= availableHeight {
+		start = m.cursor - availableHeight + 1
+	}
+	return start, min(siteCount, start+availableHeight)
+}
+
+func siteCell(value string, width int) string {
+	value = truncate(value, width)
+	return value + strings.Repeat(" ", max(0, width-ansi.StringWidth(value)))
+}
+
+func (m Model) renderSiteDetail() string {
+	site, ok := m.detailSelectedSite()
+	if !ok {
+		return m.styles.error.Render("This site is no longer linked.")
+	}
+	actions := m.detailActions()
+	groups := map[string][]string{"Details": {}, "Workers": {}}
+	for index, action := range actions {
+		marker := "  "
+		if index == m.detailCursor {
+			marker = "› "
+		}
+		lineWidth := max(16, m.detailBoxWidth()-4)
+		labelWidth := min(18, max(10, lineWidth/3))
+		valueWidth := max(4, lineWidth-labelWidth-4)
+		value := siteCell(action.value, valueWidth)
+		ledState := ""
+		if action.id == "queue-active" {
+			ledState = site.QueueState
+			if !site.QueueConfigured {
+				ledState = "inactive"
+			}
+		} else if action.id == "reverb-active" {
+			ledState = site.ReverbState
+			if !site.ReverbConfigured {
+				ledState = "inactive"
 			}
 		}
+		if ledState != "" {
+			value = m.stateDot(ledState) + " " + siteCell(action.value, max(1, valueWidth-2))
+		}
+		if action.id == "url" || action.id == "path" || action.id == "terminal" || action.id == "zed" || strings.HasSuffix(action.id, "-logs") {
+			value = styledDetailValue(action.value, valueWidth, m.styles.accent.Underline(true))
+		}
+		line := marker + siteCell(action.label, labelWidth) + "  " + value
+		if index == m.detailCursor {
+			// Avoid a nested link reset interrupting the selected background.
+			plainValue := siteCell(action.value, valueWidth)
+			if ledState != "" {
+				left := marker + siteCell(action.label, labelWidth) + "  "
+				right := " " + siteCell(action.value, max(1, valueWidth-2))
+				line = m.styles.selected.Render(left) +
+					m.stateStyle(ledState).Inherit(m.styles.selected).Render(stateGlyph(ledState)) +
+					m.styles.selected.Width(valueWidth-1).Render(right)
+				groups[action.section] = append(groups[action.section], line)
+				continue
+			}
+			line = marker + siteCell(action.label, labelWidth) + "  " + plainValue
+			line = m.styles.selected.Width(lineWidth).Render(line)
+		}
+		groups[action.section] = append(groups[action.section], line)
 	}
-	return filter + strings.Join(lines, "\n")
+	boxWidth := m.detailBoxWidth()
+	details := m.renderFieldsetWidth("Details", groups["Details"], boxWidth)
+	workers := ""
+	if len(groups["Workers"]) > 0 {
+		workers = m.renderFieldsetWidth("Workers", groups["Workers"], boxWidth)
+	}
+	body := details
+	if workers != "" {
+		if m.width >= 80 {
+			body = lipgloss.JoinHorizontal(lipgloss.Top, details, "  ", workers)
+		} else {
+			body += "\n\n" + workers
+		}
+	}
+	return m.styles.section.Render(site.Host) + m.styles.muted.Render("  "+site.Root) + "\n\n" + body
+}
+
+func stateGlyph(state string) string {
+	if state == "active" || state == "failed" || state == "activating" {
+		return "●"
+	}
+	return "○"
+}
+
+func styledDetailValue(value string, width int, style lipgloss.Style) string {
+	value = truncate(value, width)
+	return style.Render(value) + strings.Repeat(" ", max(0, width-ansi.StringWidth(value)))
+}
+
+func (m Model) detailBoxWidth() int {
+	if m.width >= 80 {
+		return max(32, (m.width-10)/2)
+	}
+	return max(40, m.width-8)
 }
 
 func (m Model) workerSummary(site backend.Site) string {
@@ -685,7 +1169,10 @@ func (m Model) logHeight() int { return max(3, m.height-11) }
 func (m Model) renderFooter() string {
 	help := "space start/stop all · tab/shift+tab sections · 1/2 jump · r refresh · q quit"
 	if m.tab == 1 {
-		help = "↑/↓ site · ←/→ worker · space start/stop · a autostart · L logs · / filter"
+		help = "↑/↓ select · enter details · o open · / filter · tab sections · q quit"
+		if m.detailOpen {
+			help = "↑/↓ select · enter activate · ←/→ change version · esc back · o open site"
+		}
 	}
 	rows := []string{"", m.styles.muted.Render(truncate(help, m.width-8))}
 	if m.status != "" {
@@ -707,15 +1194,19 @@ func spinnerTick(generation int) tea.Cmd {
 }
 
 func (m Model) stateDot(state string) string {
+	return m.stateStyle(state).Render(stateGlyph(state))
+}
+
+func (m Model) stateStyle(state string) lipgloss.Style {
 	switch state {
 	case "active":
-		return m.styles.good.Render("●")
+		return m.styles.good
 	case "failed":
-		return m.styles.error.Render("●")
+		return m.styles.error
 	case "activating":
-		return m.styles.warn.Render("●")
+		return m.styles.warn
 	default:
-		return m.styles.muted.Render("○")
+		return m.styles.muted
 	}
 }
 

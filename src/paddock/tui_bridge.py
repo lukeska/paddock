@@ -108,6 +108,19 @@ def dispatch(
         operation = getattr(controller, f"set_{worker}_autostart")
         return asdict(operation(site, enabled))
 
+    if method in {"site.set_php", "site.set_node"}:
+        _only(params, {"site", "version"})
+        site = _required_string(params, "site")
+        version = _required_string(params, "version")
+        operation = getattr(controller, f"set_linked_site_{method.removeprefix('site.set_')}")
+        return asdict(operation(site, version))
+
+    if method == "site.set_secured":
+        _only(params, {"site", "secured"})
+        site = _required_string(params, "site")
+        secured = _required_bool(params, "secured")
+        return asdict(controller.set_linked_site_secured(site, secured))
+
     if method == "worker.logs":
         _only(params, {"site", "worker", "lines"})
         site = _required_string(params, "site")

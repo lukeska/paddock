@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -11,16 +12,33 @@ import (
 	"github.com/lukeska/paddock/internal/backend"
 )
 
-type fakeAPI struct{ snapshot backend.Snapshot }
+type fakeAPI struct {
+	snapshot backend.Snapshot
+	calls    []string
+}
 
 func (f *fakeAPI) Snapshot() (backend.Snapshot, error) { return f.snapshot, nil }
 func (f *fakeAPI) SetDashboardActive(bool) (backend.DashboardOperationResult, error) {
 	return backend.DashboardOperationResult{}, nil
 }
-func (f *fakeAPI) SetActive(string, string, bool) (backend.OperationResult, error) {
+func (f *fakeAPI) SetActive(site, worker string, active bool) (backend.OperationResult, error) {
+	f.calls = append(f.calls, fmt.Sprintf("active:%s:%s:%t", site, worker, active))
 	return backend.OperationResult{}, nil
 }
-func (f *fakeAPI) SetAutostart(string, string, bool) (backend.OperationResult, error) {
+func (f *fakeAPI) SetAutostart(site, worker string, enabled bool) (backend.OperationResult, error) {
+	f.calls = append(f.calls, fmt.Sprintf("autostart:%s:%s:%t", site, worker, enabled))
+	return backend.OperationResult{}, nil
+}
+func (f *fakeAPI) SetSitePHP(site, version string) (backend.OperationResult, error) {
+	f.calls = append(f.calls, "php:"+site+":"+version)
+	return backend.OperationResult{}, nil
+}
+func (f *fakeAPI) SetSiteNode(site, version string) (backend.OperationResult, error) {
+	f.calls = append(f.calls, "node:"+site+":"+version)
+	return backend.OperationResult{}, nil
+}
+func (f *fakeAPI) SetSiteSecured(site string, secured bool) (backend.OperationResult, error) {
+	f.calls = append(f.calls, fmt.Sprintf("secured:%s:%t", site, secured))
 	return backend.OperationResult{}, nil
 }
 func (f *fakeAPI) Logs(string, string, int) (backend.LogsResult, error) {
@@ -62,15 +80,31 @@ func TestDashboardAndSitesRenderAtBothBreakpoints(t *testing.T) {
 	}
 	m.tab = 1
 	wide := m.render()
-	for _, expected := range []string{"linguine.test", "PHP 8.5", "Queue", "Reverb"} {
+	for _, expected := range []string{"Name", "PHP", "Node", "HTTP(S)", "linguine", "8.5", "22", "HTTPS", "Open"} {
 		if !strings.Contains(wide, expected) {
 			t.Fatalf("wide sites missing %q: %q", expected, wide)
 		}
 	}
 	m.width = 70
 	narrow := m.render()
-	if !strings.Contains(narrow, "linguine.test") || !strings.Contains(narrow, "Queue") {
+	if !strings.Contains(narrow, "linguine") || !strings.Contains(narrow, "Open") {
 		t.Fatalf("narrow site detail missing: %q", narrow)
+	}
+}
+
+func TestSelectedSiteRowCoversTheFullTableWidth(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.loaded, m.snapshot, m.tab, m.width, m.height = true, sampleSnapshot(), 1, 80, 24
+	lines := strings.Split(m.renderSites(), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("sites table has no selected row: %q", m.renderSites())
+	}
+	selected := lines[5]
+	if ansi.StringWidth(selected) != 72 {
+		t.Fatalf("selected row width = %d, want 72: %q", ansi.StringWidth(selected), ansi.Strip(selected))
+	}
+	if !strings.HasSuffix(ansi.Strip(selected), "Open") {
+		t.Fatalf("selected row does not include the complete Open cell: %q", ansi.Strip(selected))
 	}
 }
 
@@ -94,6 +128,24 @@ func TestDashboardSectionsRenderAsResponsiveFieldsets(t *testing.T) {
 	}
 	if ansi.StringWidth(top) != 62 || ansi.StringWidth(body) != 62 || ansi.StringWidth(bottom) != 62 {
 		t.Fatalf("dashboard fieldset is not responsive: %q", rendered)
+	}
+}
+
+func TestDashboardDoesNotRepeatConfiguredServiceInstances(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.loaded, m.snapshot = true, sampleSnapshot()
+	m.snapshot.Dashboard.Services = []backend.DashboardService{{
+		Key: "redis-instance", Title: "Cache", Group: "services", State: "active", Configured: true,
+	}}
+	m.snapshot.Services.Instances = []backend.ServiceInstance{{
+		ID: "redis-instance", Label: "Cache", Type: "redis", State: "active", Port: 6379,
+	}}
+	rendered := ansi.Strip(m.renderDashboard())
+	if strings.Count(rendered, "Cache") != 1 {
+		t.Fatalf("configured service was rendered more than once: %q", rendered)
+	}
+	if strings.Contains(rendered, "Service instances") {
+		t.Fatalf("redundant service instances section is still present: %q", rendered)
 	}
 }
 
@@ -159,31 +211,157 @@ func TestTabsOwnTabAndNumberKeysButNotArrows(t *testing.T) {
 	}
 }
 
-func TestHorizontalNavigationSelectsAWorkerInsideSites(t *testing.T) {
+func TestEnterOpensSiteDetailAndEscapeReturns(t *testing.T) {
 	m := NewWithAPI(&fakeAPI{})
-	m.tab, m.worker = 1, 0
-	updated, _ := m.handleKey(press(tea.KeyRight, "", 0))
+	m.tab, m.snapshot = 1, sampleSnapshot()
+	updated, _ := m.handleKey(press(tea.KeyEnter, "", 0))
 	m = updated.(Model)
-	if m.tab != 1 || m.worker != 1 {
-		t.Fatal("right did not select Reverb")
+	if !m.detailOpen || m.detailSite != "linguine" {
+		t.Fatal("enter did not open the selected site's detail view")
+	}
+	if got := ansi.Strip(m.renderSiteDetail()); !strings.HasPrefix(got, "linguine.test  /srv/linguine\n\n") {
+		t.Fatalf("unexpected site detail view: %q", got)
+	}
+	updated, _ = m.handleKey(press(tea.KeyEscape, "", 0))
+	m = updated.(Model)
+	if m.detailOpen {
+		t.Fatal("escape did not return to the sites table")
+	}
+}
+
+func TestSiteDetailMirrorsDesktopInformationAndActions(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.snapshot, m.detailOpen, m.detailSite, m.width = sampleSnapshot(), true, "linguine", 120
+	rendered := ansi.Strip(m.renderSiteDetail())
+	for _, expected := range []string{
+		"Details", "Security", "HTTPS", "PHP version", "8.5", "Node.js version", "22",
+		"URL", "https://linguine.test", "Path", "/srv/linguine", "Terminal", "Zed",
+		"Workers", "Queue", "● Active · Stop", "Queue autostart", "Queue logs",
+		"Reverb", "○ Inactive · Start", "Reverb autostart", "Reverb logs",
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("site detail missing %q: %q", expected, rendered)
+		}
+	}
+}
+
+func TestDetailLinkUnderlineDoesNotCoverCellPadding(t *testing.T) {
+	styled := styledDetailValue("Open", 12, newStyles(true, nil).accent.Underline(true))
+	if !strings.HasSuffix(styled, "        ") {
+		t.Fatalf("detail link padding is still inside its ANSI style: %q", styled)
+	}
+	if ansi.StringWidth(styled) != 12 {
+		t.Fatalf("detail link cell width = %d, want 12", ansi.StringWidth(styled))
+	}
+}
+
+func TestSiteDetailFitsANormalTerminal(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.loaded, m.snapshot, m.tab = true, sampleSnapshot(), 1
+	m.detailOpen, m.detailSite, m.width, m.height = true, "linguine", 80, 24
+	if lines := strings.Count(m.render(), "\n") + 1; lines > m.height {
+		t.Fatalf("site detail uses %d lines in a %d-line terminal", lines, m.height)
+	}
+}
+
+func TestSiteDetailActionsUseControllerAndDesktopLaunchCommands(t *testing.T) {
+	api := &fakeAPI{}
+	m := NewWithAPI(api)
+	m.snapshot, m.detailOpen, m.detailSite = sampleSnapshot(), true, "linguine"
+	m.snapshot.Sites.PHPVersions = []string{"8.4", "8.5"}
+	m.detailCursor = 0
+	_, command := m.activateDetailAction()
+	command()
+	if len(api.calls) != 1 || api.calls[0] != "secured:linguine:false" {
+		t.Fatalf("security action calls = %v", api.calls)
 	}
 
-	updated, _ = m.handleKey(press(tea.KeyLeft, "", 0))
-	m = updated.(Model)
-	if m.tab != 1 || m.worker != 0 {
-		t.Fatal("left did not select Queue")
+	m.busy, m.detailCursor = false, 1
+	_, command = m.changeDetailVersion(-1)
+	command()
+	if api.calls[len(api.calls)-1] != "php:linguine:8.4" {
+		t.Fatalf("PHP action calls = %v", api.calls)
 	}
 
-	updated, _ = m.handleKey(press('l', "l", 0))
-	m = updated.(Model)
-	if m.worker != 1 {
-		t.Fatal("l did not select Reverb")
+	m.busy, m.detailCursor = false, 7
+	_, command = m.activateDetailAction()
+	command()
+	if api.calls[len(api.calls)-1] != "active:linguine:queue:false" {
+		t.Fatalf("queue action calls = %v", api.calls)
 	}
 
-	updated, _ = m.handleKey(press('h', "h", 0))
+	m.busy, m.detailCursor = false, 5
+	launched := ""
+	m.launchCommand = func(name string, arguments ...string) error {
+		launched = name + " " + strings.Join(arguments, " ")
+		return nil
+	}
+	_, command = m.activateDetailAction()
+	command()
+	if launched != "xdg-terminal-exec --dir=/srv/linguine" {
+		t.Fatalf("terminal action launched %q", launched)
+	}
+}
+
+func TestOpenUsesTheSelectedSitesURL(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.tab, m.snapshot = 1, sampleSnapshot()
+	opened := ""
+	m.openURL = func(url string) error {
+		opened = url
+		return nil
+	}
+	_, command := m.handleKey(press('o', "o", 0))
+	if command == nil {
+		t.Fatal("o did not create a browser-open command")
+	}
+	message := command()
+	if opened != "https://linguine.test" {
+		t.Fatalf("opened %q instead of the selected site's URL", opened)
+	}
+	if result, ok := message.(openSiteMsg); !ok || result.err != nil {
+		t.Fatalf("unexpected browser-open result: %#v", message)
+	}
+}
+
+func TestMouseClickOpensRowOrItsOpenLink(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.tab, m.snapshot, m.width, m.height = 1, sampleSnapshot(), 80, 24
+	updated, _ := m.handleMouseClick(tea.MouseClickMsg{
+		X: 4, Y: 8, Button: tea.MouseLeft,
+	})
 	m = updated.(Model)
-	if m.worker != 0 {
-		t.Fatal("h did not select Queue")
+	if !m.detailOpen || m.detailSite != "linguine" {
+		t.Fatal("clicking a site row did not open its detail view")
+	}
+
+	m.detailOpen = false
+	opened := ""
+	m.openURL = func(url string) error { opened = url; return nil }
+	nameWidth := max(7, max(40, m.width-8)-33)
+	updated, command := m.handleMouseClick(tea.MouseClickMsg{
+		X: 31 + nameWidth, Y: 8, Button: tea.MouseLeft,
+	})
+	_ = updated
+	if command == nil {
+		t.Fatal("clicking Open did not create a browser command")
+	}
+	command()
+	if opened != "https://linguine.test" {
+		t.Fatalf("Open link launched %q", opened)
+	}
+}
+
+func TestSitesAlwaysShowASearchBox(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.loaded, m.snapshot, m.tab, m.width = true, sampleSnapshot(), 1, 80
+	rendered := ansi.Strip(m.renderSites())
+	if !strings.Contains(rendered, "┌─ Search ") || !strings.Contains(rendered, "Type / to search sites") {
+		t.Fatalf("persistent search box is missing: %q", rendered)
+	}
+	updated, _ := m.handleMouseClick(tea.MouseClickMsg{X: 5, Y: 4, Button: tea.MouseLeft})
+	if !updated.(Model).filtering {
+		t.Fatal("clicking the search box did not focus it")
 	}
 }
 
@@ -192,7 +370,7 @@ func TestToastHasItsOwnRowAndExpiresWithoutClearingANewerToast(t *testing.T) {
 	m.tab, m.status, m.toastID = 1, "Stopped queue worker", 4
 	footer := ansi.Strip(m.renderFooter())
 	lines := strings.Split(footer, "\n")
-	if len(lines) < 3 || !strings.Contains(lines[1], "space start/stop") {
+	if len(lines) < 3 || !strings.Contains(lines[1], "enter details") {
 		t.Fatalf("instructions do not have their own row: %q", footer)
 	}
 	if !strings.Contains(lines[2], "Stopped queue worker") {

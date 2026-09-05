@@ -139,6 +139,30 @@ func (c *Client) SetAutostart(site, worker string, enabled bool) (OperationResul
 	return result, err
 }
 
+func (c *Client) SetSitePHP(site, version string) (OperationResult, error) {
+	var result OperationResult
+	err := c.call("site.set_php", map[string]interface{}{
+		"site": site, "version": version,
+	}, &result)
+	return result, err
+}
+
+func (c *Client) SetSiteNode(site, version string) (OperationResult, error) {
+	var result OperationResult
+	err := c.call("site.set_node", map[string]interface{}{
+		"site": site, "version": version,
+	}, &result)
+	return result, err
+}
+
+func (c *Client) SetSiteSecured(site string, secured bool) (OperationResult, error) {
+	var result OperationResult
+	err := c.call("site.set_secured", map[string]interface{}{
+		"site": site, "secured": secured,
+	}, &result)
+	return result, err
+}
+
 func (c *Client) Logs(site, worker string, lines int) (LogsResult, error) {
 	var result LogsResult
 	err := c.call("worker.logs", map[string]interface{}{
