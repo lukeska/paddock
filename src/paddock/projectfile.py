@@ -391,4 +391,7 @@ class Reconciler:
         return steps
 
 
-CATALOG_LABELS = {"redis": "Redis", "mysql": "MySQL", "postgres": "PostgreSQL"}
+CATALOG_LABELS = {
+    "redis": "Redis", "mysql": "MySQL", "postgres": "PostgreSQL",
+    "mailpit": "Mailpit",
+}

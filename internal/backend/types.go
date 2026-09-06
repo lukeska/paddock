@@ -66,16 +66,18 @@ type ServiceLogsResult struct {
 }
 
 type ServiceInstance struct {
-	ID         string   `json:"id"`
-	Type       string   `json:"type"`
-	Label      string   `json:"label"`
-	Image      string   `json:"image"`
-	Version    string   `json:"version"`
-	Port       int      `json:"port"`
-	Volume     string   `json:"volume"`
-	State      string   `json:"state"`
-	Autostart  bool     `json:"autostart"`
-	Connection []string `json:"connection"`
+	ID           string   `json:"id"`
+	Type         string   `json:"type"`
+	Label        string   `json:"label"`
+	Image        string   `json:"image"`
+	Version      string   `json:"version"`
+	Port         int      `json:"port"`
+	Volume       string   `json:"volume"`
+	State        string   `json:"state"`
+	Autostart    bool     `json:"autostart"`
+	Connection   []string `json:"connection"`
+	Addresses    []string `json:"addresses"`
+	DashboardURL *string  `json:"dashboard_url"`
 }
 
 type LinkedSitesSnapshot struct {

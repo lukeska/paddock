@@ -18,7 +18,7 @@ import subprocess
 from typing import Callable
 
 from .atomic import atomic_write, exclusive_lock
-from .services import CATALOG, ENGINE, READY_TIMEOUT, ServiceError
+from .services import CATALOG, ENGINE, READY_TIMEOUT, ServiceError, mapped_ports
 from .state import StateStore
 
 
@@ -222,9 +222,23 @@ class ServiceInstanceManager:
     def connection_lines(self, instance_id: str) -> tuple[str, ...]:
         instance = self.require(instance_id)
         return tuple(
-            f"{key}={instance.port if key in {'REDIS_PORT', 'DB_PORT'} else value}"
+            f"{key}={instance.port if key in {'REDIS_PORT', 'DB_PORT', 'MAIL_PORT'} else value}"
             for key, value in CATALOG[instance.type].connection
         )
+
+    def ports(self, instance_id: str) -> tuple[tuple[int, int], ...]:
+        instance = self.require(instance_id)
+        return mapped_ports(CATALOG[instance.type], instance.port)
+
+    def dashboard_url(self, instance_id: str) -> str | None:
+        instance = self.require(instance_id)
+        catalog = CATALOG[instance.type]
+        if catalog.dashboard_port is None:
+            return None
+        for host, container in mapped_ports(catalog, instance.port):
+            if container == catalog.dashboard_port:
+                return f"http://127.0.0.1:{host}"
+        return None
 
     def states_of(self, instances: list[ServiceInstance]) -> dict[str, str]:
         return self._unit_states("is-active", instances)
@@ -265,10 +279,11 @@ class ServiceInstanceManager:
             document["instances"].pop(instance_id, None)
             self._write(document)
         (self.unit_directory / instance.unit).unlink(missing_ok=True)
-        self.runner(
-            [ENGINE, "volume", "rm", "--force", instance.volume],
-            text=True, capture_output=True, check=False,
-        )
+        if CATALOG[instance.type].data:
+            self.runner(
+                [ENGINE, "volume", "rm", "--force", instance.volume],
+                text=True, capture_output=True, check=False,
+            )
         self._reload()
         return instance
 
@@ -280,6 +295,13 @@ class ServiceInstanceManager:
         env_flags = "".join(
             f" --env {key}={value}" for key, value in catalog.environment
         )
+        port_flags = "".join(
+            f" --publish 127.0.0.1:{host}:{container}"
+            for host, container in mapped_ports(catalog, instance.port)
+        )
+        volume_flag = (
+            f" --volume {instance.volume}:{catalog.data}" if catalog.data else ""
+        )
         unit = (
             "[Unit]\n"
             f"Description=Paddock {instance.label}\n\n"
@@ -287,8 +309,7 @@ class ServiceInstanceManager:
             + environment
             + f"ExecStart=/usr/bin/{ENGINE} run --replace --rm --sdnotify=conmon"
             f" --name {instance.container}"
-            f" --publish 127.0.0.1:{instance.port}:{catalog.container_port}"
-            f" --volume {instance.volume}:{catalog.data}{env_flags}"
+            f"{port_flags}{volume_flag}{env_flags}"
             f" --pull missing -- {instance.image}\n"
             + (
                 f"ExecStartPost=/usr/bin/timeout {READY_TIMEOUT} /bin/sh -c"
@@ -307,7 +328,11 @@ class ServiceInstanceManager:
     def _select_port(
         self, type: str, requested: int | None, existing: list[ServiceInstance]
     ) -> int:
-        used = {instance.port for instance in existing}
+        used = {
+            host
+            for instance in existing
+            for host, _container in mapped_ports(CATALOG[instance.type], instance.port)
+        }
         if requested is not None:
             candidates = [requested]
         else:
@@ -315,7 +340,13 @@ class ServiceInstanceManager:
         for candidate in candidates:
             if not 1024 <= candidate <= 65535:
                 break
-            if candidate not in used and self.port_available("127.0.0.1", candidate):
+            ports = mapped_ports(CATALOG[type], candidate)
+            if all(
+                1024 <= host <= 65535
+                and host not in used
+                and self.port_available("127.0.0.1", host)
+                for host, _container in ports
+            ):
                 return candidate
             if requested is not None:
                 break

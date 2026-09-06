@@ -90,6 +90,7 @@ func sampleSnapshot() backend.Snapshot {
 			ID: "redis-a1", Type: "redis", Label: "Cache", Image: "docker.io/library/redis:8.10.1",
 			Version: "8.10.1", Port: 6379, Volume: "paddock-redis-a1", State: "active", Autostart: true,
 			Connection: []string{"REDIS_HOST=127.0.0.1", "REDIS_PORT=6379"},
+			Addresses:  []string{"127.0.0.1:6379 → 6379"},
 		}}},
 		Sites: backend.LinkedSitesSnapshot{Sites: []backend.Site{{
 			Name: "linguine", Host: "linguine.test", URL: "https://linguine.test",
@@ -266,6 +267,34 @@ func TestAddServiceFormSelectsTypeAndValidatesPort(t *testing.T) {
 	updated, command = m.saveServiceForm()
 	if command != nil || !strings.Contains(updated.(Model).err, "1024") {
 		t.Fatal("privileged port was accepted")
+	}
+}
+
+func TestMailpitServiceOffersItsDashboard(t *testing.T) {
+	api := &fakeAPI{}
+	m := NewWithAPI(api)
+	url := "http://127.0.0.1:8025"
+	m.snapshot = sampleSnapshot()
+	m.snapshot.Services.Instances[0].Type = "mailpit"
+	m.snapshot.Services.Instances[0].Label = "Mailpit"
+	m.snapshot.Services.Instances[0].Addresses = []string{"127.0.0.1:1025 → 1025", "127.0.0.1:8025 → 8025"}
+	m.snapshot.Services.Instances[0].DashboardURL = &url
+	m.serviceDetail, m.serviceID = true, "redis-a1"
+	opened := ""
+	m.openURL = func(value string) error { opened = value; return nil }
+	for index, action := range m.serviceActions() {
+		if action.id == "service-dashboard" {
+			m.serviceAction = index
+			break
+		}
+	}
+	_, command := m.activateServiceAction()
+	if command == nil {
+		t.Fatal("Mailpit dashboard action is missing")
+	}
+	command()
+	if opened != url {
+		t.Fatalf("opened %q, want %q", opened, url)
 	}
 }
 

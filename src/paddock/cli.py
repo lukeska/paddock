@@ -270,7 +270,7 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
     service = command(
         "service",
         "Configure and control a supporting service.",
-        epilog="Supported services: mysql, postgres, redis. Removing an instance "
+        epilog="Supported services: mailpit, mysql, postgres, redis. Removing an instance "
                "also permanently removes its data. Pin a different "
                "version with --image, e.g. --image docker.io/library/postgres:16.",
     )
@@ -490,6 +490,7 @@ def run(argv: list[str] | None = None) -> int:
             kind = arguments.target
             label = arguments.label or {
                 "redis": "Redis", "mysql": "MySQL", "postgres": "PostgreSQL",
+                "mailpit": "Mailpit",
             }.get(kind, kind)
             service = instances.create(
                 kind, label, arguments.port, image=arguments.image
@@ -506,6 +507,9 @@ def run(argv: list[str] | None = None) -> int:
                 print("\nAdd to your .env:")
                 for line in settings:
                     print(f"  {line}")
+            dashboard = instances.dashboard_url(service.id)
+            if dashboard:
+                print(f"\nDashboard: {dashboard}")
             return 0
         if arguments.action == "logs":
             for line in instances.logs(arguments.target):

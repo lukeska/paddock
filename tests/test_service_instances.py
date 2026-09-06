@@ -77,6 +77,27 @@ class ServiceInstanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ServiceError, "port unavailable"):
             self.manager.create("mysql", "Database", 6380)
 
+    def test_mailpit_reserves_both_smtp_and_dashboard_ports(self) -> None:
+        mailpit = self.manager.create("mailpit", "Mail")
+        self.assertEqual(((1025, 1025), (8025, 8025)), self.manager.ports(mailpit.id))
+        self.assertEqual("http://127.0.0.1:8025", self.manager.dashboard_url(mailpit.id))
+        unit = (self.manager.unit_directory / mailpit.unit).read_text(encoding="utf-8")
+        self.assertIn("--publish 127.0.0.1:1025:1025", unit)
+        self.assertIn("--publish 127.0.0.1:8025:8025", unit)
+        self.assertEqual(
+            (
+                "MAIL_MAILER=smtp", "MAIL_HOST=127.0.0.1", "MAIL_PORT=1025",
+                "MAIL_USERNAME=null", "MAIL_PASSWORD=null", "MAIL_ENCRYPTION=null",
+            ),
+            self.manager.connection_lines(mailpit.id),
+        )
+
+    def test_second_mailpit_moves_both_ports_together(self) -> None:
+        first = self.manager.create("mailpit", "Mail One")
+        second = self.manager.create("mailpit", "Mail Two")
+        self.assertEqual(((1025, 1025), (8025, 8025)), self.manager.ports(first.id))
+        self.assertEqual(((1026, 1025), (8026, 8025)), self.manager.ports(second.id))
+
     def test_an_unchanged_active_port_can_be_saved(self) -> None:
         instance = self.manager.create("redis", "Cache", 6379)
         unavailable = ServiceInstanceManager(

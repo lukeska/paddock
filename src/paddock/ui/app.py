@@ -420,8 +420,10 @@ class PaddockWindow(Adw.ApplicationWindow):
 
         self.service_cache_section = PaddockSection("Cache")
         self.service_database_section = PaddockSection("Databases")
+        self.service_mail_section = PaddockSection("Mail")
         content.append(self.service_cache_section)
         content.append(self.service_database_section)
+        content.append(self.service_mail_section)
 
         self.service_catalog_rows: dict[str, PaddockServiceRow] = {}
         self.service_toggle_buttons: dict[str, Gtk.Button] = {}
@@ -532,9 +534,16 @@ class PaddockWindow(Adw.ApplicationWindow):
         logs.add(log_row)
         content.append(logs)
         self.service_open_logs = Gtk.Button(label="Open Logs")
-        self.service_open_logs.set_halign(Gtk.Align.END)
         self.service_open_logs.connect("clicked", self._open_selected_service_logs)
-        content.append(self.service_open_logs)
+        service_actions = Gtk.Box(spacing=6, halign=Gtk.Align.END)
+        self.service_open_dashboard = Gtk.Button(label="Open Dashboard")
+        self.service_open_dashboard.connect(
+            "clicked", self._open_selected_service_dashboard
+        )
+        self.service_open_dashboard.set_visible(False)
+        service_actions.append(self.service_open_dashboard)
+        service_actions.append(self.service_open_logs)
+        content.append(service_actions)
         sidebar.append(content)
         return sidebar
 
@@ -645,6 +654,14 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.service_info_title.set_label(service.label)
         self.service_info_env.set_label("\n".join(service.connection))
         self.service_open_logs.set_sensitive(not self.mutation_busy)
+        self.service_open_dashboard.set_visible(service.dashboard_url is not None)
+        self.service_open_dashboard.set_sensitive(not self.mutation_busy)
+
+    def _open_selected_service_dashboard(self, _button=None) -> None:
+        key = getattr(self, "selected_service_key", None)
+        service = self._service_instance(key) if key else None
+        if service is not None and service.dashboard_url:
+            Gio.AppInfo.launch_default_for_uri(service.dashboard_url, None)
 
     def _load_service_log_preview(self, key: str) -> None:
         self.service_log_preview.get_buffer().set_text("Loading recent logs…")
@@ -755,9 +772,9 @@ class PaddockWindow(Adw.ApplicationWindow):
     def _open_add_service(self, _button=None) -> None:
         if self.mutation_busy:
             return
-        kinds = ("redis", "mysql", "postgres")
-        labels = ("Redis", "MySQL", "PostgreSQL")
-        ports = (6379, 3306, 5432)
+        kinds = ("redis", "mysql", "postgres", "mailpit")
+        labels = ("Redis", "MySQL", "PostgreSQL", "Mailpit")
+        ports = (6379, 3306, 5432, 1025)
         dialog = Adw.AlertDialog(
             heading="Add Service",
             body="Create an independent service instance with its own port and data volume.",
@@ -1072,12 +1089,13 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.service_instances_snapshot = snapshot
         self.service_cache_section.clear()
         self.service_database_section.clear()
+        self.service_mail_section.clear()
         self.service_catalog_rows.clear()
         self.service_toggle_buttons.clear()
         for service in snapshot.instances:
-            section = (
-                self.service_cache_section
-                if service.type == "redis" else self.service_database_section
+            section = self.service_mail_section if service.type == "mailpit" else (
+                self.service_cache_section if service.type == "redis"
+                else self.service_database_section
             )
             row = PaddockServiceRow(
                 service.label,
@@ -1110,8 +1128,10 @@ class PaddockWindow(Adw.ApplicationWindow):
                     self.instance_autostart_check.set_active(service.autostart)
         if not any(item.type == "redis" for item in snapshot.instances):
             self.service_cache_section.add(Adw.ActionRow(title="No cache services added"))
-        if not any(item.type != "redis" for item in snapshot.instances):
+        if not any(item.type in {"mysql", "postgres"} for item in snapshot.instances):
             self.service_database_section.add(Adw.ActionRow(title="No databases added"))
+        if not any(item.type == "mailpit" for item in snapshot.instances):
+            self.service_mail_section.add(Adw.ActionRow(title="No mail services added"))
         self._update_action_sensitivity()
 
     def _show_linked_sites(self, snapshot: LinkedSitesSnapshot) -> None:

@@ -643,12 +643,24 @@ func (m Model) activateServiceAction() (tea.Model, tea.Cmd) {
 		return m.saveServiceForm()
 	case "service-logs":
 		return m.openServiceLogs(service)
+	case "service-dashboard":
+		return m.openServiceDashboard(service)
 	case "service-edit":
 		m.beginEditService(service)
 	case "service-remove":
 		m.serviceConfirm = true
 	}
 	return m, nil
+}
+
+func (m Model) openServiceDashboard(service backend.ServiceInstance) (tea.Model, tea.Cmd) {
+	if m.openURL == nil || service.DashboardURL == nil {
+		return m, nil
+	}
+	opener, url, label := m.openURL, *service.DashboardURL, service.Label
+	return m, func() tea.Msg {
+		return externalActionMsg{summary: "Opened " + label + " dashboard", err: opener(url)}
+	}
 }
 
 func (m Model) mutateServiceActive(service backend.ServiceInstance) (tea.Model, tea.Cmd) {
@@ -1346,6 +1358,7 @@ var serviceKinds = []struct{ kind, label, port string }{
 	{"redis", "Redis", "6379"},
 	{"mysql", "MySQL", "3306"},
 	{"postgres", "PostgreSQL", "5432"},
+	{"mailpit", "Mailpit", "1025"},
 }
 
 func (m Model) selectedService() (backend.ServiceInstance, bool) {
@@ -1377,7 +1390,7 @@ func (m Model) renderServices() string {
 	services := m.snapshot.Services.Instances
 	if len(services) == 0 {
 		return m.styles.section.Render("Services") + "  " + m.styles.worker.Render("[ Add Service ]") +
-			"\n\n" + m.styles.muted.Render("No cache or database services have been added.")
+			"\n\n" + m.styles.muted.Render("No supporting services have been added.")
 	}
 	tableWidth := max(40, m.width-8)
 	nameWidth := max(10, tableWidth-44)
@@ -1410,10 +1423,10 @@ func (m Model) serviceActions() []detailAction {
 	if service.State == "active" {
 		stateAction = "Stop"
 	}
-	return []detailAction{
+	actions := []detailAction{
 		{"service-active", "Status", "State", title(service.State) + " · " + stateAction},
 		{"service-autostart", "Status", "Start automatically", onOff(service.Autostart)},
-		{"service-port", "Configuration", "Address", fmt.Sprintf("127.0.0.1:%d", service.Port)},
+		{"service-port", "Configuration", "Addresses", strings.Join(service.Addresses, "  ")},
 		{"service-image", "Configuration", "Image", service.Image},
 		{"service-volume", "Configuration", "Data volume", service.Volume},
 		{"service-env", "Connection", "Environment", strings.Join(service.Connection, "  ")},
@@ -1421,6 +1434,13 @@ func (m Model) serviceActions() []detailAction {
 		{"service-edit", "Manage", "Settings", "Edit"},
 		{"service-remove", "Danger zone", "Remove service", "Delete data…"},
 	}
+	if service.DashboardURL != nil {
+		actions = append(actions[:7], append(
+			[]detailAction{{"service-dashboard", "Manage", "Dashboard", "Open"}},
+			actions[7:]...,
+		)...)
+	}
+	return actions
 }
 
 func (m Model) renderServiceDetail() string {

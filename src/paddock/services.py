@@ -55,8 +55,14 @@ class Catalog:
     image: str
     port: int
     container_port: int
-    data: str
+    data: str | None
     volume: str
+    # Additional host ports move with the primary port. The integer is the
+    # offset from the selected primary host port, followed by the container
+    # port. Mailpit therefore maps 1025:1025 and 8025:8025, while a second
+    # instance naturally receives 1026 and 8026.
+    additional_ports: tuple[tuple[int, int], ...] = ()
+    dashboard_port: int | None = None
     # Container environment. Held here rather than in state on purpose: these
     # are facts about an image, not user preferences, and a user-writable
     # environment would be a way to reconfigure a container by editing JSON.
@@ -129,7 +135,30 @@ CATALOG: dict[str, Catalog] = {
         # Same reasoning as MySQL: initdb's temporary server is socket-only.
         ready=("pg_isready", "-h", "127.0.0.1", "-U", "postgres"),
     ),
+    "mailpit": Catalog(
+        image="docker.io/axllent/mailpit:v1.31.1",
+        port=1025,
+        container_port=1025,
+        data="/data",
+        volume="paddock-mailpit",
+        additional_ports=((7000, 8025),),
+        dashboard_port=8025,
+        environment=(("MP_DATABASE", "/data/mailpit.db"),),
+        connection=(
+            ("MAIL_MAILER", "smtp"), ("MAIL_HOST", "127.0.0.1"),
+            ("MAIL_PORT", "1025"), ("MAIL_USERNAME", "null"),
+            ("MAIL_PASSWORD", "null"), ("MAIL_ENCRYPTION", "null"),
+        ),
+        ready=("/mailpit", "readyz"),
+    ),
 }
+
+
+def mapped_ports(catalog: Catalog, primary: int) -> tuple[tuple[int, int], ...]:
+    return ((primary, catalog.container_port),) + tuple(
+        (primary + offset, container)
+        for offset, container in catalog.additional_ports
+    )
 
 
 @dataclass(frozen=True)
@@ -245,6 +274,11 @@ class ServiceManager:
             f"Environment={key}={value}\n" for key, value in catalog.environment
         )
         env_flags = "".join(f" --env {key}={value}" for key, value in catalog.environment)
+        port_flags = "".join(
+            f" --publish 127.0.0.1:{host}:{container}"
+            for host, container in mapped_ports(catalog, service.port)
+        )
+        volume_flag = f" --volume {service.volume}:{catalog.data}" if catalog.data else ""
         return (
             "[Unit]\n"
             f"Description=Paddock {service.name}\n"
@@ -255,8 +289,7 @@ class ServiceManager:
             + environment +
             f"ExecStart=/usr/bin/{ENGINE} run --replace --rm --sdnotify=conmon"
             f" --name {service.container}"
-            f" --publish 127.0.0.1:{service.port}:{catalog.container_port}"
-            f" --volume {service.volume}:{catalog.data}"
+            f"{port_flags}{volume_flag}"
             f"{env_flags}"
             f" --pull missing -- {service.image}\n"
             + (

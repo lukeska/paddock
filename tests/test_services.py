@@ -66,7 +66,7 @@ class ServiceManagerTests(ServiceFixture, unittest.TestCase):
             self.assertIn(":", entry.image.rsplit("/", 1)[-1], name)
 
     def test_the_catalog_covers_the_documented_services(self) -> None:
-        self.assertEqual({"mysql", "postgres", "redis"}, set(CATALOG))
+        self.assertEqual({"mailpit", "mysql", "postgres", "redis"}, set(CATALOG))
 
     def test_every_database_declares_how_to_connect_to_it(self) -> None:
         # A database nobody can reach is not a feature.
@@ -230,11 +230,19 @@ class DatabaseUnitTests(ServiceFixture, unittest.TestCase):
         # A database is not usable when the container starts: it initialises a
         # data directory first. Without this, `start && artisan migrate` fails.
         for name, probe in (
-            ("mysql", "mysqladmin"), ("postgres", "pg_isready"), ("redis", "redis-cli"),
+            ("mailpit", "readyz"), ("mysql", "mysqladmin"),
+            ("postgres", "pg_isready"), ("redis", "redis-cli"),
         ):
             unit = self.render(name)
             self.assertIn("ExecStartPost=", unit, name)
             self.assertIn(probe, unit, name)
+
+    def test_mailpit_publishes_smtp_and_dashboard_on_loopback(self) -> None:
+        unit = self.render("mailpit")
+        self.assertIn("--publish 127.0.0.1:1025:1025", unit)
+        self.assertIn("--publish 127.0.0.1:8025:8025", unit)
+        self.assertIn("--volume paddock-mailpit:/data", unit)
+        self.assertIn("--env MP_DATABASE=/data/mailpit.db", unit)
 
     def test_the_probe_runs_inside_the_container(self) -> None:
         # Connecting to the published port from the host proves nothing:

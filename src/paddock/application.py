@@ -70,7 +70,7 @@ def service_image_version(image: str) -> str:
     return leaf.rsplit(":", 1)[-1]
 
 
-SERVICE_VERSION_PARTS = {"redis": 3, "mysql": 3, "postgres": 2}
+SERVICE_VERSION_PARTS = {"redis": 3, "mysql": 3, "postgres": 2, "mailpit": 3}
 
 
 @dataclass(frozen=True)
@@ -198,6 +198,8 @@ class ServiceInstanceView:
     state: str
     autostart: bool
     connection: tuple[str, ...]
+    addresses: tuple[str, ...]
+    dashboard_url: str | None
 
     @property
     def active(self) -> bool:
@@ -432,6 +434,11 @@ class PaddockController:
                 states.get(instance.id, "unknown"),
                 enabled.get(instance.id) == "enabled",
                 self.instances.connection_lines(instance.id),
+                tuple(
+                    f"127.0.0.1:{host} → {container}"
+                    for host, container in self.instances.ports(instance.id)
+                ),
+                self.instances.dashboard_url(instance.id),
             )
             for instance in instances
         ))
@@ -1116,7 +1123,10 @@ class PaddockController:
                 self.dashboard_snapshot(),
             )
 
-        title = {"mysql": "MySQL", "postgres": "PostgreSQL", "redis": "Redis"}[name]
+        title = {
+            "mysql": "MySQL", "postgres": "PostgreSQL", "redis": "Redis",
+            "mailpit": "Mailpit",
+        }[name]
         return DashboardOperationResult(
             True,
             f"{'Started' if active else 'Stopped'} {title}",
