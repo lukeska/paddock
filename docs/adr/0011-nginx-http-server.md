@@ -1,6 +1,6 @@
 # ADR 0011: nginx as the HTTP Server
 
-- Status: accepted for implementation
+- Status: accepted; implemented and verified against a live installation
 - Date: 2026-09-05
 - Supersedes: [ADR 0003](0003-http-server.md)
 - Amends: [ADR 0002](0002-local-tls.md), TLS serving clauses only
