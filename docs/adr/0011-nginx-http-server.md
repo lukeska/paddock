@@ -168,7 +168,24 @@ Experiment 0.5's bar, reproduced for nginx, plus the cases Caddy never had to
 answer and the ones the later phases added. 35 checks against real nginx, in
 [`experiments/nginx`](../../experiments/nginx/README.md).
 
-Still outstanding on an installed machine, and owned by
-[`tests/acceptance/run.sh`](../../tests/acceptance/run.sh): the systemd unit,
-the capability boundary, `check-ports`, a real PHP-FPM upstream, and a reload
-under sustained load.
+[`tests/acceptance/run.sh`](../../tests/acceptance/run.sh) now covers the rest
+against a live installation, and has been run against one:
+
+- The unit runs as the desktop user with `AmbientCapabilities` and
+  `CapabilityBoundingSet` both exactly `cap_net_bind_service`, `Type=simple`,
+  and two `ExecReload` commands with `nginx -t` first.
+- TCP 80, TCP 443 and UDP 443 bound on loopback, and nothing answering for
+  those ports on any other address.
+- Every writable path in the promoted tree — pid, error log, lock file and all
+  five temporary paths — inside Paddock state. This is the check that would
+  have caught what setup failed on.
+- `reuseport` exactly once, on the catch-all.
+- A real PHP-FPM upstream: PHP 8.5.8 served through the generated FastCGI
+  parameters, with the sandbox denials from ADR 0005 intact.
+- **Reload under sustained load: 477 requests across 3 validated reloads with
+  zero failures, and the promoted generation advancing each time.** This was
+  the claim this record still owed.
+
+One item from the original list has no automated evidence: `check-ports`
+refusing to start against an occupied port. Reproducing it means occupying
+port 80 on a live machine, so it stays a manual check.

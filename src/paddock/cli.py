@@ -208,9 +208,12 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
         "Show or edit a site's own nginx directives, and trust the ones a "
         "project ships.",
     )
+    # No `choices` here: showing is the default action, so `paddock config
+    # my-app` is the form people reach for, and argparse would reject the site
+    # name as an invalid action. The pair is disambiguated when it is read.
     configure.add_argument(
-        "action", nargs="?", default="show",
-        choices=("show", "edit", "trust", "revoke"),
+        "action", nargs="?", default="show", metavar="ACTION",
+        help=f"one of {', '.join(sorted(CONFIG_ACTIONS))}; shows by default",
     )
     configure.add_argument(
         "name", nargs="?",
@@ -633,26 +636,49 @@ def run(argv: list[str] | None = None) -> int:
     return 0
 
 
+CONFIG_ACTIONS = frozenset({"show", "edit", "trust", "revoke"})
+
+
+def config_target(action: str, name: str | None) -> tuple[str, str | None]:
+    """Resolve the two optional positionals `paddock config` takes.
+
+    Showing is the default action, so a single argument is far more likely to
+    be a site than a mistyped action. A site named after an action would need
+    `paddock config show trust`, which is a fair price for `paddock config
+    my-app` working the way it reads.
+    """
+    if action in CONFIG_ACTIONS:
+        return action, name
+    if name is not None:
+        raise SiteError(
+            f"unknown config action '{action}'; expected one of "
+            f"{', '.join(sorted(CONFIG_ACTIONS))}"
+        )
+    return "show", action
+
+
 def _configure(manager: SiteManager, arguments) -> int:
     """Show, edit, or trust per-site nginx configuration."""
-    if arguments.action == "show" and not arguments.name:
+    action, name = config_target(arguments.action, arguments.name)
+
+    if action == "show" and not name:
         try:
-            name = manager.resolve_name(None, Path.cwd())
+            resolved = manager.resolve_name(None, Path.cwd())
         except SiteError:
             # Outside a linked project, showing every site is more useful than
             # complaining about where the user happens to be standing.
             for site_name, configuration in manager.configurations().items():
                 print(f"{site_name}\t{_config_summary(configuration)}")
             return 0
+        _print_configuration(resolved, manager.configuration(resolved))
+        return 0
+
+    name = manager.resolve_name(name, Path.cwd())
+    if action == "show":
         _print_configuration(name, manager.configuration(name))
         return 0
 
-    name = manager.resolve_name(arguments.name, Path.cwd())
-    if arguments.action == "show":
-        _print_configuration(name, manager.configuration(name))
-        return 0
-
-    if arguments.action == "edit":
+    if action == "edit":
         configuration = manager.configuration(name)
         path = configuration.user
         if not path.exists():
@@ -666,7 +692,7 @@ def _configure(manager: SiteManager, arguments) -> int:
         return 0
 
     configuration = manager.trust_project_configuration(
-        name, trusted=arguments.action == "trust"
+        name, trusted=action == "trust"
     )
     _print_configuration(name, configuration)
     return 0
