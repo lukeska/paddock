@@ -65,14 +65,26 @@ jobs:
     timeout-minutes: 20
     container: archlinux:base-devel
     steps:
-      - name: Install package dependencies
-        run: >-
-          pacman -Syu --needed --noconfirm
-          git go python python-yaml python-gobject gtk4 libadwaita caddy dnsmasq
-          mkcert nss p11-kit networkmanager polkit podman
+      # Only what `actions/checkout` needs. The package's own dependencies come
+      # from the PKGBUILD below, once there is a checkout to read it from.
+      - name: Install checkout dependencies
+        run: pacman -Syu --needed --noconfirm git
 
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # Read from the PKGBUILD rather than repeated here. makepkg resolves
+      # runtime dependencies before building, so a package this job does not
+      # install fails the build rather than the runtime — and a second copy of
+      # the list silently drifts from the first. Switching the web server from
+      # caddy to nginx broke this job for exactly that reason.
+      - name: Install package dependencies
+        shell: bash
+        run: |
+          depends=()
+          makedepends=()
+          . packaging/arch/PKGBUILD
+          pacman -S --needed --noconfirm "${depends[@]}" "${makedepends[@]}"
 
       - name: Build package as an unprivileged user
         run: |
