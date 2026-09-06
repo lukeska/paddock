@@ -42,7 +42,7 @@ def sites() -> dict[str, object]:
 
 def snapshot(state: str = "active") -> dict[str, object]:
     return {
-        "protocol_version": 2,
+        "protocol_version": 3,
         "dashboard": dashboard(state),
         "services": {"instances": []},
         "sites": sites(),

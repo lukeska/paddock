@@ -21,6 +21,26 @@ func (f *fakeAPI) Snapshot() (backend.Snapshot, error) { return f.snapshot, nil 
 func (f *fakeAPI) SetDashboardActive(bool) (backend.DashboardOperationResult, error) {
 	return backend.DashboardOperationResult{}, nil
 }
+func (f *fakeAPI) CreateService(kind, label string, port *int, autostart bool) (backend.ServiceOperationResult, error) {
+	f.calls = append(f.calls, fmt.Sprintf("service-create:%s:%s:%d:%t", kind, label, *port, autostart))
+	return backend.ServiceOperationResult{OK: true}, nil
+}
+func (f *fakeAPI) SetServiceActive(id string, active bool) (backend.ServiceOperationResult, error) {
+	f.calls = append(f.calls, fmt.Sprintf("service-active:%s:%t", id, active))
+	return backend.ServiceOperationResult{OK: true}, nil
+}
+func (f *fakeAPI) UpdateService(id, label string, port int, autostart bool) (backend.ServiceOperationResult, error) {
+	f.calls = append(f.calls, fmt.Sprintf("service-update:%s:%s:%d:%t", id, label, port, autostart))
+	return backend.ServiceOperationResult{OK: true}, nil
+}
+func (f *fakeAPI) RemoveService(id string) (backend.ServiceOperationResult, error) {
+	f.calls = append(f.calls, "service-remove:"+id)
+	return backend.ServiceOperationResult{OK: true}, nil
+}
+func (f *fakeAPI) ServiceLogs(id string, lines int) (backend.ServiceLogsResult, error) {
+	f.calls = append(f.calls, fmt.Sprintf("service-logs:%s:%d", id, lines))
+	return backend.ServiceLogsResult{OK: true}, nil
+}
 func (f *fakeAPI) SetActive(site, worker string, active bool) (backend.OperationResult, error) {
 	f.calls = append(f.calls, fmt.Sprintf("active:%s:%s:%t", site, worker, active))
 	return backend.OperationResult{}, nil
@@ -62,9 +82,14 @@ func sampleSnapshot() backend.Snapshot {
 	node := "22"
 	projectConfig := ".paddock/nginx.conf"
 	return backend.Snapshot{
-		ProtocolVersion: 2,
+		ProtocolVersion: 3,
 		Dashboard: backend.DashboardSnapshot{Services: []backend.DashboardService{{
 			Key: "web", Title: "Web", Group: "web", State: "active", Detail: "Serving sites", Configured: true,
+		}}},
+		Services: backend.ServiceInstancesSnapshot{Instances: []backend.ServiceInstance{{
+			ID: "redis-a1", Type: "redis", Label: "Cache", Image: "docker.io/library/redis:8.10.1",
+			Version: "8.10.1", Port: 6379, Volume: "paddock-redis-a1", State: "active", Autostart: true,
+			Connection: []string{"REDIS_HOST=127.0.0.1", "REDIS_PORT=6379"},
 		}}},
 		Sites: backend.LinkedSitesSnapshot{Sites: []backend.Site{{
 			Name: "linguine", Host: "linguine.test", URL: "https://linguine.test",
@@ -165,6 +190,85 @@ func TestDashboardDoesNotRepeatConfiguredServiceInstances(t *testing.T) {
 	}
 }
 
+func TestServicesTabRendersCatalogAndOpensDetails(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.loaded, m.snapshot, m.tab, m.width = true, sampleSnapshot(), 2, 90
+	rendered := ansi.Strip(m.render())
+	for _, expected := range []string{"Services", "Add Service", "Cache", "redis", "8.10.1", "6379", "Active"} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("services page missing %q: %q", expected, rendered)
+		}
+	}
+	updated, _ := m.handleKey(press(tea.KeyEnter, "enter", 0))
+	m = updated.(Model)
+	if !m.serviceDetail || m.serviceID != "redis-a1" {
+		t.Fatal("enter did not open the selected service")
+	}
+	detail := ansi.Strip(m.renderServiceDetail())
+	for _, expected := range []string{"Status", "Configuration", "Connection", "Manage", "Danger zone", "REDIS_HOST=127.0.0.1"} {
+		if !strings.Contains(detail, expected) {
+			t.Fatalf("service detail missing %q: %q", expected, detail)
+		}
+	}
+}
+
+func TestServiceActionsDispatchAndRemovalRequiresConfirmation(t *testing.T) {
+	api := &fakeAPI{}
+	m := NewWithAPI(api)
+	m.loaded, m.snapshot, m.tab, m.serviceDetail, m.serviceID = true, sampleSnapshot(), 2, true, "redis-a1"
+	updated, command := m.activateServiceAction()
+	m = updated.(Model)
+	if command == nil {
+		t.Fatal("start/stop did not create a command")
+	}
+	executeCommand(command)
+	if len(api.calls) != 1 || api.calls[0] != "service-active:redis-a1:false" {
+		t.Fatalf("calls = %v", api.calls)
+	}
+
+	m.busy, m.serviceAction = false, len(m.serviceActions())-1
+	updated, command = m.activateServiceAction()
+	m = updated.(Model)
+	if command != nil || !m.serviceConfirm {
+		t.Fatal("remove did not open confirmation")
+	}
+	updated, command = m.handleKey(press('y', "y", 0))
+	if command == nil {
+		t.Fatal("confirmed removal did not create a command")
+	}
+	executeCommand(command)
+	if api.calls[len(api.calls)-1] != "service-remove:redis-a1" {
+		t.Fatalf("calls = %v", api.calls)
+	}
+}
+
+func TestAddServiceFormSelectsTypeAndValidatesPort(t *testing.T) {
+	api := &fakeAPI{}
+	m := NewWithAPI(api)
+	m.loaded, m.snapshot, m.tab = true, sampleSnapshot(), 2
+	m.beginAddService()
+	m.cycleServiceType(1)
+	if m.serviceLabel != "MySQL" || m.servicePort != "3306" {
+		t.Fatalf("type defaults = %q %q", m.serviceLabel, m.servicePort)
+	}
+	m.serviceLabel, m.servicePort = "App database", "3307"
+	updated, command := m.saveServiceForm()
+	if command == nil || !updated.(Model).busy {
+		t.Fatal("valid add form did not start")
+	}
+	executeCommand(command)
+	if got := api.calls[len(api.calls)-1]; got != "service-create:mysql:App database:3307:true" {
+		t.Fatalf("call = %q", got)
+	}
+
+	m = updated.(Model)
+	m.busy, m.servicePort = false, "80"
+	updated, command = m.saveServiceForm()
+	if command != nil || !strings.Contains(updated.(Model).err, "1024") {
+		t.Fatal("privileged port was accepted")
+	}
+}
+
 func TestBackendErrorIsShownInline(t *testing.T) {
 	m := New("")
 	updated, _ := m.Update(connectedMsg{err: errors.New("python missing")})
@@ -192,6 +296,21 @@ func TestOmarchyPaletteReplacesTheFallbackStyles(t *testing.T) {
 
 func press(code rune, text string, mod tea.KeyMod) tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: code, Text: text, Mod: mod})
+}
+
+func executeCommand(command tea.Cmd) []tea.Msg {
+	if command == nil {
+		return nil
+	}
+	message := command()
+	if batch, ok := message.(tea.BatchMsg); ok {
+		messages := []tea.Msg{}
+		for _, child := range batch {
+			messages = append(messages, executeCommand(child)...)
+		}
+		return messages
+	}
+	return []tea.Msg{message}
 }
 
 func TestTabsOwnTabAndNumberKeysButNotArrows(t *testing.T) {
@@ -309,21 +428,21 @@ func TestSiteDetailActionsUseControllerAndDesktopLaunchCommands(t *testing.T) {
 
 	at("security")
 	_, command := m.activateDetailAction()
-	command()
+	executeCommand(command)
 	if last() != "secured:linguine:false" {
 		t.Fatalf("security action calls = %v", api.calls)
 	}
 
 	at("php")
 	_, command = m.changeDetailVersion(-1)
-	command()
+	executeCommand(command)
 	if last() != "php:linguine:8.4" {
 		t.Fatalf("PHP action calls = %v", api.calls)
 	}
 
 	at("queue-active")
 	_, command = m.activateDetailAction()
-	command()
+	executeCommand(command)
 	if last() != "active:linguine:queue:false" {
 		t.Fatalf("queue action calls = %v", api.calls)
 	}

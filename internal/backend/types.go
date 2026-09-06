@@ -51,6 +51,20 @@ type ServiceInstancesSnapshot struct {
 	Instances []ServiceInstance `json:"instances"`
 }
 
+type ServiceOperationResult struct {
+	OK       bool                     `json:"ok"`
+	Summary  string                   `json:"summary"`
+	Detail   *string                  `json:"detail"`
+	Snapshot ServiceInstancesSnapshot `json:"snapshot"`
+}
+
+type ServiceLogsResult struct {
+	OK      bool     `json:"ok"`
+	Summary string   `json:"summary"`
+	Lines   []string `json:"lines"`
+	Detail  *string  `json:"detail"`
+}
+
 type ServiceInstance struct {
 	ID         string   `json:"id"`
 	Type       string   `json:"type"`

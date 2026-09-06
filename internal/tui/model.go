@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -22,6 +23,11 @@ const (
 type API interface {
 	Snapshot() (backend.Snapshot, error)
 	SetDashboardActive(active bool) (backend.DashboardOperationResult, error)
+	CreateService(kind, label string, port *int, autostart bool) (backend.ServiceOperationResult, error)
+	SetServiceActive(id string, active bool) (backend.ServiceOperationResult, error)
+	UpdateService(id, label string, port int, autostart bool) (backend.ServiceOperationResult, error)
+	RemoveService(id string) (backend.ServiceOperationResult, error)
+	ServiceLogs(id string, lines int) (backend.ServiceLogsResult, error)
 	SetActive(site, worker string, active bool) (backend.OperationResult, error)
 	SetAutostart(site, worker string, enabled bool) (backend.OperationResult, error)
 	SetSitePHP(site, version string) (backend.OperationResult, error)
@@ -35,36 +41,48 @@ type API interface {
 }
 
 type Model struct {
-	api           API
-	python        string
-	snapshot      backend.Snapshot
-	loaded        bool
-	width         int
-	height        int
-	tab           int
-	cursor        int
-	worker        int
-	detailOpen    bool
-	detailSite    string
-	detailCursor  int
-	openURL       func(string) error
-	launchCommand func(string, ...string) error
-	filtering     bool
-	filter        string
-	logs          []string
-	logsOpen      bool
-	logOffset     int
-	busy          bool
-	dashboardBusy bool
-	dashboardGoal bool
-	spinnerFrame  int
-	status        string
-	toastID       int
-	logTitle      string
-	err           string
-	generation    int
-	terminalDark  bool
-	styles        styles
+	api            API
+	python         string
+	snapshot       backend.Snapshot
+	loaded         bool
+	width          int
+	height         int
+	tab            int
+	cursor         int
+	worker         int
+	detailOpen     bool
+	detailSite     string
+	detailCursor   int
+	serviceCursor  int
+	serviceDetail  bool
+	serviceID      string
+	serviceAction  int
+	serviceForm    string
+	serviceField   int
+	serviceType    int
+	serviceLabel   string
+	servicePort    string
+	serviceBoot    bool
+	serviceConfirm bool
+	serviceBusy    bool
+	openURL        func(string) error
+	launchCommand  func(string, ...string) error
+	filtering      bool
+	filter         string
+	logs           []string
+	logsOpen       bool
+	logOffset      int
+	busy           bool
+	dashboardBusy  bool
+	dashboardGoal  bool
+	spinnerFrame   int
+	status         string
+	toastID        int
+	logTitle       string
+	err            string
+	generation     int
+	terminalDark   bool
+	styles         styles
 }
 
 type connectedMsg struct {
@@ -85,6 +103,16 @@ type dashboardMutationMsg struct {
 	generation int
 	result     backend.DashboardOperationResult
 	err        error
+}
+type serviceMutationMsg struct {
+	generation int
+	result     backend.ServiceOperationResult
+	err        error
+}
+type serviceLogsMsg struct {
+	label  string
+	result backend.ServiceLogsResult
+	err    error
 }
 type logsMsg struct {
 	site, worker string
@@ -190,6 +218,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.styles = newStyles(m.terminalDark, msg.snapshot.Theme)
 		m.clampCursor()
 		m.clampDetailCursor()
+		m.clampServiceCursor()
 	case mutationMsg:
 		if msg.generation != m.generation {
 			return m, nil
@@ -242,8 +271,51 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.generation++
 		m.busy = true
 		return m, tea.Batch(load(m.api, m.generation), toast)
+	case serviceMutationMsg:
+		if msg.generation != m.generation {
+			return m, nil
+		}
+		m.busy, m.serviceBusy = false, false
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			return m, nil
+		}
+		m.snapshot.Services = msg.result.Snapshot
+		if !msg.result.OK {
+			m.err = msg.result.Summary
+			if msg.result.Detail != nil {
+				m.err += ": " + *msg.result.Detail
+			}
+			return m, nil
+		}
+		m.err, m.status, m.serviceForm, m.serviceConfirm = "", msg.result.Summary, "", false
+		m.toastID++
+		m.clampServiceCursor()
+		if m.serviceDetail {
+			if _, ok := m.selectedServiceDetail(); !ok {
+				m.serviceDetail = false
+			}
+		}
+		m.generation++
+		m.busy = true
+		return m, tea.Batch(load(m.api, m.generation), dismissToast(m.toastID))
+	case serviceLogsMsg:
+		m.busy = false
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			return m, nil
+		}
+		if !msg.result.OK {
+			m.err = msg.result.Summary
+			if msg.result.Detail != nil {
+				m.err += ": " + *msg.result.Detail
+			}
+			return m, nil
+		}
+		m.logs, m.logsOpen, m.logOffset, m.err = msg.result.Lines, true, 0, ""
+		m.logTitle = msg.label + " logs"
 	case spinnerTickMsg:
-		if m.dashboardBusy && int(msg) == m.generation {
+		if (m.dashboardBusy || m.serviceBusy) && int(msg) == m.generation {
 			m.spinnerFrame++
 			return m, spinnerTick(m.generation)
 		}
@@ -322,7 +394,7 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-	if key == "ctrl+c" || (!m.filtering && key == "q") {
+	if key == "ctrl+c" || (!m.filtering && m.serviceForm == "" && !m.serviceConfirm && key == "q") {
 		return m, tea.Quit
 	}
 	if m.logsOpen {
@@ -360,6 +432,18 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.clampCursor()
 		return m, nil
 	}
+	if m.serviceConfirm {
+		switch key {
+		case "y", "Y", "enter":
+			return m.removeSelectedService()
+		case "n", "N", "esc":
+			m.serviceConfirm = false
+		}
+		return m, nil
+	}
+	if m.serviceForm != "" {
+		return m.handleServiceFormKey(key)
+	}
 	if m.err != "" && (key == "esc" || key == "enter") {
 		m.err = ""
 		return m, nil
@@ -387,6 +471,23 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.serviceDetail {
+		switch key {
+		case "esc", "backspace":
+			m.serviceDetail = false
+		case "j", "down":
+			if m.serviceAction < len(m.serviceActions())-1 {
+				m.serviceAction++
+			}
+		case "k", "up":
+			if m.serviceAction > 0 {
+				m.serviceAction--
+			}
+		case "enter", " ", "space":
+			return m.activateServiceAction()
+		}
+		return m, nil
+	}
 	if key == "r" {
 		m.status = ""
 		m.toastID++
@@ -403,11 +504,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "tab":
-		m.tab = (m.tab + 1) % 2
+		m.tab = (m.tab + 1) % 3
 		m.cursor = 0
 		m.detailOpen = false
 	case "shift+tab":
-		m.tab = (m.tab + 2 - 1) % 2
+		m.tab = (m.tab + 3 - 1) % 3
 		m.cursor = 0
 		m.detailOpen = false
 	case "1":
@@ -418,13 +519,21 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.tab = 1
 		m.cursor = 0
 		m.detailOpen = false
+	case "3":
+		m.tab = 2
+		m.serviceCursor = 0
+		m.serviceDetail = false
 	case "j", "down":
 		if m.tab == 1 && m.cursor < len(m.filteredSites())-1 {
 			m.cursor++
+		} else if m.tab == 2 && m.serviceCursor < len(m.snapshot.Services.Instances)-1 {
+			m.serviceCursor++
 		}
 	case "k", "up":
 		if m.tab == 1 && m.cursor > 0 {
 			m.cursor--
+		} else if m.tab == 2 && m.serviceCursor > 0 {
+			m.serviceCursor--
 		}
 	case "/":
 		if m.tab == 1 {
@@ -439,6 +548,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if site, ok := m.selected(); ok {
 				m.detailOpen, m.detailSite, m.detailCursor = true, site.Name, 0
 			}
+		} else if m.tab == 2 {
+			if service, ok := m.selectedService(); ok {
+				m.serviceDetail, m.serviceID, m.serviceAction = true, service.ID, 0
+			}
+		}
+	case "a":
+		if m.tab == 2 {
+			m.beginAddService()
 		}
 	case "g":
 		if m.tab == 1 {
@@ -505,6 +622,165 @@ func (m Model) mutateDashboard() (tea.Model, tea.Cmd) {
 		return dashboardMutationMsg{generation, result, err}
 	}
 	return m, tea.Batch(operation, spinnerTick(generation))
+}
+
+func (m Model) activateServiceAction() (tea.Model, tea.Cmd) {
+	actions := m.serviceActions()
+	if m.serviceAction < 0 || m.serviceAction >= len(actions) || m.busy {
+		return m, nil
+	}
+	service, ok := m.selectedServiceDetail()
+	if !ok {
+		return m, nil
+	}
+	switch actions[m.serviceAction].id {
+	case "service-active":
+		return m.mutateServiceActive(service)
+	case "service-autostart":
+		m.beginEditService(service)
+		m.serviceField = 3
+		m.serviceBoot = !m.serviceBoot
+		return m.saveServiceForm()
+	case "service-logs":
+		return m.openServiceLogs(service)
+	case "service-edit":
+		m.beginEditService(service)
+	case "service-remove":
+		m.serviceConfirm = true
+	}
+	return m, nil
+}
+
+func (m Model) mutateServiceActive(service backend.ServiceInstance) (tea.Model, tea.Cmd) {
+	if m.api == nil || m.busy {
+		return m, nil
+	}
+	m.busy, m.serviceBusy, m.err, m.status = true, true, "", ""
+	m.generation++
+	generation, api := m.generation, m.api
+	return m, tea.Batch(func() tea.Msg {
+		result, err := api.SetServiceActive(service.ID, service.State != "active")
+		return serviceMutationMsg{generation, result, err}
+	}, spinnerTick(generation))
+}
+
+func (m Model) openServiceLogs(service backend.ServiceInstance) (tea.Model, tea.Cmd) {
+	if m.api == nil || m.busy {
+		return m, nil
+	}
+	m.busy = true
+	api := m.api
+	return m, func() tea.Msg {
+		result, err := api.ServiceLogs(service.ID, 200)
+		return serviceLogsMsg{service.Label, result, err}
+	}
+}
+
+func (m Model) removeSelectedService() (tea.Model, tea.Cmd) {
+	service, ok := m.selectedServiceDetail()
+	if !ok || m.api == nil || m.busy {
+		return m, nil
+	}
+	m.serviceConfirm, m.busy, m.serviceBusy, m.err, m.status = false, true, true, "", ""
+	m.generation++
+	generation, api := m.generation, m.api
+	return m, tea.Batch(func() tea.Msg {
+		result, err := api.RemoveService(service.ID)
+		return serviceMutationMsg{generation, result, err}
+	}, spinnerTick(generation))
+}
+
+func (m Model) handleServiceFormKey(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "esc":
+		m.serviceForm = ""
+		return m, nil
+	case "tab", "down":
+		m.serviceField = (m.serviceField + 1) % 4
+		return m, nil
+	case "shift+tab", "up":
+		m.serviceField = (m.serviceField + 3) % 4
+		return m, nil
+	case "left":
+		if m.serviceField == 0 && m.serviceForm == "add" {
+			m.cycleServiceType(-1)
+		}
+		if m.serviceField == 3 {
+			m.serviceBoot = !m.serviceBoot
+		}
+		return m, nil
+	case "right", " ", "space":
+		if m.serviceField == 0 && m.serviceForm == "add" {
+			m.cycleServiceType(1)
+			return m, nil
+		}
+		if m.serviceField == 3 {
+			m.serviceBoot = !m.serviceBoot
+			return m, nil
+		}
+	case "enter":
+		return m.saveServiceForm()
+	case "backspace":
+		if m.serviceField == 1 {
+			m.serviceLabel = trimLastRune(m.serviceLabel)
+		}
+		if m.serviceField == 2 {
+			m.servicePort = trimLastRune(m.servicePort)
+		}
+		return m, nil
+	}
+	if utf8.RuneCountInString(key) == 1 {
+		if m.serviceField == 1 {
+			m.serviceLabel += key
+		}
+		if m.serviceField == 2 && key[0] >= '0' && key[0] <= '9' {
+			m.servicePort += key
+		}
+	}
+	return m, nil
+}
+
+func trimLastRune(value string) string {
+	if value == "" {
+		return value
+	}
+	_, size := utf8.DecodeLastRuneInString(value)
+	return value[:len(value)-size]
+}
+
+func (m *Model) cycleServiceType(direction int) {
+	m.serviceType = (m.serviceType + direction + len(serviceKinds)) % len(serviceKinds)
+	m.serviceLabel, m.servicePort = serviceKinds[m.serviceType].label, serviceKinds[m.serviceType].port
+}
+
+func (m Model) saveServiceForm() (tea.Model, tea.Cmd) {
+	if m.api == nil || m.busy {
+		return m, nil
+	}
+	label := strings.TrimSpace(m.serviceLabel)
+	if label == "" {
+		m.err = "Service name cannot be empty"
+		return m, nil
+	}
+	port, err := strconv.Atoi(m.servicePort)
+	if err != nil || port < 1024 || port > 65535 {
+		m.err = "Port must be between 1024 and 65535"
+		return m, nil
+	}
+	m.busy, m.serviceBusy, m.err, m.status = true, true, "", ""
+	m.generation++
+	generation, api, form := m.generation, m.api, m.serviceForm
+	serviceID, kind, boot := m.serviceID, serviceKinds[m.serviceType].kind, m.serviceBoot
+	return m, tea.Batch(func() tea.Msg {
+		var result backend.ServiceOperationResult
+		var callErr error
+		if form == "add" {
+			result, callErr = api.CreateService(kind, label, &port, boot)
+		} else {
+			result, callErr = api.UpdateService(serviceID, label, port, boot)
+		}
+		return serviceMutationMsg{generation, result, callErr}
+	}, spinnerTick(generation))
 }
 
 func (m Model) selected() (backend.Site, bool) {
@@ -994,10 +1270,16 @@ func (m Model) render() string {
 		body = m.styles.muted.Render("Connecting to the Paddock backend…")
 	} else if m.tab == 0 {
 		body = m.renderDashboard()
-	} else if m.detailOpen {
+	} else if m.tab == 1 && m.detailOpen {
 		body = m.renderSiteDetail()
-	} else {
+	} else if m.tab == 1 {
 		body = m.renderSites()
+	} else if m.serviceForm != "" {
+		body = m.renderServiceForm()
+	} else if m.serviceDetail {
+		body = m.renderServiceDetail()
+	} else {
+		body = m.renderServices()
 	}
 	footer := m.renderFooter()
 	content := header + "\n\n" + body + "\n" + footer
@@ -1011,7 +1293,7 @@ func (m Model) render() string {
 }
 
 func (m Model) renderTabs() string {
-	names := []string{"Dashboard", "Sites"}
+	names := []string{"Dashboard", "Sites", "Services"}
 	parts := make([]string, len(names))
 	for index, name := range names {
 		if index == m.tab {
@@ -1058,6 +1340,173 @@ func (m Model) renderDashboard() string {
 		sections = append(sections, m.renderFieldset(title(group), lines))
 	}
 	return control + "\n\n" + strings.Join(sections, "\n\n")
+}
+
+var serviceKinds = []struct{ kind, label, port string }{
+	{"redis", "Redis", "6379"},
+	{"mysql", "MySQL", "3306"},
+	{"postgres", "PostgreSQL", "5432"},
+}
+
+func (m Model) selectedService() (backend.ServiceInstance, bool) {
+	if m.serviceCursor < 0 || m.serviceCursor >= len(m.snapshot.Services.Instances) {
+		return backend.ServiceInstance{}, false
+	}
+	return m.snapshot.Services.Instances[m.serviceCursor], true
+}
+
+func (m Model) selectedServiceDetail() (backend.ServiceInstance, bool) {
+	for _, service := range m.snapshot.Services.Instances {
+		if service.ID == m.serviceID {
+			return service, true
+		}
+	}
+	return backend.ServiceInstance{}, false
+}
+
+func (m *Model) clampServiceCursor() {
+	last := len(m.snapshot.Services.Instances) - 1
+	if last < 0 {
+		m.serviceCursor = 0
+	} else if m.serviceCursor > last {
+		m.serviceCursor = last
+	}
+}
+
+func (m Model) renderServices() string {
+	services := m.snapshot.Services.Instances
+	if len(services) == 0 {
+		return m.styles.section.Render("Services") + "  " + m.styles.worker.Render("[ Add Service ]") +
+			"\n\n" + m.styles.muted.Render("No cache or database services have been added.")
+	}
+	tableWidth := max(40, m.width-8)
+	nameWidth := max(10, tableWidth-44)
+	header := "  " + siteCell("Name", nameWidth) + "  " + siteCell("Type", 10) + "  " +
+		siteCell("Version", 9) + "  " + siteCell("Port", 6) + "  State"
+	lines := []string{m.styles.section.Render("Services") + "  " + m.styles.worker.Render("[ Add Service ]"), "", m.styles.muted.Render(truncate(header, tableWidth))}
+	for index, service := range services {
+		marker := "  "
+		if index == m.serviceCursor {
+			marker = "› "
+		}
+		state := m.stateDot(service.State) + " " + title(service.State)
+		line := marker + siteCell(service.Label, nameWidth) + "  " + siteCell(service.Type, 10) + "  " +
+			siteCell(service.Version, 9) + "  " + siteCell(strconv.Itoa(service.Port), 6) + "  " + state
+		line = truncate(line, tableWidth)
+		if index == m.serviceCursor {
+			line = m.styles.selected.Width(tableWidth).Render(line)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) serviceActions() []detailAction {
+	service, ok := m.selectedServiceDetail()
+	if !ok {
+		return nil
+	}
+	stateAction := "Start"
+	if service.State == "active" {
+		stateAction = "Stop"
+	}
+	return []detailAction{
+		{"service-active", "Status", "State", title(service.State) + " · " + stateAction},
+		{"service-autostart", "Status", "Start automatically", onOff(service.Autostart)},
+		{"service-port", "Configuration", "Address", fmt.Sprintf("127.0.0.1:%d", service.Port)},
+		{"service-image", "Configuration", "Image", service.Image},
+		{"service-volume", "Configuration", "Data volume", service.Volume},
+		{"service-env", "Connection", "Environment", strings.Join(service.Connection, "  ")},
+		{"service-logs", "Manage", "Logs", "Open"},
+		{"service-edit", "Manage", "Settings", "Edit"},
+		{"service-remove", "Danger zone", "Remove service", "Delete data…"},
+	}
+}
+
+func (m Model) renderServiceDetail() string {
+	service, ok := m.selectedServiceDetail()
+	if !ok {
+		return m.styles.error.Render("This service no longer exists.")
+	}
+	if m.serviceConfirm {
+		return m.styles.error.Render("Remove "+service.Label+"?") + "\n\n" +
+			"This permanently deletes the service and its data volume " + service.Volume + ".\n\n" +
+			m.styles.worker.Render("[ Delete service and data ]") + m.styles.muted.Render("  y/enter confirm · n/esc cancel")
+	}
+	pending := ""
+	if m.serviceBusy {
+		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		pending = "  " + m.styles.worker.Render(frames[m.spinnerFrame%len(frames)]+" Working")
+	}
+	actions := m.serviceActions()
+	order := []string{"Status", "Configuration", "Connection", "Manage", "Danger zone"}
+	groups := map[string][]string{}
+	lineWidth := max(30, m.width-12)
+	for index, action := range actions {
+		labelWidth := min(20, max(12, lineWidth/4))
+		valueWidth := max(6, lineWidth-labelWidth-4)
+		value := action.value
+		if action.id == "service-active" {
+			value = stateGlyph(service.State) + " " + value
+		}
+		line := "  " + siteCell(action.label, labelWidth) + "  " + siteCell(value, valueWidth)
+		if index == m.serviceAction {
+			line = m.styles.selected.Width(lineWidth).Render("› " + siteCell(action.label, labelWidth) + "  " + siteCell(value, valueWidth))
+		}
+		groups[action.section] = append(groups[action.section], line)
+	}
+	sections := []string{}
+	for _, group := range order {
+		if len(groups[group]) > 0 {
+			sections = append(sections, m.renderFieldsetWidth(group, groups[group], max(40, m.width-8)))
+		}
+	}
+	return m.styles.section.Render(service.Label) + m.styles.muted.Render("  "+title(service.Type)+" "+service.Version) + pending + "\n\n" + strings.Join(sections, "\n\n")
+}
+
+func (m *Model) beginAddService() {
+	m.serviceForm, m.serviceField, m.serviceType = "add", 0, 0
+	m.serviceLabel, m.servicePort, m.serviceBoot = serviceKinds[0].label, serviceKinds[0].port, true
+}
+
+func (m *Model) beginEditService(service backend.ServiceInstance) {
+	m.serviceForm, m.serviceField = "edit", 0
+	m.serviceLabel, m.servicePort, m.serviceBoot = service.Label, strconv.Itoa(service.Port), service.Autostart
+	for index, item := range serviceKinds {
+		if item.kind == service.Type {
+			m.serviceType = index
+		}
+	}
+}
+
+func (m Model) renderServiceForm() string {
+	titleText := "Add Service"
+	if m.serviceForm == "edit" {
+		titleText = "Edit Service"
+	}
+	fields := []struct{ label, value string }{
+		{"Type", serviceKinds[m.serviceType].label}, {"Name", m.serviceLabel},
+		{"Port", m.servicePort}, {"Start automatically", onOff(m.serviceBoot)},
+	}
+	lines := []string{}
+	for index, field := range fields {
+		marker := "  "
+		if index == m.serviceField {
+			marker = "› "
+		}
+		line := marker + siteCell(field.label, 22) + "  " + field.value
+		if index == m.serviceField {
+			line = m.styles.selected.Width(max(30, m.width-12)).Render(line)
+		}
+		lines = append(lines, line)
+	}
+	save := "Save"
+	if m.serviceBusy {
+		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		save = frames[m.spinnerFrame%len(frames)] + " Saving"
+	}
+	lines = append(lines, "", m.styles.worker.Render("[ "+save+" ]")+m.styles.muted.Render("  enter saves from any field"))
+	return m.styles.section.Render(titleText) + "\n\n" + m.renderFieldsetWidth("Configuration", lines, max(40, m.width-8))
 }
 
 func (m Model) renderFieldset(name string, lines []string) string {
@@ -1281,11 +1730,23 @@ func (m Model) renderLogs() string {
 func (m Model) logHeight() int { return max(3, m.height-11) }
 
 func (m Model) renderFooter() string {
-	help := "space start/stop all · tab/shift+tab sections · 1/2 jump · r refresh · q quit"
+	help := "space start/stop all · tab/shift+tab sections · 1/2/3 jump · r refresh · q quit"
 	if m.tab == 1 {
 		help = "↑/↓ select · enter details · o open · / filter · tab sections · q quit"
 		if m.detailOpen {
 			help = "↑/↓ select · enter activate · ←/→ change version · esc back · o open site"
+		}
+	}
+	if m.tab == 2 {
+		help = "↑/↓ select · enter details · a add service · tab sections · q quit"
+		if m.serviceDetail {
+			help = "↑/↓ select · enter activate · esc back"
+		}
+		if m.serviceForm != "" {
+			help = "tab/↑/↓ field · ←/→ change · enter save · esc cancel"
+		}
+		if m.serviceConfirm {
+			help = "y/enter delete service and data · n/esc cancel"
 		}
 	}
 	rows := []string{"", m.styles.muted.Render(truncate(help, m.width-8))}

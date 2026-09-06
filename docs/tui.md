@@ -16,13 +16,16 @@ service instances. Each dashboard section uses a responsive bordered fieldset
 with its section name embedded in the top border. Sites presents a table with
 name, PHP, Node, HTTP/HTTPS lock state, and an Open link. A selected row opens
 an actionable detail view with the same configuration, launch, and worker
-controls as the desktop UI.
+controls as the desktop UI. Services presents every independent cache and
+database instance with its type, pinned version, loopback port, and live state.
+A service detail view exposes connection variables, container and volume
+information, lifecycle controls, logs, settings, and removal.
 The search input remains visible above the table and can be focused with `/` or
 a mouse click.
 
 ## Keyboard controls
 
-- `tab` and `shift+tab` switch sections; `1` and `2` jump directly to one.
+- `tab` and `shift+tab` switch sections; `1`, `2`, and `3` jump directly to one.
 - On Dashboard, `space` activates the visible Start All or Stop All control. The
   control shows a spinner and the pending action until the operation finishes.
 - up/down or `j`/`k` select a site.
@@ -43,6 +46,13 @@ a mouse click.
   cycles installed PHP or Node versions when the corresponding row is selected.
 - Detail actions toggle HTTP/HTTPS, open the URL or project path, launch a
   terminal or Zed, and control queue/Reverb state, autostart, and logs.
+- On Services, `a` opens the Add Service form. Left/right selects Redis, MySQL,
+  or PostgreSQL; tab or up/down moves between type, name, port, and autostart.
+  `enter` saves and `esc` cancels.
+- `enter` on a service opens its details. Actions start or stop it, toggle
+  autostart, open recent journal logs, edit its name and port, or remove it.
+  Removal requires a separate confirmation because it permanently deletes the
+  service's Podman data volume.
 - `r` refreshes immediately; the UI also refreshes every five seconds.
 - `q` or `ctrl+c` exits.
 

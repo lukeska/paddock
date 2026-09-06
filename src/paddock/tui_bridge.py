@@ -19,11 +19,10 @@ from .state import StateStore
 from .ui.theme import ThemeError, load_palette
 
 
-# 2 added the project type, document root, and per-site nginx fragment
-# fields to the site payload, plus site.set_configuration_trusted,
-# site.ensure_configuration and web.reload. The bridge and the Go client ship in one package, so both
+# 3 adds service-instance creation, editing, lifecycle, logs, and removal.
+# The bridge and the Go client ship in one package, so both
 # sides check for equality and move together.
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 WORKERS = {"queue", "reverb"}
 
 
@@ -103,6 +102,47 @@ def dispatch(
         _only(params, {"active"})
         active = _required_bool(params, "active")
         return asdict(controller.set_dashboard_active(active))
+
+    if method == "service.create":
+        _only(params, {"type", "label", "port", "autostart"})
+        kind = _required_string(params, "type")
+        label = _required_string(params, "label")
+        port = params.get("port")
+        if port is not None and (
+            isinstance(port, bool) or not isinstance(port, int)
+            or not 1024 <= port <= 65535
+        ):
+            raise RequestError("invalid_params", "port must be null or an integer from 1024 to 65535")
+        autostart = _required_bool(params, "autostart")
+        return asdict(controller.create_service_instance(kind, label, port, autostart))
+
+    if method == "service.set_active":
+        _only(params, {"id", "active"})
+        instance_id = _required_string(params, "id")
+        active = _required_bool(params, "active")
+        return asdict(controller.set_service_instance_active(instance_id, active))
+
+    if method == "service.update":
+        _only(params, {"id", "label", "port", "autostart"})
+        instance_id = _required_string(params, "id")
+        label = _required_string(params, "label")
+        port = params.get("port")
+        if isinstance(port, bool) or not isinstance(port, int) or not 1024 <= port <= 65535:
+            raise RequestError("invalid_params", "port must be an integer from 1024 to 65535")
+        autostart = _required_bool(params, "autostart")
+        return asdict(controller.update_service_instance(instance_id, label, port, autostart))
+
+    if method == "service.remove":
+        _only(params, {"id"})
+        return asdict(controller.remove_service_instance(_required_string(params, "id")))
+
+    if method == "service.logs":
+        _only(params, {"id", "lines"})
+        instance_id = _required_string(params, "id")
+        lines = params.get("lines", 200)
+        if isinstance(lines, bool) or not isinstance(lines, int) or not 1 <= lines <= 5000:
+            raise RequestError("invalid_params", "lines must be an integer from 1 to 5000")
+        return asdict(controller.service_instance_logs(instance_id, lines))
 
     if method == "worker.set_autostart":
         _only(params, {"site", "worker", "enabled"})

@@ -12,6 +12,8 @@ from paddock.application import (
     LinkedSiteView,
     LinkedSitesOperationResult,
     LinkedSitesSnapshot,
+    LogResult,
+    ServiceInstanceOperationResult,
     ServiceInstancesSnapshot,
 )
 from paddock.tui_bridge import PROTOCOL_VERSION, serve
@@ -37,6 +39,31 @@ class FakeController:
 
     def _result(self, summary: str):
         return LinkedSitesOperationResult(True, summary, None, self.linked_sites_snapshot())
+
+    def _service_result(self, summary: str):
+        return ServiceInstanceOperationResult(
+            True, summary, None, self.service_instances_snapshot()
+        )
+
+    def create_service_instance(self, kind, label, port, autostart):
+        self.calls.append(("service", "create", kind, label, port, autostart))
+        return self._service_result("service added")
+
+    def set_service_instance_active(self, instance_id, active):
+        self.calls.append(("service", "active", instance_id, active))
+        return self._service_result("service changed")
+
+    def update_service_instance(self, instance_id, label, port, autostart):
+        self.calls.append(("service", "update", instance_id, label, port, autostart))
+        return self._service_result("service saved")
+
+    def remove_service_instance(self, instance_id):
+        self.calls.append(("service", "remove", instance_id))
+        return self._service_result("service removed")
+
+    def service_instance_logs(self, instance_id, lines):
+        self.calls.append(("service", "logs", instance_id, lines))
+        return LogResult(True, "ok", ("service log",))
 
     def set_queue_active(self, site, active):
         self.calls.append(("active", "queue", site, active))
@@ -156,6 +183,30 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(responses[0]["ok"])
         self.assertEqual("dashboard changed", responses[0]["result"]["summary"])
         self.assertEqual([("dashboard", False)], controller.calls)
+
+    def test_service_instance_operations_are_dispatched(self):
+        responses, controller = self.invoke(
+            request(1, "service.create", {
+                "type": "mysql", "label": "App database", "port": 3307,
+                "autostart": True,
+            }),
+            request(2, "service.set_active", {"id": "mysql-a1", "active": False}),
+            request(3, "service.update", {
+                "id": "mysql-a1", "label": "Database", "port": 3308,
+                "autostart": False,
+            }),
+            request(4, "service.logs", {"id": "mysql-a1", "lines": 25}),
+            request(5, "service.remove", {"id": "mysql-a1"}),
+        )
+        self.assertTrue(all(response["ok"] for response in responses))
+        self.assertEqual(["service log"], responses[3]["result"]["lines"])
+        self.assertEqual([
+            ("service", "create", "mysql", "App database", 3307, True),
+            ("service", "active", "mysql-a1", False),
+            ("service", "update", "mysql-a1", "Database", 3308, False),
+            ("service", "logs", "mysql-a1", 25),
+            ("service", "remove", "mysql-a1"),
+        ], controller.calls)
 
     def test_site_configuration_mutations_are_dispatched(self):
         responses, controller = self.invoke(

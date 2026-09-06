@@ -14,7 +14,7 @@ import (
 // Moves with tui_bridge.PROTOCOL_VERSION. Both sides check for equality
 // rather than a minimum, because the bridge and this client ship in the
 // same package and a mismatch means a broken install, not an old peer.
-const ProtocolVersion = 2
+const ProtocolVersion = 3
 
 type rpcError struct {
 	Code    string `json:"code"`
@@ -131,6 +131,40 @@ func (c *Client) SetDashboardActive(active bool) (DashboardOperationResult, erro
 	err := c.call("dashboard.set_active", map[string]interface{}{
 		"active": active,
 	}, &result)
+	return result, err
+}
+
+func (c *Client) CreateService(kind, label string, port *int, autostart bool) (ServiceOperationResult, error) {
+	var result ServiceOperationResult
+	err := c.call("service.create", map[string]interface{}{
+		"type": kind, "label": label, "port": port, "autostart": autostart,
+	}, &result)
+	return result, err
+}
+
+func (c *Client) SetServiceActive(id string, active bool) (ServiceOperationResult, error) {
+	var result ServiceOperationResult
+	err := c.call("service.set_active", map[string]interface{}{"id": id, "active": active}, &result)
+	return result, err
+}
+
+func (c *Client) UpdateService(id, label string, port int, autostart bool) (ServiceOperationResult, error) {
+	var result ServiceOperationResult
+	err := c.call("service.update", map[string]interface{}{
+		"id": id, "label": label, "port": port, "autostart": autostart,
+	}, &result)
+	return result, err
+}
+
+func (c *Client) RemoveService(id string) (ServiceOperationResult, error) {
+	var result ServiceOperationResult
+	err := c.call("service.remove", map[string]interface{}{"id": id}, &result)
+	return result, err
+}
+
+func (c *Client) ServiceLogs(id string, lines int) (ServiceLogsResult, error) {
+	var result ServiceLogsResult
+	err := c.call("service.logs", map[string]interface{}{"id": id, "lines": lines}, &result)
 	return result, err
 }
 
