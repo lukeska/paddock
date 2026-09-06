@@ -168,3 +168,35 @@ class DeclarationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConfigCommandTests(unittest.TestCase):
+    """`paddock config` takes two optional positionals, which is ambiguous."""
+
+    def test_a_lone_argument_is_read_as_a_site(self) -> None:
+        from paddock.cli import config_target
+
+        # Showing is the default action, so this is the form people type.
+        self.assertEqual(("show", "my-app"), config_target("my-app", None))
+        self.assertEqual(("show", None), config_target("show", None))
+        self.assertEqual(("trust", None), config_target("trust", None))
+        self.assertEqual(("trust", "my-app"), config_target("trust", "my-app"))
+        # A site named after an action stays reachable.
+        self.assertEqual(("show", "trust"), config_target("show", "trust"))
+
+    def test_a_mistyped_action_names_the_real_ones(self) -> None:
+        from paddock.cli import config_target
+
+        with self.assertRaisesRegex(SiteError, "revoke, show, trust"):
+            config_target("trustt", "my-app")
+
+    def test_the_parser_accepts_every_documented_form(self) -> None:
+        # The bug this guards: `action` once carried argparse `choices`, so a
+        # site name in that position was rejected before anything could read it.
+        from paddock.cli import build
+
+        parser, _ = build()
+        for argv in (["config"], ["config", "my-app"], ["config", "show", "my-app"],
+                     ["config", "trust"], ["config", "edit", "my-app"]):
+            with self.subTest(argv=argv):
+                parser.parse_args(argv)
