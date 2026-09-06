@@ -151,6 +151,21 @@ CATALOG: dict[str, Catalog] = {
         ),
         ready=("/mailpit", "readyz"),
     ),
+    "meilisearch": Catalog(
+        image="docker.io/getmeili/meilisearch:v1.53.1",
+        port=7700,
+        container_port=7700,
+        data="/meili_data",
+        volume="paddock-meilisearch",
+        dashboard_port=7700,
+        environment=(("MEILI_ENV", "development"), ("MEILI_NO_ANALYTICS", "true")),
+        connection=(
+            ("SCOUT_DRIVER", "meilisearch"),
+            ("MEILISEARCH_HOST", "http://127.0.0.1:7700"),
+            ("MEILISEARCH_KEY", "null"),
+        ),
+        ready=("curl", "--fail", "--silent", "http://127.0.0.1:7700/health"),
+    ),
 }
 
 

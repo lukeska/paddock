@@ -1359,6 +1359,7 @@ var serviceKinds = []struct{ kind, label, port string }{
 	{"mysql", "MySQL", "3306"},
 	{"postgres", "PostgreSQL", "5432"},
 	{"mailpit", "Mailpit", "1025"},
+	{"meilisearch", "Meilisearch", "7700"},
 }
 
 func (m Model) selectedService() (backend.ServiceInstance, bool) {

@@ -70,7 +70,9 @@ def service_image_version(image: str) -> str:
     return leaf.rsplit(":", 1)[-1]
 
 
-SERVICE_VERSION_PARTS = {"redis": 3, "mysql": 3, "postgres": 2, "mailpit": 3}
+SERVICE_VERSION_PARTS = {
+    "redis": 3, "mysql": 3, "postgres": 2, "mailpit": 3, "meilisearch": 3,
+}
 
 
 @dataclass(frozen=True)
@@ -1125,7 +1127,7 @@ class PaddockController:
 
         title = {
             "mysql": "MySQL", "postgres": "PostgreSQL", "redis": "Redis",
-            "mailpit": "Mailpit",
+            "mailpit": "Mailpit", "meilisearch": "Meilisearch",
         }[name]
         return DashboardOperationResult(
             True,

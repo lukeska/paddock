@@ -221,9 +221,10 @@ class ServiceInstanceManager:
 
     def connection_lines(self, instance_id: str) -> tuple[str, ...]:
         instance = self.require(instance_id)
+        catalog = CATALOG[instance.type]
         return tuple(
-            f"{key}={instance.port if key in {'REDIS_PORT', 'DB_PORT', 'MAIL_PORT'} else value}"
-            for key, value in CATALOG[instance.type].connection
+            f"{key}={value.replace(str(catalog.port), str(instance.port))}"
+            for key, value in catalog.connection
         )
 
     def ports(self, instance_id: str) -> tuple[tuple[int, int], ...]:

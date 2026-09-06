@@ -98,6 +98,19 @@ class ServiceInstanceTests(unittest.TestCase):
         self.assertEqual(((1025, 1025), (8025, 8025)), self.manager.ports(first.id))
         self.assertEqual(((1026, 1025), (8026, 8025)), self.manager.ports(second.id))
 
+    def test_meilisearch_has_dashboard_and_project_aware_connection(self) -> None:
+        search = self.manager.create("meilisearch", "Search", 7701)
+        self.assertEqual(((7701, 7700),), self.manager.ports(search.id))
+        self.assertEqual("http://127.0.0.1:7701", self.manager.dashboard_url(search.id))
+        self.assertEqual(
+            (
+                "SCOUT_DRIVER=meilisearch",
+                "MEILISEARCH_HOST=http://127.0.0.1:7701",
+                "MEILISEARCH_KEY=null",
+            ),
+            self.manager.connection_lines(search.id),
+        )
+
     def test_an_unchanged_active_port_can_be_saved(self) -> None:
         instance = self.manager.create("redis", "Cache", 6379)
         unavailable = ServiceInstanceManager(
