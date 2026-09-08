@@ -422,10 +422,12 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.service_database_section = PaddockSection("Databases")
         self.service_mail_section = PaddockSection("Mail")
         self.service_search_section = PaddockSection("Search")
+        self.service_storage_section = PaddockSection("Storage")
         content.append(self.service_cache_section)
         content.append(self.service_database_section)
         content.append(self.service_mail_section)
         content.append(self.service_search_section)
+        content.append(self.service_storage_section)
 
         self.service_catalog_rows: dict[str, PaddockServiceRow] = {}
         self.service_toggle_buttons: dict[str, Gtk.Button] = {}
@@ -774,9 +776,9 @@ class PaddockWindow(Adw.ApplicationWindow):
     def _open_add_service(self, _button=None) -> None:
         if self.mutation_busy:
             return
-        kinds = ("redis", "mysql", "postgres", "mailpit", "meilisearch")
-        labels = ("Redis", "MySQL", "PostgreSQL", "Mailpit", "Meilisearch")
-        ports = (6379, 3306, 5432, 1025, 7700)
+        kinds = ("redis", "mysql", "postgres", "mailpit", "meilisearch", "rustfs")
+        labels = ("Redis", "MySQL", "PostgreSQL", "Mailpit", "Meilisearch", "RustFS")
+        ports = (6379, 3306, 5432, 1025, 7700, 9000)
         dialog = Adw.AlertDialog(
             heading="Add Service",
             body="Create an independent service instance with its own port and data volume.",
@@ -1093,14 +1095,16 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.service_database_section.clear()
         self.service_mail_section.clear()
         self.service_search_section.clear()
+        self.service_storage_section.clear()
         self.service_catalog_rows.clear()
         self.service_toggle_buttons.clear()
         for service in snapshot.instances:
-            section = self.service_search_section if service.type == "meilisearch" else (
+            section = self.service_storage_section if service.type == "rustfs" else (
+                self.service_search_section if service.type == "meilisearch" else (
                 self.service_mail_section if service.type == "mailpit" else (
                 self.service_cache_section if service.type == "redis"
                 else self.service_database_section
-            ))
+            )))
             row = PaddockServiceRow(
                 service.label,
                 f"{service.version} · Port: {service.port}",
@@ -1138,6 +1142,8 @@ class PaddockWindow(Adw.ApplicationWindow):
             self.service_mail_section.add(Adw.ActionRow(title="No mail services added"))
         if not any(item.type == "meilisearch" for item in snapshot.instances):
             self.service_search_section.add(Adw.ActionRow(title="No search services added"))
+        if not any(item.type == "rustfs" for item in snapshot.instances):
+            self.service_storage_section.add(Adw.ActionRow(title="No storage services added"))
         self._update_action_sensitivity()
 
     def _show_linked_sites(self, snapshot: LinkedSitesSnapshot) -> None:

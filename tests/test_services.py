@@ -67,7 +67,8 @@ class ServiceManagerTests(ServiceFixture, unittest.TestCase):
 
     def test_the_catalog_covers_the_documented_services(self) -> None:
         self.assertEqual(
-            {"mailpit", "meilisearch", "mysql", "postgres", "redis"}, set(CATALOG)
+            {"mailpit", "meilisearch", "mysql", "postgres", "redis", "rustfs"},
+            set(CATALOG),
         )
 
     def test_every_database_declares_how_to_connect_to_it(self) -> None:
@@ -235,6 +236,7 @@ class DatabaseUnitTests(ServiceFixture, unittest.TestCase):
             ("mailpit", "readyz"), ("meilisearch", "/health"),
             ("mysql", "mysqladmin"),
             ("postgres", "pg_isready"), ("redis", "redis-cli"),
+            ("rustfs", "/health"),
         ):
             unit = self.render(name)
             self.assertIn("ExecStartPost=", unit, name)
@@ -253,6 +255,16 @@ class DatabaseUnitTests(ServiceFixture, unittest.TestCase):
         self.assertIn("--volume paddock-meilisearch:/meili_data", unit)
         self.assertIn("--env MEILI_ENV=development", unit)
         self.assertIn("--env MEILI_NO_ANALYTICS=true", unit)
+
+    def test_rustfs_publishes_s3_and_console_with_lerd_defaults(self) -> None:
+        unit = self.render("rustfs")
+        self.assertIn("--publish 127.0.0.1:9000:9000", unit)
+        self.assertIn("--publish 127.0.0.1:9001:9001", unit)
+        self.assertIn("--volume paddock-rustfs:/data", unit)
+        self.assertIn("--userns keep-id:uid=10001,gid=10001", unit)
+        self.assertIn("--env RUSTFS_ACCESS_KEY=lerd", unit)
+        self.assertIn("--env RUSTFS_SECRET_KEY=lerdpassword", unit)
+        self.assertIn("rustfs:1.0.0-beta.12 --console-enable /data", unit)
 
     def test_the_probe_runs_inside_the_container(self) -> None:
         # Connecting to the published port from the host proves nothing:

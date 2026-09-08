@@ -32,6 +32,7 @@ def sites() -> dict[str, object]:
             "type": "laravel", "document_root": "public",
             "custom_config": "/home/demo/.config/paddock/nginx/linguine.custom.conf",
             "custom_config_present": False,
+            "nginx_config_error": False,
             "project_config": ".paddock/nginx.conf",
             "project_config_status": "pending",
         }],

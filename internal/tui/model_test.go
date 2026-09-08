@@ -496,8 +496,17 @@ func TestSiteDetailActionsUseControllerAndDesktopLaunchCommands(t *testing.T) {
 	if last() != "ensure:linguine" {
 		t.Fatalf("nginx edit calls = %v", api.calls)
 	}
-	if launched != "xdg-open /home/demo/.config/paddock/nginx/linguine.custom.conf" {
+	if launched != "omarchy-launch-editor /home/demo/.config/paddock/nginx/linguine.custom.conf" {
 		t.Fatalf("nginx edit launched %q", launched)
+	}
+
+	// A launcher failure must be visible instead of looking like Enter did
+	// nothing, which was especially confusing for terminal-based editors.
+	m.launchCommand = func(string, ...string) error { return errors.New("editor unavailable") }
+	_, command = m.activateDetailAction()
+	message := command().(mutationMsg)
+	if message.err == nil || !strings.Contains(message.err.Error(), "editor unavailable") {
+		t.Fatalf("nginx editor error = %v", message.err)
 	}
 
 	// The fixture's project fragment is pending, so activating trusts it.
@@ -534,6 +543,18 @@ func TestProjectConfigurationRowOnlyAppearsWhenOneIsDeclared(t *testing.T) {
 	m.snapshot.Sites.Sites[0].ProjectConfigStatus = "none"
 	if has() {
 		t.Fatal("a site with no project fragment should not offer the row")
+	}
+}
+
+func TestBrokenNginxConfigurationIsShownOnTheEditRow(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.snapshot, m.detailOpen, m.detailSite = sampleSnapshot(), true, "linguine"
+	m.snapshot.Sites.Sites[0].NginxConfigError = true
+	if label := nginxConfigLabel(m.snapshot.Sites.Sites[0]); !strings.Contains(label, "Error") {
+		t.Fatalf("nginx config label = %q", label)
+	}
+	if view := ansi.Strip(m.renderSiteDetail()); !strings.Contains(view, "Error · Edit") {
+		t.Fatalf("site details did not show nginx error:\n%s", view)
 	}
 }
 
@@ -621,6 +642,30 @@ func TestToastHasItsOwnRowAndExpiresWithoutClearingANewerToast(t *testing.T) {
 	m = updated.(Model)
 	if m.status != "" {
 		t.Fatal("the current toast did not expire")
+	}
+}
+
+func TestFailedDashboardMutationSurvivesRefreshAndExpires(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.loaded, m.snapshot, m.generation = true, sampleSnapshot(), 3
+	detail := "nginx: unknown directive"
+	updated, command := m.Update(dashboardMutationMsg{3, backend.DashboardOperationResult{
+		OK: false, Summary: "The web configuration was rejected", Detail: &detail,
+		Snapshot: m.snapshot.Dashboard,
+	}, nil})
+	m = updated.(Model)
+	if !strings.Contains(m.err, "unknown directive") || command == nil {
+		t.Fatalf("reload failure was not retained: err=%q command=%v", m.err, command)
+	}
+
+	updated, _ = m.Update(snapshotMsg{generation: m.generation, snapshot: sampleSnapshot()})
+	m = updated.(Model)
+	if !strings.Contains(m.err, "unknown directive") {
+		t.Fatal("the refresh immediately cleared the reload error")
+	}
+	updated, _ = m.Update(errorExpiredMsg(m.errorID))
+	if updated.(Model).err != "" {
+		t.Fatal("the reload error did not expire")
 	}
 }
 

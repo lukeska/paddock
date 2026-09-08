@@ -18,6 +18,7 @@ import (
 const (
 	refreshInterval = 5 * time.Second
 	toastDuration   = 3 * time.Second
+	errorDuration   = 7 * time.Second
 )
 
 type API interface {
@@ -78,6 +79,7 @@ type Model struct {
 	spinnerFrame   int
 	status         string
 	toastID        int
+	errorID        int
 	logTitle       string
 	err            string
 	generation     int
@@ -121,6 +123,7 @@ type logsMsg struct {
 }
 type tickMsg time.Time
 type toastExpiredMsg int
+type errorExpiredMsg int
 type spinnerTickMsg int
 type openSiteMsg struct {
 	host string
@@ -214,7 +217,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = "Could not refresh Paddock: " + msg.err.Error()
 			return m, nil
 		}
-		m.snapshot, m.loaded, m.err = msg.snapshot, true, ""
+		m.snapshot, m.loaded = msg.snapshot, true
 		m.styles = newStyles(m.terminalDark, msg.snapshot.Theme)
 		m.clampCursor()
 		m.clampDetailCursor()
@@ -262,6 +265,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.result.Detail != nil {
 				m.err += ": " + *msg.result.Detail
 			}
+			m.errorID++
+			toast = dismissError(m.errorID)
 		} else {
 			m.err = ""
 			m.status = msg.result.Summary
@@ -347,6 +352,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case toastExpiredMsg:
 		if int(msg) == m.toastID {
 			m.status = ""
+		}
+	case errorExpiredMsg:
+		if int(msg) == m.errorID {
+			m.err = ""
 		}
 	case tickMsg:
 		command := tick()
@@ -1083,6 +1092,9 @@ func (m Model) launchDetailTool(tool string) (tea.Model, tea.Cmd) {
 }
 
 func nginxConfigLabel(site backend.Site) string {
+	if site.NginxConfigError {
+		return " Error · Edit"
+	}
 	if site.CustomConfigPresent {
 		return "Edit"
 	}
@@ -1121,9 +1133,13 @@ func (m Model) editSiteConfiguration() (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg {
 		result, err := api.EnsureSiteConfiguration(site.Name)
 		if err == nil && result.OK {
-			// Ignored deliberately: the file is ready either way, and a
-			// missing handler must not read as a failure to prepare it.
-			_ = launcher("xdg-open", path)
+			// Omarchy knows whether the configured editor is graphical or
+			// terminal-based. In the latter case it opens a new terminal;
+			// xdg-open would otherwise start Neovim without an interactive
+			// TTY while Bubble Tea still owns this one.
+			if launchErr := launcher("omarchy-launch-editor", path); launchErr != nil {
+				err = fmt.Errorf("could not open nginx configuration: %w", launchErr)
+			}
 		}
 		return mutationMsg{generation, result, err}
 	}
@@ -1360,6 +1376,7 @@ var serviceKinds = []struct{ kind, label, port string }{
 	{"postgres", "PostgreSQL", "5432"},
 	{"mailpit", "Mailpit", "1025"},
 	{"meilisearch", "Meilisearch", "7700"},
+	{"rustfs", "RustFS", "9000"},
 }
 
 func (m Model) selectedService() (backend.ServiceInstance, bool) {
@@ -1657,7 +1674,9 @@ func (m Model) renderSiteDetail() string {
 		if ledState != "" {
 			value = m.stateDot(ledState) + " " + siteCell(action.value, max(1, valueWidth-2))
 		}
-		if action.id == "url" || action.id == "path" || action.id == "terminal" || action.id == "zed" || action.id == "nginx-edit" || action.id == "nginx-reload" || strings.HasSuffix(action.id, "-logs") {
+		if action.id == "nginx-edit" && site.NginxConfigError {
+			value = m.styles.error.Render(siteCell(action.value, valueWidth))
+		} else if action.id == "url" || action.id == "path" || action.id == "terminal" || action.id == "zed" || action.id == "nginx-edit" || action.id == "nginx-reload" || strings.HasSuffix(action.id, "-logs") {
 			value = styledDetailValue(action.value, valueWidth, m.styles.accent.Underline(true))
 		}
 		line := marker + siteCell(action.label, labelWidth) + "  " + value
@@ -1780,6 +1799,12 @@ func (m Model) renderFooter() string {
 func dismissToast(identifier int) tea.Cmd {
 	return tea.Tick(toastDuration, func(time.Time) tea.Msg {
 		return toastExpiredMsg(identifier)
+	})
+}
+
+func dismissError(identifier int) tea.Cmd {
+	return tea.Tick(errorDuration, func(time.Time) tea.Msg {
+		return errorExpiredMsg(identifier)
 	})
 }
 

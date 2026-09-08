@@ -112,6 +112,7 @@ type Site struct {
 	// offer to create one; CustomConfigPresent says whether it exists yet.
 	CustomConfig        string `json:"custom_config"`
 	CustomConfigPresent bool   `json:"custom_config_present"`
+	NginxConfigError    bool   `json:"nginx_config_error"`
 
 	// A fragment the project ships. Status is one of none, missing,
 	// pending, changed, trusted; anything but trusted means nothing from

@@ -63,10 +63,15 @@ class Catalog:
     # instance naturally receives 1026 and 8026.
     additional_ports: tuple[tuple[int, int], ...] = ()
     dashboard_port: int | None = None
+    dashboard_path: str = ""
     # Container environment. Held here rather than in state on purpose: these
     # are facts about an image, not user preferences, and a user-writable
     # environment would be a way to reconfigure a container by editing JSON.
     environment: tuple[tuple[str, str], ...] = ()
+    # Fixed container-engine flags and image arguments required by a catalog
+    # entry. They are authored by Paddock and never read from user state.
+    run_arguments: tuple[str, ...] = ()
+    command: tuple[str, ...] = ()
     # What a stock Laravel `.env` should say to reach it, printed on `add`.
     connection: tuple[tuple[str, str], ...] = ()
     # Argv run inside the container to decide readiness. It must speak the
@@ -165,6 +170,33 @@ CATALOG: dict[str, Catalog] = {
             ("MEILISEARCH_KEY", "null"),
         ),
         ready=("curl", "--fail", "--silent", "http://127.0.0.1:7700/health"),
+    ),
+    "rustfs": Catalog(
+        image="docker.io/rustfs/rustfs:1.0.0-beta.12",
+        port=9000,
+        container_port=9000,
+        data="/data",
+        volume="paddock-rustfs",
+        additional_ports=((1, 9001),),
+        dashboard_port=9001,
+        dashboard_path="/rustfs/console/",
+        environment=(
+            ("RUSTFS_ACCESS_KEY", "lerd"),
+            ("RUSTFS_SECRET_KEY", "lerdpassword"),
+        ),
+        run_arguments=("--userns", "keep-id:uid=10001,gid=10001"),
+        command=("--console-enable", "/data"),
+        connection=(
+            ("FILESYSTEM_DISK", "s3"),
+            ("AWS_ACCESS_KEY_ID", "lerd"),
+            ("AWS_SECRET_ACCESS_KEY", "lerdpassword"),
+            ("AWS_DEFAULT_REGION", "us-east-1"),
+            ("AWS_BUCKET", "lerd"),
+            ("AWS_URL", "http://127.0.0.1:9000"),
+            ("AWS_ENDPOINT", "http://127.0.0.1:9000"),
+            ("AWS_USE_PATH_STYLE_ENDPOINT", "true"),
+        ),
+        ready=("curl", "--fail", "--silent", "http://127.0.0.1:9000/health"),
     ),
 }
 
@@ -289,6 +321,8 @@ class ServiceManager:
             f"Environment={key}={value}\n" for key, value in catalog.environment
         )
         env_flags = "".join(f" --env {key}={value}" for key, value in catalog.environment)
+        run_flags = "".join(f" {argument}" for argument in catalog.run_arguments)
+        command = "".join(f" {argument}" for argument in catalog.command)
         port_flags = "".join(
             f" --publish 127.0.0.1:{host}:{container}"
             for host, container in mapped_ports(catalog, service.port)
@@ -304,9 +338,9 @@ class ServiceManager:
             + environment +
             f"ExecStart=/usr/bin/{ENGINE} run --replace --rm --sdnotify=conmon"
             f" --name {service.container}"
-            f"{port_flags}{volume_flag}"
+            f"{port_flags}{volume_flag}{run_flags}"
             f"{env_flags}"
-            f" --pull missing -- {service.image}\n"
+            f" --pull missing -- {service.image}{command}\n"
             + (
                 f"ExecStartPost=/usr/bin/timeout {READY_TIMEOUT} /bin/sh -c"
                 f" 'until /usr/bin/{ENGINE} exec {service.container}"

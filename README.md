@@ -40,7 +40,7 @@ signing, CI attestations, and automated publication are still being completed.
   static site — is detected from committed files and decides its document
   root and routing rules.
 - Each managed PHP minor runs in an isolated PHP-FPM service.
-- Supporting services (Redis, MySQL, PostgreSQL, Mailpit, Meilisearch) run as rootless containers
+- Supporting services (Redis, MySQL, PostgreSQL, Mailpit, Meilisearch, RustFS) run as rootless containers
   in user systemd units, published on loopback only.
 - A committed `paddock.yml` describes what a project needs; `paddock init`
   converges the machine towards it, idempotently.

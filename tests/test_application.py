@@ -240,6 +240,21 @@ class LinkedSitesSnapshotTests(ApplicationFixture, unittest.TestCase):
         self.assertEqual("https://shop.test", snapshot.sites[1].url)
         self.assertEqual(str(root / "shop"), snapshot.sites[1].root)
 
+    def test_it_marks_the_site_whose_nginx_fragment_was_rejected(self) -> None:
+        project = self.store.paths.data / "projects" / "shop"
+        (project / "public").mkdir(parents=True)
+        self.store.write("sites", {"schema_version": 1, "sites": {"shop": {
+            "name": "shop", "root": str(project), "php": "8.5", "secured": True,
+        }}})
+        fragment = self.store.paths.config / "nginx/shop.custom.conf"
+        fragment.parent.mkdir(parents=True)
+        fragment.write_text("broken on;\n", encoding="utf-8")
+        status = self.store.paths.state / "nginx-config-watcher.json"
+        status.write_text(json.dumps({"paths": [str(fragment)], "error": "rejected"}))
+
+        site = self.controller(StateRunner()).linked_sites_snapshot().sites[0]
+        self.assertTrue(site.nginx_config_error)
+
     def test_php_change_relinks_the_site_and_refreshes_the_snapshot(self) -> None:
         project = self.store.paths.data / "projects" / "shop"
         (project / "public").mkdir(parents=True)

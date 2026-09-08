@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import errno
+import json
 from pathlib import Path
 import re
 import shutil
@@ -22,6 +23,7 @@ from typing import Callable
 
 from .artifacts import ArtifactManifest, ManifestError, normalized_architecture
 from .atomic import atomic_write, exclusive_lock
+from .config_watcher import ConfigWatcher
 from .parking import ParkingManager
 from .php_runtime import RuntimeInstaller
 from .node_runtime import NodeInstaller, NodeManifest, NodeRegistry
@@ -72,6 +74,7 @@ def service_image_version(image: str) -> str:
 
 SERVICE_VERSION_PARTS = {
     "redis": 3, "mysql": 3, "postgres": 2, "mailpit": 3, "meilisearch": 3,
+    "rustfs": 3,
 }
 
 
@@ -247,6 +250,7 @@ class LinkedSiteView:
     # exists yet, so a client can offer to create it.
     custom_config: str = ""
     custom_config_present: bool = False
+    nginx_config_error: bool = False
     # A fragment the project ships. `project_config_status` is one of none,
     # missing, pending, changed, trusted; anything but trusted means nothing
     # from the repository is being served.
@@ -467,6 +471,20 @@ class PaddockController:
             ).configurations()
         except (OSError, StateError, ValueError):
             configurations = {}
+        try:
+            watcher_status = json.loads(
+                ConfigWatcher(self.store, self.runner).status_path.read_text(encoding="utf-8")
+            )
+            rejected_paths = set(watcher_status.get("paths", ()))
+        except (OSError, ValueError, TypeError):
+            rejected_paths = set()
+
+        def configuration_view(site):
+            values = _configuration_view(configurations.get(site.name))
+            custom, _present, project, _status = values
+            project_path = str(site.root / project) if project else None
+            failed = custom in rejected_paths or project_path in rejected_paths
+            return (*values[:2], failed, *values[2:])
         return LinkedSitesSnapshot(tuple(
             LinkedSiteView(
                 site.name,
@@ -487,7 +505,7 @@ class PaddockController:
                 queue.enabled(site.name),
                 site.driver,
                 site.document_root,
-                *_configuration_view(configurations.get(site.name)),
+                *configuration_view(site),
             )
             for site in sorted(sites, key=lambda item: item.name.casefold())
         ), versions, node_versions)
@@ -794,6 +812,7 @@ class PaddockController:
             if not configuration.user.exists():
                 atomic_write(configuration.user, siteconfig.template(name).encode())
                 manager.reproject()
+            ConfigWatcher(self.store, self.runner).install()
         except (OSError, RuntimeError, ValueError, StateError) as error:
             return LinkedSitesOperationResult(
                 False, "Site configuration could not be prepared", str(error),
@@ -1127,7 +1146,7 @@ class PaddockController:
 
         title = {
             "mysql": "MySQL", "postgres": "PostgreSQL", "redis": "Redis",
-            "mailpit": "Mailpit", "meilisearch": "Meilisearch",
+            "mailpit": "Mailpit", "meilisearch": "Meilisearch", "rustfs": "RustFS",
         }[name]
         return DashboardOperationResult(
             True,

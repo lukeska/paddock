@@ -35,9 +35,9 @@ a mouse click.
   changing one is `paddock link --type`. `Nginx config` creates the site's own
   fragment if it does not exist yet and opens it. `From the project` appears
   only when the project ships a fragment, and says whether it is applied before
-  activating it changes that. `Apply config edits` re-checks every fragment and
-  reloads; a rejection is shown with nginx's own message, naming the file and
-  line.
+  activating it changes that. Saved fragment edits are picked up, validated,
+  and reloaded automatically. `Apply config edits` remains a manual retry; a
+  rejection is shown with nginx's own message, naming the file and line.
 - `o` opens the selected site in the system browser.
 - With mouse reporting available, clicking a row opens its detail view and
   clicking its Open link launches the site directly.

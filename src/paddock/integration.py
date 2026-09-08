@@ -8,6 +8,7 @@ from typing import Callable
 
 from .artifacts import ArtifactManifest, ManifestError, normalized_architecture
 from .composer import install_composer
+from .config_watcher import ConfigWatcher
 from .php_runtime import RuntimeInstaller
 from .parking import ParkingManager
 from .services import ServiceManager
@@ -40,6 +41,7 @@ INSTALL_CHANGES = (
     "install a pinned, checksum-verified Composer release",
     "enable project-aware php and composer commands in new terminals",
     "install the latest supported Node.js LTS runtime on first setup",
+    "automatically validate and apply saved nginx configuration fragments",
 )
 
 REMOVE_CHANGES = (
@@ -101,6 +103,7 @@ class Integration:
             shutil.rmtree(self.store.paths.state / legacy, ignore_errors=True)
         RuntimeInstaller(self.store, self.runner).reproject()
         ServiceManager(self.store, self.runner).reproject()
+        ConfigWatcher(self.store, self.runner).install()
         self._ensure_ca()
 
     def install(self) -> None:
@@ -166,6 +169,7 @@ class Integration:
         return install_shell_integration(self.store.paths.home)
 
     def uninstall(self) -> None:
+        ConfigWatcher(self.store, self.runner).remove()
         if self.store.paths.home is not None:
             remove_shell_integration(self.store.paths.home)
         self._helper("uninstall")

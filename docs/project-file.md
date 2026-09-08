@@ -74,10 +74,16 @@ Your own directives need no trust, because you wrote them:
 
 ```
 paddock config edit         # your own fragment for this site
-paddock reload              # apply a fragment you edited elsewhere
+paddock reload              # manually retry or diagnose an automatic reload
 ```
 
-Both are included at the end of the site's server block, the project's first
+Saved fragment changes are detected automatically. Paddock waits briefly for
+atomic editor saves to settle, validates the complete candidate with `nginx -t`,
+and reloads only when it is valid. A rejected edit leaves the last working
+generation active; `paddock reload` remains available to retry it and print the
+exact nginx error.
+
+Both fragments are included at the end of the site's server block, the project's first
 and yours last, so a plain directive overrides the generated one above it. A
 `location` is different: nginx prefers the longest matching prefix and only
 then tries regular expressions in order, so to beat one of Paddock's generated
@@ -85,7 +91,8 @@ regex locations use `^~` or an exact `=` match. Everything is validated with
 `nginx -t` before it is promoted, so a mistake is reported against your file
 and the site keeps serving what it served before.
 
-Supported services are `mailpit`, `meilisearch`, `mysql`, `postgres`, and `redis`.
+Supported services are `mailpit`, `meilisearch`, `mysql`, `postgres`, `redis`, and
+`rustfs`.
 `version` replaces
 only the image tag; the registry and repository stay Paddock's, so a project
 file cannot point the machine at an arbitrary image.

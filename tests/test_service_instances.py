@@ -111,6 +111,24 @@ class ServiceInstanceTests(unittest.TestCase):
             self.manager.connection_lines(search.id),
         )
 
+    def test_rustfs_has_s3_console_and_laravel_connection(self) -> None:
+        storage = self.manager.create("rustfs", "Object Storage", 9010)
+        self.assertEqual(((9010, 9000), (9011, 9001)), self.manager.ports(storage.id))
+        self.assertEqual(
+            "http://127.0.0.1:9011/rustfs/console/",
+            self.manager.dashboard_url(storage.id),
+        )
+        self.assertEqual(
+            (
+                "FILESYSTEM_DISK=s3", "AWS_ACCESS_KEY_ID=lerd",
+                "AWS_SECRET_ACCESS_KEY=lerdpassword", "AWS_DEFAULT_REGION=us-east-1",
+                "AWS_BUCKET=lerd", "AWS_URL=http://127.0.0.1:9010",
+                "AWS_ENDPOINT=http://127.0.0.1:9010",
+                "AWS_USE_PATH_STYLE_ENDPOINT=true",
+            ),
+            self.manager.connection_lines(storage.id),
+        )
+
     def test_an_unchanged_active_port_can_be_saved(self) -> None:
         instance = self.manager.create("redis", "Cache", 6379)
         unavailable = ServiceInstanceManager(

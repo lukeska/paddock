@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from paddock.integration import INSTALL_CHANGES, REMOVE_CHANGES, Integration
+from paddock.integration import INSTALL_CHANGES, REMOVE_CHANGES, SYSTEM_HELPER, Integration
 from paddock.artifacts import normalized_architecture
 from paddock.paths import Paths
 from paddock.state import StateStore
@@ -101,8 +101,8 @@ class IntegrationTests(unittest.TestCase):
         with patch.dict("os.environ", {"USER": "demo"}, clear=False):
             integration.install()
             integration.uninstall()
-        install = self.fake.calls[-2]
-        uninstall = self.fake.calls[-1]
+        helpers = [call for call in self.fake.calls if call[:2] == ["sudo", str(SYSTEM_HELPER)]]
+        install, uninstall = helpers
         self.assertEqual(install[2:5], ["install", "--user", "demo"])
         self.assertEqual(uninstall[2:5], ["uninstall", "--user", "demo"])
         self.assertIn(str(self.store.paths.data), install)

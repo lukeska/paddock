@@ -238,7 +238,7 @@ class ServiceInstanceManager:
             return None
         for host, container in mapped_ports(catalog, instance.port):
             if container == catalog.dashboard_port:
-                return f"http://127.0.0.1:{host}"
+                return f"http://127.0.0.1:{host}{catalog.dashboard_path}"
         return None
 
     def states_of(self, instances: list[ServiceInstance]) -> dict[str, str]:
@@ -296,6 +296,8 @@ class ServiceInstanceManager:
         env_flags = "".join(
             f" --env {key}={value}" for key, value in catalog.environment
         )
+        run_flags = "".join(f" {argument}" for argument in catalog.run_arguments)
+        command = "".join(f" {argument}" for argument in catalog.command)
         port_flags = "".join(
             f" --publish 127.0.0.1:{host}:{container}"
             for host, container in mapped_ports(catalog, instance.port)
@@ -310,8 +312,8 @@ class ServiceInstanceManager:
             + environment
             + f"ExecStart=/usr/bin/{ENGINE} run --replace --rm --sdnotify=conmon"
             f" --name {instance.container}"
-            f"{port_flags}{volume_flag}{env_flags}"
-            f" --pull missing -- {instance.image}\n"
+            f"{port_flags}{volume_flag}{run_flags}{env_flags}"
+            f" --pull missing -- {instance.image}{command}\n"
             + (
                 f"ExecStartPost=/usr/bin/timeout {READY_TIMEOUT} /bin/sh -c"
                 f" 'until /usr/bin/{ENGINE} exec {instance.container}"
