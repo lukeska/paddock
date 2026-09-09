@@ -13,6 +13,12 @@ from paddock.application import (
     LinkedSitesOperationResult,
     LinkedSitesSnapshot,
     LogResult,
+    PhpInstallResult,
+    PhpVersionView,
+    PhpVersionsSnapshot,
+    NodeInstallResult,
+    NodeVersionView,
+    NodeVersionsSnapshot,
     ServiceInstanceOperationResult,
     ServiceInstancesSnapshot,
 )
@@ -36,6 +42,26 @@ class FakeController:
 
     def linked_sites_snapshot(self):
         return LinkedSitesSnapshot((self.site,), ("8.4",), ("22",))
+
+    def php_versions_snapshot(self):
+        return PhpVersionsSnapshot((
+            PhpVersionView("8.5", "8.5.8", "x86_64", False, True, None),
+            PhpVersionView("8.4", "8.4.23", "x86_64", True, True, "/php/8.4"),
+        ), "x86_64")
+
+    def install_php(self, minor):
+        self.calls.append(("php", "install", minor))
+        return PhpInstallResult(True, f"installed PHP {minor}", None, self.php_versions_snapshot())
+
+    def node_versions_snapshot(self):
+        return NodeVersionsSnapshot((
+            NodeVersionView("24", "24.8.0", "x86_64", False, True, None),
+            NodeVersionView("22", "22.19.0", "x86_64", True, True, "/node/22"),
+        ), "x86_64")
+
+    def install_node(self, major):
+        self.calls.append(("node", "install", major))
+        return NodeInstallResult(True, f"installed Node.js {major}", None, self.node_versions_snapshot())
 
     def _result(self, summary: str):
         return LinkedSitesOperationResult(True, summary, None, self.linked_sites_snapshot())
@@ -129,7 +155,7 @@ class BridgeTests(unittest.TestCase):
         )
         return [json.loads(line) for line in output.getvalue().splitlines()], controller
 
-    def test_snapshot_has_all_three_application_surfaces(self):
+    def test_snapshot_has_all_application_surfaces(self):
         responses, _ = self.invoke(request(7, "snapshot.get"))
         response = responses[0]
         self.assertEqual(7, response["id"])
@@ -138,6 +164,8 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual("linguine", response["result"]["sites"]["sites"][0]["name"])
         self.assertIn("services", response["result"])
         self.assertIn("dashboard", response["result"])
+        self.assertEqual("8.5.8", response["result"]["php"]["versions"][0]["release"])
+        self.assertEqual("24.8.0", response["result"]["node"]["versions"][0]["release"])
         self.assertIsNone(response["result"]["theme"])
 
     def test_snapshot_carries_the_validated_omarchy_palette(self):
@@ -183,6 +211,18 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(responses[0]["ok"])
         self.assertEqual("dashboard changed", responses[0]["result"]["summary"])
         self.assertEqual([("dashboard", False)], controller.calls)
+
+    def test_php_install_is_dispatched(self):
+        responses, controller = self.invoke(request(1, "php.install", {"minor": "8.5"}))
+        self.assertTrue(responses[0]["ok"])
+        self.assertEqual("installed PHP 8.5", responses[0]["result"]["summary"])
+        self.assertEqual([("php", "install", "8.5")], controller.calls)
+
+    def test_node_install_is_dispatched(self):
+        responses, controller = self.invoke(request(1, "node.install", {"major": "24"}))
+        self.assertTrue(responses[0]["ok"])
+        self.assertEqual("installed Node.js 24", responses[0]["result"]["summary"])
+        self.assertEqual([("node", "install", "24")], controller.calls)
 
     def test_service_instance_operations_are_dispatched(self):
         responses, controller = self.invoke(

@@ -22,10 +22,14 @@ A service detail view exposes connection variables, container and volume
 information, lifecycle controls, logs, settings, and removal.
 The search input remains visible above the table and can be focused with `/` or
 a mouse click.
+PHP lists published runtimes for the current architecture, distinguishes
+installed and installable releases, and installs the selected release without
+leaving the TUI.
+Node.js provides the same workflow for the published LTS runtime catalog.
 
 ## Keyboard controls
 
-- `tab` and `shift+tab` switch sections; `1`, `2`, and `3` jump directly to one.
+- `tab` and `shift+tab` switch sections; `1` through `5` jump directly to one.
 - On Dashboard, `space` activates the visible Start All or Stop All control. The
   control shows a spinner and the pending action until the operation finishes.
 - up/down or `j`/`k` select a site.
@@ -53,6 +57,11 @@ a mouse click.
   autostart, open recent journal logs, edit its name and port, or remove it.
   Removal requires a separate confirmation because it permanently deletes the
   service's Podman data volume.
+- On PHP, up/down selects a release and `enter` installs an available runtime.
+  Installed releases are read-only and installation displays a spinner until
+  it completes.
+- On Node.js, up/down selects an LTS release and `enter` installs it. Installed
+  releases are read-only and installation displays a spinner until completion.
 - `r` refreshes immediately; the UI also refreshes every five seconds.
 - `q` or `ctrl+c` exits.
 

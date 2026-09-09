@@ -19,10 +19,10 @@ from .state import StateStore
 from .ui.theme import ThemeError, load_palette
 
 
-# 3 adds service-instance creation, editing, lifecycle, logs, and removal.
+# 5 adds Node.js runtime discovery and installation.
 # The bridge and the Go client ship in one package, so both
 # sides check for equality and move together.
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 5
 WORKERS = {"queue", "reverb"}
 
 
@@ -87,6 +87,8 @@ def dispatch(
             "dashboard": asdict(controller.dashboard_snapshot()),
             "services": asdict(controller.service_instances_snapshot()),
             "sites": asdict(controller.linked_sites_snapshot()),
+            "php": asdict(controller.php_versions_snapshot()),
+            "node": asdict(controller.node_versions_snapshot()),
             "theme": _theme(palette_path),
         }
 
@@ -102,6 +104,14 @@ def dispatch(
         _only(params, {"active"})
         active = _required_bool(params, "active")
         return asdict(controller.set_dashboard_active(active))
+
+    if method == "php.install":
+        _only(params, {"minor"})
+        return asdict(controller.install_php(_required_string(params, "minor")))
+
+    if method == "node.install":
+        _only(params, {"major"})
+        return asdict(controller.install_node(_required_string(params, "major")))
 
     if method == "service.create":
         _only(params, {"type", "label", "port", "autostart"})

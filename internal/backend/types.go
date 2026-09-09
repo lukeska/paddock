@@ -5,7 +5,51 @@ type Snapshot struct {
 	Dashboard       DashboardSnapshot        `json:"dashboard"`
 	Services        ServiceInstancesSnapshot `json:"services"`
 	Sites           LinkedSitesSnapshot      `json:"sites"`
+	PHP             PHPVersionsSnapshot      `json:"php"`
+	Node            NodeVersionsSnapshot     `json:"node"`
 	Theme           *ThemePalette            `json:"theme"`
+}
+
+type PHPVersion struct {
+	Minor        string  `json:"minor"`
+	Release      string  `json:"release"`
+	Architecture string  `json:"architecture"`
+	Installed    bool    `json:"installed"`
+	Available    bool    `json:"available"`
+	Path         *string `json:"path"`
+}
+
+type PHPVersionsSnapshot struct {
+	Versions     []PHPVersion `json:"versions"`
+	Architecture string       `json:"architecture"`
+}
+
+type PHPInstallResult struct {
+	OK       bool                `json:"ok"`
+	Summary  string              `json:"summary"`
+	Detail   *string             `json:"detail"`
+	Snapshot PHPVersionsSnapshot `json:"snapshot"`
+}
+
+type NodeVersion struct {
+	Major        string  `json:"major"`
+	Release      string  `json:"release"`
+	Architecture string  `json:"architecture"`
+	Installed    bool    `json:"installed"`
+	Available    bool    `json:"available"`
+	Path         *string `json:"path"`
+}
+
+type NodeVersionsSnapshot struct {
+	Versions     []NodeVersion `json:"versions"`
+	Architecture string        `json:"architecture"`
+}
+
+type NodeInstallResult struct {
+	OK       bool                 `json:"ok"`
+	Summary  string               `json:"summary"`
+	Detail   *string              `json:"detail"`
+	Snapshot NodeVersionsSnapshot `json:"snapshot"`
 }
 
 type ThemePalette struct {

@@ -21,6 +21,14 @@ func (f *fakeAPI) Snapshot() (backend.Snapshot, error) { return f.snapshot, nil 
 func (f *fakeAPI) SetDashboardActive(bool) (backend.DashboardOperationResult, error) {
 	return backend.DashboardOperationResult{}, nil
 }
+func (f *fakeAPI) InstallPHP(minor string) (backend.PHPInstallResult, error) {
+	f.calls = append(f.calls, "php-install:"+minor)
+	return backend.PHPInstallResult{OK: true, Summary: "Installed PHP " + minor, Snapshot: f.snapshot.PHP}, nil
+}
+func (f *fakeAPI) InstallNode(major string) (backend.NodeInstallResult, error) {
+	f.calls = append(f.calls, "node-install:"+major)
+	return backend.NodeInstallResult{OK: true, Summary: "Installed Node.js " + major, Snapshot: f.snapshot.Node}, nil
+}
 func (f *fakeAPI) CreateService(kind, label string, port *int, autostart bool) (backend.ServiceOperationResult, error) {
 	f.calls = append(f.calls, fmt.Sprintf("service-create:%s:%s:%d:%t", kind, label, *port, autostart))
 	return backend.ServiceOperationResult{OK: true}, nil
@@ -82,7 +90,7 @@ func sampleSnapshot() backend.Snapshot {
 	node := "22"
 	projectConfig := ".paddock/nginx.conf"
 	return backend.Snapshot{
-		ProtocolVersion: 3,
+		ProtocolVersion: backend.ProtocolVersion,
 		Dashboard: backend.DashboardSnapshot{Services: []backend.DashboardService{{
 			Key: "web", Title: "Web", Group: "web", State: "active", Detail: "Serving sites", Configured: true,
 		}}},
@@ -92,6 +100,14 @@ func sampleSnapshot() backend.Snapshot {
 			Connection: []string{"REDIS_HOST=127.0.0.1", "REDIS_PORT=6379"},
 			Addresses:  []string{"127.0.0.1:6379 → 6379"},
 		}}},
+		PHP: backend.PHPVersionsSnapshot{Architecture: "x86_64", Versions: []backend.PHPVersion{
+			{Minor: "8.5", Release: "8.5.8", Architecture: "x86_64", Available: true},
+			{Minor: "8.4", Release: "8.4.23", Architecture: "x86_64", Available: true, Installed: true},
+		}},
+		Node: backend.NodeVersionsSnapshot{Architecture: "x86_64", Versions: []backend.NodeVersion{
+			{Major: "24", Release: "24.8.0", Architecture: "x86_64", Available: true},
+			{Major: "22", Release: "22.19.0", Architecture: "x86_64", Available: true, Installed: true},
+		}},
 		Sites: backend.LinkedSitesSnapshot{Sites: []backend.Site{{
 			Name: "linguine", Host: "linguine.test", URL: "https://linguine.test",
 			PHP: "8.5", Node: &node, Secured: true, Root: "/srv/linguine",
@@ -101,6 +117,58 @@ func sampleSnapshot() backend.Snapshot {
 			CustomConfig:  "/home/demo/.config/paddock/nginx/linguine.custom.conf",
 			ProjectConfig: &projectConfig, ProjectConfigStatus: "pending",
 		}}},
+	}
+}
+
+func TestPHPPageListsAndInstallsAvailableVersions(t *testing.T) {
+	api := &fakeAPI{}
+	m := NewWithAPI(api)
+	m.loaded, m.snapshot, m.tab, m.width = true, sampleSnapshot(), 3, 80
+	api.snapshot = m.snapshot
+	rendered := ansi.Strip(m.renderPHP())
+	if !strings.Contains(rendered, "PHP 8.5.8") || !strings.Contains(rendered, "[ Install ]") || !strings.Contains(rendered, "✓ Installed") {
+		t.Fatalf("PHP runtime states are missing: %q", rendered)
+	}
+	updated, command := m.installSelectedPHP()
+	m = updated.(Model)
+	if !m.phpBusy || command == nil {
+		t.Fatal("available PHP did not start installation")
+	}
+	message := executeCommand(command)
+	if message == nil || len(api.calls) == 0 || api.calls[len(api.calls)-1] != "php-install:8.5" {
+		t.Fatalf("PHP install calls = %v", api.calls)
+	}
+
+	m.phpCursor = 1
+	_, command = m.installSelectedPHP()
+	if command != nil {
+		t.Fatal("installed PHP offered another installation")
+	}
+}
+
+func TestNodePageListsAndInstallsAvailableVersions(t *testing.T) {
+	api := &fakeAPI{}
+	m := NewWithAPI(api)
+	m.loaded, m.snapshot, m.tab, m.width = true, sampleSnapshot(), 4, 80
+	api.snapshot = m.snapshot
+	rendered := ansi.Strip(m.renderNode())
+	if !strings.Contains(rendered, "Node.js 24.8.0") || !strings.Contains(rendered, "[ Install ]") || !strings.Contains(rendered, "✓ Installed") {
+		t.Fatalf("Node.js runtime states are missing: %q", rendered)
+	}
+	updated, command := m.installSelectedNode()
+	m = updated.(Model)
+	if !m.nodeBusy || command == nil {
+		t.Fatal("available Node.js did not start installation")
+	}
+	executeCommand(command)
+	if len(api.calls) == 0 || api.calls[len(api.calls)-1] != "node-install:24" {
+		t.Fatalf("Node.js install calls = %v", api.calls)
+	}
+
+	m.nodeCursor = 1
+	_, command = m.installSelectedNode()
+	if command != nil {
+		t.Fatal("installed Node.js offered another installation")
 	}
 }
 

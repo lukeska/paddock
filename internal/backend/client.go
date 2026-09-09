@@ -14,7 +14,7 @@ import (
 // Moves with tui_bridge.PROTOCOL_VERSION. Both sides check for equality
 // rather than a minimum, because the bridge and this client ship in the
 // same package and a mismatch means a broken install, not an old peer.
-const ProtocolVersion = 3
+const ProtocolVersion = 5
 
 type rpcError struct {
 	Code    string `json:"code"`
@@ -131,6 +131,18 @@ func (c *Client) SetDashboardActive(active bool) (DashboardOperationResult, erro
 	err := c.call("dashboard.set_active", map[string]interface{}{
 		"active": active,
 	}, &result)
+	return result, err
+}
+
+func (c *Client) InstallPHP(minor string) (PHPInstallResult, error) {
+	var result PHPInstallResult
+	err := c.call("php.install", map[string]interface{}{"minor": minor}, &result)
+	return result, err
+}
+
+func (c *Client) InstallNode(major string) (NodeInstallResult, error) {
+	var result NodeInstallResult
+	err := c.call("node.install", map[string]interface{}{"major": major}, &result)
 	return result, err
 }
 

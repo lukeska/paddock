@@ -43,10 +43,24 @@ def sites() -> dict[str, object]:
 
 def snapshot(state: str = "active") -> dict[str, object]:
     return {
-        "protocol_version": 3,
+        "protocol_version": 5,
         "dashboard": dashboard(state),
         "services": {"instances": []},
         "sites": sites(),
+        "php": {
+            "architecture": "x86_64",
+            "versions": [
+                {"minor": "8.5", "release": "8.5.8", "architecture": "x86_64", "installed": True, "available": True, "path": "/php/8.5"},
+                {"minor": "8.4", "release": "8.4.23", "architecture": "x86_64", "installed": False, "available": True, "path": None},
+            ],
+        },
+        "node": {
+            "architecture": "x86_64",
+            "versions": [
+                {"major": "24", "release": "24.8.0", "architecture": "x86_64", "installed": False, "available": True, "path": None},
+                {"major": "22", "release": "22.19.0", "architecture": "x86_64", "installed": True, "available": True, "path": "/node/22"},
+            ],
+        },
         "theme": None,
     }
 
@@ -69,6 +83,10 @@ for line in sys.stdin:
         }
     elif method == "worker.logs":
         result = {"lines": ["fixture log line"]}
+    elif method == "php.install":
+        result = {"ok": True, "summary": f"Installed PHP {params['minor']}", "detail": None, "snapshot": snapshot()["php"]}
+    elif method == "node.install":
+        result = {"ok": True, "summary": f"Installed Node.js {params['major']}", "detail": None, "snapshot": snapshot()["node"]}
     else:
         result = {
             "ok": True, "summary": f"Completed {method}", "detail": None,

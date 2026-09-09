@@ -24,6 +24,8 @@ const (
 type API interface {
 	Snapshot() (backend.Snapshot, error)
 	SetDashboardActive(active bool) (backend.DashboardOperationResult, error)
+	InstallPHP(minor string) (backend.PHPInstallResult, error)
+	InstallNode(major string) (backend.NodeInstallResult, error)
 	CreateService(kind, label string, port *int, autostart bool) (backend.ServiceOperationResult, error)
 	SetServiceActive(id string, active bool) (backend.ServiceOperationResult, error)
 	UpdateService(id, label string, port int, autostart bool) (backend.ServiceOperationResult, error)
@@ -55,6 +57,8 @@ type Model struct {
 	detailSite     string
 	detailCursor   int
 	serviceCursor  int
+	phpCursor      int
+	nodeCursor     int
 	serviceDetail  bool
 	serviceID      string
 	serviceAction  int
@@ -66,6 +70,10 @@ type Model struct {
 	serviceBoot    bool
 	serviceConfirm bool
 	serviceBusy    bool
+	phpBusy        bool
+	phpInstalling  string
+	nodeBusy       bool
+	nodeInstalling string
 	openURL        func(string) error
 	launchCommand  func(string, ...string) error
 	filtering      bool
@@ -104,6 +112,16 @@ type mutationMsg struct {
 type dashboardMutationMsg struct {
 	generation int
 	result     backend.DashboardOperationResult
+	err        error
+}
+type phpInstallMsg struct {
+	generation int
+	result     backend.PHPInstallResult
+	err        error
+}
+type nodeInstallMsg struct {
+	generation int
+	result     backend.NodeInstallResult
 	err        error
 }
 type serviceMutationMsg struct {
@@ -222,6 +240,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampCursor()
 		m.clampDetailCursor()
 		m.clampServiceCursor()
+		m.clampPHPCursor()
+		m.clampNodeCursor()
 	case mutationMsg:
 		if msg.generation != m.generation {
 			return m, nil
@@ -276,6 +296,56 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.generation++
 		m.busy = true
 		return m, tea.Batch(load(m.api, m.generation), toast)
+	case phpInstallMsg:
+		if msg.generation != m.generation {
+			return m, nil
+		}
+		m.busy, m.phpBusy, m.phpInstalling = false, false, ""
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			return m, nil
+		}
+		m.snapshot.PHP = msg.result.Snapshot
+		m.status = ""
+		var toast tea.Cmd
+		if !msg.result.OK {
+			m.err = msg.result.Summary
+			if msg.result.Detail != nil {
+				m.err += ": " + *msg.result.Detail
+			}
+		} else {
+			m.err, m.status = "", msg.result.Summary
+			m.toastID++
+			toast = dismissToast(m.toastID)
+		}
+		m.generation++
+		m.busy = true
+		return m, tea.Batch(load(m.api, m.generation), toast)
+	case nodeInstallMsg:
+		if msg.generation != m.generation {
+			return m, nil
+		}
+		m.busy, m.nodeBusy, m.nodeInstalling = false, false, ""
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			return m, nil
+		}
+		m.snapshot.Node = msg.result.Snapshot
+		m.status = ""
+		var toast tea.Cmd
+		if !msg.result.OK {
+			m.err = msg.result.Summary
+			if msg.result.Detail != nil {
+				m.err += ": " + *msg.result.Detail
+			}
+		} else {
+			m.err, m.status = "", msg.result.Summary
+			m.toastID++
+			toast = dismissToast(m.toastID)
+		}
+		m.generation++
+		m.busy = true
+		return m, tea.Batch(load(m.api, m.generation), toast)
 	case serviceMutationMsg:
 		if msg.generation != m.generation {
 			return m, nil
@@ -320,7 +390,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.logs, m.logsOpen, m.logOffset, m.err = msg.result.Lines, true, 0, ""
 		m.logTitle = msg.label + " logs"
 	case spinnerTickMsg:
-		if (m.dashboardBusy || m.serviceBusy) && int(msg) == m.generation {
+		if (m.dashboardBusy || m.serviceBusy || m.phpBusy || m.nodeBusy) && int(msg) == m.generation {
 			m.spinnerFrame++
 			return m, spinnerTick(m.generation)
 		}
@@ -513,11 +583,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "tab":
-		m.tab = (m.tab + 1) % 3
+		m.tab = (m.tab + 1) % 5
 		m.cursor = 0
 		m.detailOpen = false
 	case "shift+tab":
-		m.tab = (m.tab + 3 - 1) % 3
+		m.tab = (m.tab + 5 - 1) % 5
 		m.cursor = 0
 		m.detailOpen = false
 	case "1":
@@ -532,17 +602,31 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.tab = 2
 		m.serviceCursor = 0
 		m.serviceDetail = false
+	case "4":
+		m.tab = 3
+		m.phpCursor = 0
+	case "5":
+		m.tab = 4
+		m.nodeCursor = 0
 	case "j", "down":
 		if m.tab == 1 && m.cursor < len(m.filteredSites())-1 {
 			m.cursor++
 		} else if m.tab == 2 && m.serviceCursor < len(m.snapshot.Services.Instances)-1 {
 			m.serviceCursor++
+		} else if m.tab == 3 && m.phpCursor < len(m.snapshot.PHP.Versions)-1 {
+			m.phpCursor++
+		} else if m.tab == 4 && m.nodeCursor < len(m.snapshot.Node.Versions)-1 {
+			m.nodeCursor++
 		}
 	case "k", "up":
 		if m.tab == 1 && m.cursor > 0 {
 			m.cursor--
 		} else if m.tab == 2 && m.serviceCursor > 0 {
 			m.serviceCursor--
+		} else if m.tab == 3 && m.phpCursor > 0 {
+			m.phpCursor--
+		} else if m.tab == 4 && m.nodeCursor > 0 {
+			m.nodeCursor--
 		}
 	case "/":
 		if m.tab == 1 {
@@ -561,6 +645,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if service, ok := m.selectedService(); ok {
 				m.serviceDetail, m.serviceID, m.serviceAction = true, service.ID, 0
 			}
+		} else if m.tab == 3 {
+			return m.installSelectedPHP()
+		} else if m.tab == 4 {
+			return m.installSelectedNode()
 		}
 	case "a":
 		if m.tab == 2 {
@@ -1302,6 +1390,10 @@ func (m Model) render() string {
 		body = m.renderSiteDetail()
 	} else if m.tab == 1 {
 		body = m.renderSites()
+	} else if m.tab == 3 {
+		body = m.renderPHP()
+	} else if m.tab == 4 {
+		body = m.renderNode()
 	} else if m.serviceForm != "" {
 		body = m.renderServiceForm()
 	} else if m.serviceDetail {
@@ -1321,7 +1413,10 @@ func (m Model) render() string {
 }
 
 func (m Model) renderTabs() string {
-	names := []string{"Dashboard", "Sites", "Services"}
+	names := []string{"Dashboard", "Sites", "Services", "PHP", "Node.js"}
+	if m.width < 60 {
+		names = []string{"Dash", "Sites", "Svc", "PHP", "Node"}
+	}
 	parts := make([]string, len(names))
 	for index, name := range names {
 		if index == m.tab {
@@ -1368,6 +1463,128 @@ func (m Model) renderDashboard() string {
 		sections = append(sections, m.renderFieldset(title(group), lines))
 	}
 	return control + "\n\n" + strings.Join(sections, "\n\n")
+}
+
+func (m *Model) clampPHPCursor() {
+	last := len(m.snapshot.PHP.Versions) - 1
+	if last < 0 {
+		m.phpCursor = 0
+	} else if m.phpCursor > last {
+		m.phpCursor = last
+	}
+}
+
+func (m Model) renderPHP() string {
+	versions := m.snapshot.PHP.Versions
+	if len(versions) == 0 {
+		return m.styles.section.Render("PHP runtimes") + "\n\n" +
+			m.styles.muted.Render("No PHP versions are available for this architecture.")
+	}
+	tableWidth := max(40, m.width-8)
+	releaseWidth := max(12, tableWidth-39)
+	header := "  " + siteCell("Version", releaseWidth) + "  " + siteCell("Architecture", 14) + "  Status"
+	lines := []string{m.styles.section.Render("PHP runtimes"), "", m.styles.muted.Render(truncate(header, tableWidth))}
+	for index, version := range versions {
+		marker, status := "  ", "Unavailable"
+		if version.Installed {
+			status = "✓ Installed"
+		} else if version.Available {
+			status = "[ Install ]"
+		}
+		if m.phpBusy && version.Minor == m.phpInstalling {
+			frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+			status = frames[m.spinnerFrame%len(frames)] + " Installing"
+		}
+		if index == m.phpCursor {
+			marker = "› "
+		}
+		line := marker + siteCell("PHP "+version.Release, releaseWidth) + "  " +
+			siteCell(version.Architecture, 14) + "  " + status
+		line = truncate(line, tableWidth)
+		if index == m.phpCursor {
+			line = m.styles.selected.Width(tableWidth).Render(line)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) installSelectedPHP() (tea.Model, tea.Cmd) {
+	if m.api == nil || m.busy || m.phpCursor < 0 || m.phpCursor >= len(m.snapshot.PHP.Versions) {
+		return m, nil
+	}
+	version := m.snapshot.PHP.Versions[m.phpCursor]
+	if version.Installed || !version.Available {
+		return m, nil
+	}
+	m.busy, m.phpBusy, m.phpInstalling, m.err, m.status = true, true, version.Minor, "", ""
+	m.generation++
+	generation, api := m.generation, m.api
+	return m, tea.Batch(func() tea.Msg {
+		result, err := api.InstallPHP(version.Minor)
+		return phpInstallMsg{generation, result, err}
+	}, spinnerTick(generation))
+}
+
+func (m *Model) clampNodeCursor() {
+	last := len(m.snapshot.Node.Versions) - 1
+	if last < 0 {
+		m.nodeCursor = 0
+	} else if m.nodeCursor > last {
+		m.nodeCursor = last
+	}
+}
+
+func (m Model) renderNode() string {
+	versions := m.snapshot.Node.Versions
+	if len(versions) == 0 {
+		return m.styles.section.Render("Node.js runtimes") + "\n\n" +
+			m.styles.muted.Render("No Node.js LTS versions are available for this architecture.")
+	}
+	tableWidth := max(40, m.width-8)
+	releaseWidth := max(12, tableWidth-39)
+	header := "  " + siteCell("Version", releaseWidth) + "  " + siteCell("Architecture", 14) + "  Status"
+	lines := []string{m.styles.section.Render("Node.js runtimes"), "", m.styles.muted.Render(truncate(header, tableWidth))}
+	for index, version := range versions {
+		marker, status := "  ", "Unavailable"
+		if version.Installed {
+			status = "✓ Installed"
+		} else if version.Available {
+			status = "[ Install ]"
+		}
+		if m.nodeBusy && version.Major == m.nodeInstalling {
+			frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+			status = frames[m.spinnerFrame%len(frames)] + " Installing"
+		}
+		if index == m.nodeCursor {
+			marker = "› "
+		}
+		line := marker + siteCell("Node.js "+version.Release, releaseWidth) + "  " +
+			siteCell(version.Architecture, 14) + "  " + status
+		line = truncate(line, tableWidth)
+		if index == m.nodeCursor {
+			line = m.styles.selected.Width(tableWidth).Render(line)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) installSelectedNode() (tea.Model, tea.Cmd) {
+	if m.api == nil || m.busy || m.nodeCursor < 0 || m.nodeCursor >= len(m.snapshot.Node.Versions) {
+		return m, nil
+	}
+	version := m.snapshot.Node.Versions[m.nodeCursor]
+	if version.Installed || !version.Available {
+		return m, nil
+	}
+	m.busy, m.nodeBusy, m.nodeInstalling, m.err, m.status = true, true, version.Major, "", ""
+	m.generation++
+	generation, api := m.generation, m.api
+	return m, tea.Batch(func() tea.Msg {
+		result, err := api.InstallNode(version.Major)
+		return nodeInstallMsg{generation, result, err}
+	}, spinnerTick(generation))
 }
 
 var serviceKinds = []struct{ kind, label, port string }{
@@ -1770,7 +1987,7 @@ func (m Model) renderLogs() string {
 func (m Model) logHeight() int { return max(3, m.height-11) }
 
 func (m Model) renderFooter() string {
-	help := "space start/stop all · tab/shift+tab sections · 1/2/3 jump · r refresh · q quit"
+	help := "space start/stop all · tab/shift+tab sections · 1–5 jump · r refresh · q quit"
 	if m.tab == 1 {
 		help = "↑/↓ select · enter details · o open · / filter · tab sections · q quit"
 		if m.detailOpen {
@@ -1788,6 +2005,12 @@ func (m Model) renderFooter() string {
 		if m.serviceConfirm {
 			help = "y/enter delete service and data · n/esc cancel"
 		}
+	}
+	if m.tab == 3 {
+		help = "↑/↓ select · enter install · tab sections · r refresh · q quit"
+	}
+	if m.tab == 4 {
+		help = "↑/↓ select · enter install · tab sections · r refresh · q quit"
 	}
 	rows := []string{"", m.styles.muted.Render(truncate(help, m.width-8))}
 	if m.status != "" {
