@@ -70,15 +70,24 @@ and remove workflows. Removing an entry never deletes the folder or projects.
 - `r` refreshes immediately; the UI also refreshes every five seconds.
 - `q` or `ctrl+c` exits.
 
+An open log view has its own controls: `r` fetches the latest 200 lines without
+closing it, `c` copies every returned line to the Wayland clipboard, and
+up/down or `j`/`k` scrolls.
+
 Successful actions show a confirmation toast on a row below the keyboard
 instructions. It disappears automatically after three seconds; a previous
 toast's timer never dismisses a newer confirmation.
 Background refreshes and in-progress operations are silent so the footer does
 not flash or shift vertically.
 
+Errors appear first as a compact notification. `enter` opens the complete,
+scrollable diagnostic; use up/down or `j`/`k` to scroll, `c` to copy the entire
+untruncated error to the Wayland clipboard, and `esc` to close it. Timed error
+expiry pauses while the detail view is open.
+
 At 80 columns and wider, site Details and Workers are shown side by side; on
 narrower terminals they stack vertically. The minimum supported terminal size
-is 48 by 14 cells. Errors remain visible and can be dismissed with `enter`.
+is 48 by 14 cells.
 
 ## Acceptance coverage
 

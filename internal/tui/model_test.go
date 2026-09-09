@@ -89,7 +89,8 @@ func (f *fakeAPI) ReloadWeb() (backend.DashboardOperationResult, error) {
 	f.calls = append(f.calls, "reload-web")
 	return backend.DashboardOperationResult{OK: true}, nil
 }
-func (f *fakeAPI) Logs(string, string, int) (backend.LogsResult, error) {
+func (f *fakeAPI) Logs(site, worker string, lines int) (backend.LogsResult, error) {
+	f.calls = append(f.calls, fmt.Sprintf("logs:%s:%s:%d", site, worker, lines))
 	return backend.LogsResult{}, nil
 }
 func (f *fakeAPI) Close() error { return nil }
@@ -779,6 +780,85 @@ func TestFailedDashboardMutationSurvivesRefreshAndExpires(t *testing.T) {
 	updated, _ = m.Update(errorExpiredMsg(m.errorID))
 	if updated.(Model).err != "" {
 		t.Fatal("the reload error did not expire")
+	}
+}
+
+func TestErrorDetailsScrollCopyAndPauseExpiry(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.loaded, m.snapshot, m.width, m.height = true, sampleSnapshot(), 48, 14
+	m.err, m.errorID = strings.Repeat("directive failure ", 12), 7
+	updated, _ := m.handleKey(press(tea.KeyEnter, "enter", 0))
+	m = updated.(Model)
+	if !m.errorOpen || !strings.Contains(ansi.Strip(m.render()), "Error details") {
+		t.Fatal("enter did not open the complete error view")
+	}
+	updated, _ = m.handleKey(press(tea.KeyDown, "down", 0))
+	m = updated.(Model)
+	if m.errorOffset != 1 {
+		t.Fatal("error details did not scroll")
+	}
+
+	copied := ""
+	m.copyText = func(value string) error { copied = value; return nil }
+	_, command := m.handleKey(press('c', "c", 0))
+	if command == nil {
+		t.Fatal("copy did not create a command")
+	}
+	message := command()
+	if copied != m.err {
+		t.Fatalf("copied truncated error %q", copied)
+	}
+	updated, _ = m.Update(message)
+	m = updated.(Model)
+	if m.status != "Copied error" || !m.errorOpen {
+		t.Fatal("copy feedback closed the error view")
+	}
+
+	updated, command = m.Update(errorExpiredMsg(7))
+	m = updated.(Model)
+	if m.err == "" || command == nil {
+		t.Fatal("automatic expiry was not paused while details were open")
+	}
+	updated, _ = m.handleKey(press(tea.KeyEscape, "esc", 0))
+	m = updated.(Model)
+	if m.errorOpen || m.err != "" {
+		t.Fatal("escape did not close and dismiss the error")
+	}
+}
+
+func TestOpenLogsCanBeCopiedAndRefreshed(t *testing.T) {
+	api := &fakeAPI{}
+	m := NewWithAPI(api)
+	m.logsOpen, m.logs = true, []string{"first", "second"}
+	m.logKind, m.logServiceID, m.logTitle = "service", "redis-a1", "Cache logs"
+	copied := ""
+	m.copyText = func(value string) error { copied = value; return nil }
+
+	_, command := m.handleKey(press('c', "c", 0))
+	if command == nil {
+		t.Fatal("log copy did not create a command")
+	}
+	updated, _ := m.Update(command())
+	m = updated.(Model)
+	if copied != "first\nsecond\n" || m.status != "Copied logs" || !m.logsOpen {
+		t.Fatalf("log copy result: copied=%q status=%q open=%t", copied, m.status, m.logsOpen)
+	}
+
+	updated, command = m.handleKey(press('r', "r", 0))
+	m = updated.(Model)
+	if !m.busy || command == nil {
+		t.Fatal("log refresh did not start")
+	}
+	executeCommand(command)
+	if api.calls[len(api.calls)-1] != "service-logs:redis-a1:200" {
+		t.Fatalf("service log refresh calls = %v", api.calls)
+	}
+
+	m.busy, m.logKind, m.logSite, m.logWorker = false, "worker", "linguine", "queue"
+	_, command = m.refreshLogs()
+	executeCommand(command)
+	if api.calls[len(api.calls)-1] != "logs:linguine:queue:200" {
+		t.Fatalf("worker log refresh calls = %v", api.calls)
 	}
 }
 

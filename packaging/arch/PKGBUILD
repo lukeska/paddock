@@ -6,11 +6,11 @@ arch=('x86_64' 'aarch64')
 url='https://github.com/lukeska/paddock'
 license=('MIT')
 depends=('python' 'python-yaml' 'python-gobject' 'gtk4' 'libadwaita' 'nginx' 'dnsmasq' 'mkcert'
-         'nss' 'p11-kit' 'networkmanager' 'polkit' 'podman')
+         'nss' 'p11-kit' 'networkmanager' 'polkit' 'podman' 'wl-clipboard')
 makedepends=('go')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz")
-sha256sums=('474e51130cff3983b1ec87af143b2be05d4270692dc18dece506e613288362fa')
+sha256sums=('1c95a5e61cbde1519194a61a32da7ca1892bf2bdcd6fe3439eecc78ec0931a2c')
 
 prepare() {
   cd "$srcdir/$pkgname-$pkgver"

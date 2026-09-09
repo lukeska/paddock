@@ -83,11 +83,16 @@ type Model struct {
 	parkingBusy    bool
 	openURL        func(string) error
 	launchCommand  func(string, ...string) error
+	copyText       func(string) error
 	filtering      bool
 	filter         string
 	logs           []string
 	logsOpen       bool
 	logOffset      int
+	logKind        string
+	logServiceID   string
+	logSite        string
+	logWorker      string
 	busy           bool
 	dashboardBusy  bool
 	dashboardGoal  bool
@@ -97,6 +102,8 @@ type Model struct {
 	errorID        int
 	logTitle       string
 	err            string
+	errorOpen      bool
+	errorOffset    int
 	generation     int
 	terminalDark   bool
 	styles         styles
@@ -142,6 +149,7 @@ type serviceMutationMsg struct {
 	err        error
 }
 type serviceLogsMsg struct {
+	id     string
 	label  string
 	result backend.ServiceLogsResult
 	err    error
@@ -163,6 +171,10 @@ type externalActionMsg struct {
 	summary string
 	err     error
 }
+type clipboardMsg struct {
+	summary string
+	err     error
+}
 
 type detailAction struct {
 	id, section, label, value string
@@ -177,6 +189,11 @@ func New(python string) Model {
 		},
 		launchCommand: func(name string, arguments ...string) error {
 			return exec.Command(name, arguments...).Run()
+		},
+		copyText: func(value string) error {
+			command := exec.Command("wl-copy")
+			command.Stdin = strings.NewReader(value)
+			return command.Run()
 		},
 	}
 }
@@ -413,10 +430,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case serviceLogsMsg:
 		m.busy = false
 		if msg.err != nil {
+			m.logsOpen = false
 			m.err = msg.err.Error()
 			return m, nil
 		}
 		if !msg.result.OK {
+			m.logsOpen = false
 			m.err = msg.result.Summary
 			if msg.result.Detail != nil {
 				m.err += ": " + *msg.result.Detail
@@ -424,6 +443,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.logs, m.logsOpen, m.logOffset, m.err = msg.result.Lines, true, 0, ""
+		m.logKind, m.logServiceID, m.logSite, m.logWorker = "service", msg.id, "", ""
 		m.logTitle = msg.label + " logs"
 	case spinnerTickMsg:
 		if (m.dashboardBusy || m.serviceBusy || m.phpBusy || m.nodeBusy || m.parkingBusy) && int(msg) == m.generation {
@@ -447,13 +467,23 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.err, m.status = "", msg.summary
 		m.toastID++
 		return m, dismissToast(m.toastID)
+	case clipboardMsg:
+		if msg.err != nil {
+			m.status = "Copy failed: " + msg.err.Error()
+		} else {
+			m.status = msg.summary
+		}
+		m.toastID++
+		return m, dismissToast(m.toastID)
 	case logsMsg:
 		m.busy = false
 		if msg.err != nil {
+			m.logsOpen = false
 			m.err = msg.err.Error()
 			return m, nil
 		}
 		m.logs, m.logsOpen, m.logOffset, m.err = msg.lines, true, 0, ""
+		m.logKind, m.logServiceID, m.logSite, m.logWorker = "worker", "", msg.site, msg.worker
 		m.logTitle = fmt.Sprintf("%s logs for %s.test", title(msg.worker), msg.site)
 	case toastExpiredMsg:
 		if int(msg) == m.toastID {
@@ -461,6 +491,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case errorExpiredMsg:
 		if int(msg) == m.errorID {
+			if m.errorOpen {
+				return m, dismissError(m.errorID)
+			}
 			m.err = ""
 		}
 	case tickMsg:
@@ -509,7 +542,7 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-	if key == "ctrl+c" || (!m.filtering && m.serviceForm == "" && !m.serviceConfirm && !m.parkingForm && !m.parkingConfirm && key == "q") {
+	if key == "ctrl+c" || (!m.errorOpen && !m.filtering && m.serviceForm == "" && !m.serviceConfirm && !m.parkingForm && !m.parkingConfirm && key == "q") {
 		return m, tea.Quit
 	}
 	if m.logsOpen {
@@ -524,8 +557,53 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if m.logOffset > 0 {
 				m.logOffset--
 			}
+		case "r":
+			return m.refreshLogs()
+		case "c":
+			if m.copyText != nil {
+				copyText := m.copyText
+				value := strings.Join(m.logs, "\n")
+				if value != "" {
+					value += "\n"
+				}
+				return m, func() tea.Msg {
+					return clipboardMsg{summary: "Copied logs", err: copyText(value)}
+				}
+			}
 		}
 		return m, nil
+	}
+	if m.errorOpen {
+		switch key {
+		case "esc", "q":
+			m.errorOpen, m.errorOffset, m.err = false, 0, ""
+		case "j", "down":
+			if m.errorOffset < max(0, len(m.errorLines())-m.errorHeight()) {
+				m.errorOffset++
+			}
+		case "k", "up":
+			if m.errorOffset > 0 {
+				m.errorOffset--
+			}
+		case "c":
+			if m.copyText != nil {
+				copyText, value := m.copyText, m.err
+				return m, func() tea.Msg {
+					return clipboardMsg{summary: "Copied error", err: copyText(value)}
+				}
+			}
+		}
+		return m, nil
+	}
+	if m.err != "" {
+		if key == "enter" {
+			m.errorOpen, m.errorOffset = true, 0
+			return m, nil
+		}
+		if key == "esc" {
+			m.err = ""
+			return m, nil
+		}
 	}
 	if m.filtering {
 		switch key {
@@ -585,10 +663,6 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.serviceForm != "" {
 		return m.handleServiceFormKey(key)
-	}
-	if m.err != "" && (key == "esc" || key == "enter") {
-		m.err = ""
-		return m, nil
 	}
 	if m.detailOpen {
 		switch key {
@@ -857,8 +931,33 @@ func (m Model) openServiceLogs(service backend.ServiceInstance) (tea.Model, tea.
 	api := m.api
 	return m, func() tea.Msg {
 		result, err := api.ServiceLogs(service.ID, 200)
-		return serviceLogsMsg{service.Label, result, err}
+		return serviceLogsMsg{service.ID, service.Label, result, err}
 	}
+}
+
+func (m Model) refreshLogs() (tea.Model, tea.Cmd) {
+	if m.api == nil || m.busy {
+		return m, nil
+	}
+	m.busy, m.status = true, ""
+	api := m.api
+	if m.logKind == "service" && m.logServiceID != "" {
+		id := m.logServiceID
+		label := strings.TrimSuffix(m.logTitle, " logs")
+		return m, func() tea.Msg {
+			result, err := api.ServiceLogs(id, 200)
+			return serviceLogsMsg{id, label, result, err}
+		}
+	}
+	if m.logKind == "worker" && m.logSite != "" && m.logWorker != "" {
+		site, worker := m.logSite, m.logWorker
+		return m, func() tea.Msg {
+			result, err := api.Logs(site, worker, 200)
+			return logsMsg{site, worker, result.Lines, err}
+		}
+	}
+	m.busy = false
+	return m, nil
 }
 
 func (m Model) removeSelectedService() (tea.Model, tea.Cmd) {
@@ -1484,8 +1583,10 @@ func (m Model) render() string {
 	if m.logsOpen {
 		content = header + "\n\n" + m.renderLogs() + "\n" + footer
 	}
-	if m.err != "" {
-		content += "\n" + m.styles.error.Render("Error: "+truncate(m.err, m.width-7)) + m.styles.muted.Render("  enter dismisses")
+	if m.errorOpen {
+		content = header + "\n\n" + m.renderError() + "\n" + footer
+	} else if m.err != "" {
+		content += "\n" + m.styles.error.Render("Error: "+truncate(m.err, m.width-7)) + m.styles.muted.Render("  enter details · esc dismiss")
 	}
 	return lipgloss.NewStyle().Padding(1, 2).Width(max(1, m.width-4)).Render(content)
 }
@@ -2142,11 +2243,40 @@ func (m Model) renderLogs() string {
 	if len(lines) == 0 {
 		lines = []string{"No journal lines were returned."}
 	}
-	titleLine := m.styles.section.Render(m.logTitle) + m.styles.muted.Render("  j/k scroll · esc close")
+	titleLine := m.styles.section.Render(m.logTitle) + m.styles.muted.Render("  j/k scroll · r refresh · c copy · esc close")
 	return titleLine + "\n\n" + m.styles.log.Render(strings.Join(lines, "\n"))
 }
 
 func (m Model) logHeight() int { return max(3, m.height-11) }
+
+func (m Model) errorLines() []string {
+	width := max(20, m.width-12)
+	lines := []string{}
+	for _, raw := range strings.Split(m.err, "\n") {
+		runes := []rune(raw)
+		if len(runes) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+		for len(runes) > width {
+			lines = append(lines, string(runes[:width]))
+			runes = runes[width:]
+		}
+		lines = append(lines, string(runes))
+	}
+	return lines
+}
+
+func (m Model) errorHeight() int { return max(3, m.height-11) }
+
+func (m Model) renderError() string {
+	lines := m.errorLines()
+	start := min(m.errorOffset, max(0, len(lines)-m.errorHeight()))
+	end := min(len(lines), start+m.errorHeight())
+	heading := m.styles.error.Render("Error details") +
+		m.styles.muted.Render("  j/k scroll · c copy · esc close")
+	return heading + "\n\n" + m.styles.error.Render(strings.Join(lines[start:end], "\n"))
+}
 
 func (m Model) renderFooter() string {
 	help := "space start/stop all · tab/shift+tab sections · 1–6 jump · r refresh · q quit"
@@ -2182,6 +2312,9 @@ func (m Model) renderFooter() string {
 		if m.parkingConfirm {
 			help = "y/enter remove parking entry · n/esc cancel"
 		}
+	}
+	if m.errorOpen {
+		help = "↑/↓ or j/k scroll · c copy complete error · esc close"
 	}
 	rows := []string{"", m.styles.muted.Render(truncate(help, m.width-8))}
 	if m.status != "" {
