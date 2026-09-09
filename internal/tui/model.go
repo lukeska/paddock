@@ -26,6 +26,8 @@ type API interface {
 	SetDashboardActive(active bool) (backend.DashboardOperationResult, error)
 	InstallPHP(minor string) (backend.PHPInstallResult, error)
 	InstallNode(major string) (backend.NodeInstallResult, error)
+	AddParkingPath(path string) (backend.ParkingOperationResult, error)
+	RemoveParkingPath(path string) (backend.ParkingOperationResult, error)
 	CreateService(kind, label string, port *int, autostart bool) (backend.ServiceOperationResult, error)
 	SetServiceActive(id string, active bool) (backend.ServiceOperationResult, error)
 	UpdateService(id, label string, port int, autostart bool) (backend.ServiceOperationResult, error)
@@ -59,6 +61,7 @@ type Model struct {
 	serviceCursor  int
 	phpCursor      int
 	nodeCursor     int
+	parkingCursor  int
 	serviceDetail  bool
 	serviceID      string
 	serviceAction  int
@@ -74,6 +77,10 @@ type Model struct {
 	phpInstalling  string
 	nodeBusy       bool
 	nodeInstalling string
+	parkingForm    bool
+	parkingPath    string
+	parkingConfirm bool
+	parkingBusy    bool
 	openURL        func(string) error
 	launchCommand  func(string, ...string) error
 	filtering      bool
@@ -122,6 +129,11 @@ type phpInstallMsg struct {
 type nodeInstallMsg struct {
 	generation int
 	result     backend.NodeInstallResult
+	err        error
+}
+type parkingMutationMsg struct {
+	generation int
+	result     backend.ParkingOperationResult
 	err        error
 }
 type serviceMutationMsg struct {
@@ -242,6 +254,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampServiceCursor()
 		m.clampPHPCursor()
 		m.clampNodeCursor()
+		m.clampParkingCursor()
 	case mutationMsg:
 		if msg.generation != m.generation {
 			return m, nil
@@ -346,6 +359,29 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.generation++
 		m.busy = true
 		return m, tea.Batch(load(m.api, m.generation), toast)
+	case parkingMutationMsg:
+		if msg.generation != m.generation {
+			return m, nil
+		}
+		m.busy, m.parkingBusy = false, false
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			return m, nil
+		}
+		m.snapshot.Parking = msg.result.Snapshot
+		if !msg.result.OK {
+			m.err = msg.result.Summary
+			if msg.result.Detail != nil {
+				m.err += ": " + *msg.result.Detail
+			}
+			return m, nil
+		}
+		m.err, m.status, m.parkingForm, m.parkingConfirm, m.parkingPath = "", msg.result.Summary, false, false, ""
+		m.toastID++
+		m.clampParkingCursor()
+		m.generation++
+		m.busy = true
+		return m, tea.Batch(load(m.api, m.generation), dismissToast(m.toastID))
 	case serviceMutationMsg:
 		if msg.generation != m.generation {
 			return m, nil
@@ -390,7 +426,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.logs, m.logsOpen, m.logOffset, m.err = msg.result.Lines, true, 0, ""
 		m.logTitle = msg.label + " logs"
 	case spinnerTickMsg:
-		if (m.dashboardBusy || m.serviceBusy || m.phpBusy || m.nodeBusy) && int(msg) == m.generation {
+		if (m.dashboardBusy || m.serviceBusy || m.phpBusy || m.nodeBusy || m.parkingBusy) && int(msg) == m.generation {
 			m.spinnerFrame++
 			return m, spinnerTick(m.generation)
 		}
@@ -473,7 +509,7 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
-	if key == "ctrl+c" || (!m.filtering && m.serviceForm == "" && !m.serviceConfirm && key == "q") {
+	if key == "ctrl+c" || (!m.filtering && m.serviceForm == "" && !m.serviceConfirm && !m.parkingForm && !m.parkingConfirm && key == "q") {
 		return m, tea.Quit
 	}
 	if m.logsOpen {
@@ -509,6 +545,33 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.cursor = 0
 		m.clampCursor()
+		return m, nil
+	}
+	if m.parkingForm {
+		switch key {
+		case "esc":
+			m.parkingForm, m.parkingPath = false, ""
+		case "enter":
+			return m.addParkingPath()
+		case "backspace":
+			if m.parkingPath != "" {
+				_, size := utf8.DecodeLastRuneInString(m.parkingPath)
+				m.parkingPath = m.parkingPath[:len(m.parkingPath)-size]
+			}
+		default:
+			if utf8.RuneCountInString(key) == 1 {
+				m.parkingPath += key
+			}
+		}
+		return m, nil
+	}
+	if m.parkingConfirm {
+		switch key {
+		case "y", "Y", "enter":
+			return m.removeSelectedParkingPath()
+		case "n", "N", "esc":
+			m.parkingConfirm = false
+		}
 		return m, nil
 	}
 	if m.serviceConfirm {
@@ -583,11 +646,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "tab":
-		m.tab = (m.tab + 1) % 5
+		m.tab = (m.tab + 1) % 6
 		m.cursor = 0
 		m.detailOpen = false
 	case "shift+tab":
-		m.tab = (m.tab + 5 - 1) % 5
+		m.tab = (m.tab + 6 - 1) % 6
 		m.cursor = 0
 		m.detailOpen = false
 	case "1":
@@ -608,6 +671,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "5":
 		m.tab = 4
 		m.nodeCursor = 0
+	case "6":
+		m.tab = 5
+		m.parkingCursor = 0
 	case "j", "down":
 		if m.tab == 1 && m.cursor < len(m.filteredSites())-1 {
 			m.cursor++
@@ -617,6 +683,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.phpCursor++
 		} else if m.tab == 4 && m.nodeCursor < len(m.snapshot.Node.Versions)-1 {
 			m.nodeCursor++
+		} else if m.tab == 5 && m.parkingCursor < len(m.snapshot.Parking.Paths)-1 {
+			m.parkingCursor++
 		}
 	case "k", "up":
 		if m.tab == 1 && m.cursor > 0 {
@@ -627,6 +695,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.phpCursor--
 		} else if m.tab == 4 && m.nodeCursor > 0 {
 			m.nodeCursor--
+		} else if m.tab == 5 && m.parkingCursor > 0 {
+			m.parkingCursor--
 		}
 	case "/":
 		if m.tab == 1 {
@@ -653,6 +723,12 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "a":
 		if m.tab == 2 {
 			m.beginAddService()
+		} else if m.tab == 5 {
+			m.parkingForm, m.parkingPath = true, ""
+		}
+	case "d":
+		if m.tab == 5 && len(m.snapshot.Parking.Paths) > 0 {
+			m.parkingConfirm = true
 		}
 	case "g":
 		if m.tab == 1 {
@@ -1394,6 +1470,8 @@ func (m Model) render() string {
 		body = m.renderPHP()
 	} else if m.tab == 4 {
 		body = m.renderNode()
+	} else if m.tab == 5 {
+		body = m.renderParking()
 	} else if m.serviceForm != "" {
 		body = m.renderServiceForm()
 	} else if m.serviceDetail {
@@ -1413,9 +1491,11 @@ func (m Model) render() string {
 }
 
 func (m Model) renderTabs() string {
-	names := []string{"Dashboard", "Sites", "Services", "PHP", "Node.js"}
+	names := []string{"Dashboard", "Sites", "Services", "PHP", "Node.js", "Parking"}
+	separator := "  "
 	if m.width < 60 {
-		names = []string{"Dash", "Sites", "Svc", "PHP", "Node"}
+		names = []string{"Dash", "Sites", "Svc", "PHP", "Node", "Park"}
+		separator = " "
 	}
 	parts := make([]string, len(names))
 	for index, name := range names {
@@ -1425,7 +1505,7 @@ func (m Model) renderTabs() string {
 			parts[index] = m.styles.tab.Render(name)
 		}
 	}
-	return strings.Join(parts, "  ")
+	return strings.Join(parts, separator)
 }
 
 func (m Model) renderDashboard() string {
@@ -1584,6 +1664,88 @@ func (m Model) installSelectedNode() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(func() tea.Msg {
 		result, err := api.InstallNode(version.Major)
 		return nodeInstallMsg{generation, result, err}
+	}, spinnerTick(generation))
+}
+
+func (m *Model) clampParkingCursor() {
+	last := len(m.snapshot.Parking.Paths) - 1
+	if last < 0 {
+		m.parkingCursor = 0
+	} else if m.parkingCursor > last {
+		m.parkingCursor = last
+	}
+}
+
+func (m Model) renderParking() string {
+	if m.parkingForm {
+		value := m.parkingPath
+		if value == "" {
+			value = "Type an absolute folder path…"
+		}
+		button := "[ Add folder ]"
+		if m.parkingBusy {
+			button = "[ Adding… ]"
+		}
+		return m.styles.section.Render("Add parking folder") + "\n\n" +
+			m.renderFieldset("Folder", []string{value}) + "\n\n" +
+			m.styles.worker.Render(button)
+	}
+	paths := m.snapshot.Parking.Paths
+	if m.parkingConfirm && len(paths) > 0 {
+		path := paths[min(m.parkingCursor, len(paths)-1)]
+		return m.styles.error.Render("Stop parking this folder?") + "\n\n" + path +
+			"\n\nThe folder and its projects will remain on disk.\n\n" +
+			m.styles.worker.Render("[ Remove parking entry ]") + m.styles.muted.Render("  y/enter confirm · n/esc cancel")
+	}
+	lines := []string{m.styles.section.Render("Parking folders") + "  " + m.styles.worker.Render("[ Add Folder ]"), ""}
+	if len(paths) == 0 {
+		lines = append(lines, m.styles.muted.Render("No parking folders are configured."))
+	} else {
+		for index, path := range paths {
+			line := "  " + path
+			if index == m.parkingCursor {
+				line = m.styles.selected.Width(max(40, m.width-8)).Render("› " + path)
+			}
+			lines = append(lines, line)
+		}
+	}
+	if len(m.snapshot.Parking.Conflicts) > 0 {
+		lines = append(lines, "", m.styles.error.Render("Conflicts"))
+		for _, conflict := range m.snapshot.Parking.Conflicts {
+			lines = append(lines, m.styles.error.Render("  "+conflict))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) addParkingPath() (tea.Model, tea.Cmd) {
+	path := strings.TrimSpace(m.parkingPath)
+	if path == "" || m.api == nil || m.busy {
+		if path == "" {
+			m.err = "Enter an absolute folder path"
+		}
+		return m, nil
+	}
+	m.busy, m.parkingBusy, m.err, m.status = true, true, "", ""
+	m.generation++
+	generation, api := m.generation, m.api
+	return m, tea.Batch(func() tea.Msg {
+		result, err := api.AddParkingPath(path)
+		return parkingMutationMsg{generation, result, err}
+	}, spinnerTick(generation))
+}
+
+func (m Model) removeSelectedParkingPath() (tea.Model, tea.Cmd) {
+	if m.api == nil || m.busy || m.parkingCursor < 0 || m.parkingCursor >= len(m.snapshot.Parking.Paths) {
+		return m, nil
+	}
+	path := m.snapshot.Parking.Paths[m.parkingCursor]
+	m.busy, m.parkingBusy, m.parkingConfirm, m.err, m.status = true, true, false, "", ""
+	m.generation++
+	generation, api := m.generation, m.api
+	return m, tea.Batch(func() tea.Msg {
+		result, err := api.RemoveParkingPath(path)
+		return parkingMutationMsg{generation, result, err}
 	}, spinnerTick(generation))
 }
 
@@ -1987,7 +2149,7 @@ func (m Model) renderLogs() string {
 func (m Model) logHeight() int { return max(3, m.height-11) }
 
 func (m Model) renderFooter() string {
-	help := "space start/stop all · tab/shift+tab sections · 1–5 jump · r refresh · q quit"
+	help := "space start/stop all · tab/shift+tab sections · 1–6 jump · r refresh · q quit"
 	if m.tab == 1 {
 		help = "↑/↓ select · enter details · o open · / filter · tab sections · q quit"
 		if m.detailOpen {
@@ -2011,6 +2173,15 @@ func (m Model) renderFooter() string {
 	}
 	if m.tab == 4 {
 		help = "↑/↓ select · enter install · tab sections · r refresh · q quit"
+	}
+	if m.tab == 5 {
+		help = "↑/↓ select · a add folder · d remove · tab sections · q quit"
+		if m.parkingForm {
+			help = "type folder path · enter add · esc cancel"
+		}
+		if m.parkingConfirm {
+			help = "y/enter remove parking entry · n/esc cancel"
+		}
 	}
 	rows := []string{"", m.styles.muted.Render(truncate(help, m.width-8))}
 	if m.status != "" {

@@ -19,10 +19,10 @@ from .state import StateStore
 from .ui.theme import ThemeError, load_palette
 
 
-# 5 adds Node.js runtime discovery and installation.
+# 6 adds parking-folder discovery and management.
 # The bridge and the Go client ship in one package, so both
 # sides check for equality and move together.
-PROTOCOL_VERSION = 5
+PROTOCOL_VERSION = 6
 WORKERS = {"queue", "reverb"}
 
 
@@ -89,6 +89,7 @@ def dispatch(
             "sites": asdict(controller.linked_sites_snapshot()),
             "php": asdict(controller.php_versions_snapshot()),
             "node": asdict(controller.node_versions_snapshot()),
+            "parking": asdict(controller.parking_snapshot()),
             "theme": _theme(palette_path),
         }
 
@@ -112,6 +113,14 @@ def dispatch(
     if method == "node.install":
         _only(params, {"major"})
         return asdict(controller.install_node(_required_string(params, "major")))
+
+    if method == "parking.add":
+        _only(params, {"path"})
+        return asdict(controller.add_parking_path(_required_string(params, "path")))
+
+    if method == "parking.remove":
+        _only(params, {"path"})
+        return asdict(controller.remove_parking_path(_required_string(params, "path")))
 
     if method == "service.create":
         _only(params, {"type", "label", "port", "autostart"})

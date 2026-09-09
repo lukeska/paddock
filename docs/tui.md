@@ -26,10 +26,12 @@ PHP lists published runtimes for the current architecture, distinguishes
 installed and installable releases, and installs the selected release without
 leaving the TUI.
 Node.js provides the same workflow for the published LTS runtime catalog.
+Parking lists the folders Paddock watches for projects and exposes explicit add
+and remove workflows. Removing an entry never deletes the folder or projects.
 
 ## Keyboard controls
 
-- `tab` and `shift+tab` switch sections; `1` through `5` jump directly to one.
+- `tab` and `shift+tab` switch sections; `1` through `6` jump directly to one.
 - On Dashboard, `space` activates the visible Start All or Stop All control. The
   control shows a spinner and the pending action until the operation finishes.
 - up/down or `j`/`k` select a site.
@@ -62,6 +64,9 @@ Node.js provides the same workflow for the published LTS runtime catalog.
   it completes.
 - On Node.js, up/down selects an LTS release and `enter` installs it. Installed
   releases are read-only and installation displays a spinner until completion.
+- On Parking, `a` opens an absolute-path input and `d` removes the selected
+  parking entry after confirmation. The confirmation makes clear that files on
+  disk are preserved.
 - `r` refreshes immediately; the UI also refreshes every five seconds.
 - `q` or `ctrl+c` exits.
 

@@ -19,6 +19,8 @@ from paddock.application import (
     NodeInstallResult,
     NodeVersionView,
     NodeVersionsSnapshot,
+    ParkingOperationResult,
+    ParkingSnapshot,
     ServiceInstanceOperationResult,
     ServiceInstancesSnapshot,
 )
@@ -62,6 +64,17 @@ class FakeController:
     def install_node(self, major):
         self.calls.append(("node", "install", major))
         return NodeInstallResult(True, f"installed Node.js {major}", None, self.node_versions_snapshot())
+
+    def parking_snapshot(self):
+        return ParkingSnapshot(("/home/demo/Code",), ())
+
+    def add_parking_path(self, path):
+        self.calls.append(("parking", "add", path))
+        return ParkingOperationResult(True, f"parked {path}", None, self.parking_snapshot())
+
+    def remove_parking_path(self, path):
+        self.calls.append(("parking", "remove", path))
+        return ParkingOperationResult(True, f"forgot {path}", None, ParkingSnapshot((), ()))
 
     def _result(self, summary: str):
         return LinkedSitesOperationResult(True, summary, None, self.linked_sites_snapshot())
@@ -166,6 +179,7 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("dashboard", response["result"])
         self.assertEqual("8.5.8", response["result"]["php"]["versions"][0]["release"])
         self.assertEqual("24.8.0", response["result"]["node"]["versions"][0]["release"])
+        self.assertEqual(["/home/demo/Code"], response["result"]["parking"]["paths"])
         self.assertIsNone(response["result"]["theme"])
 
     def test_snapshot_carries_the_validated_omarchy_palette(self):
@@ -223,6 +237,17 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(responses[0]["ok"])
         self.assertEqual("installed Node.js 24", responses[0]["result"]["summary"])
         self.assertEqual([("node", "install", "24")], controller.calls)
+
+    def test_parking_mutations_are_dispatched(self):
+        responses, controller = self.invoke(
+            request(1, "parking.add", {"path": "/home/demo/Projects"}),
+            request(2, "parking.remove", {"path": "/home/demo/Code"}),
+        )
+        self.assertTrue(all(response["ok"] for response in responses))
+        self.assertEqual([
+            ("parking", "add", "/home/demo/Projects"),
+            ("parking", "remove", "/home/demo/Code"),
+        ], controller.calls)
 
     def test_service_instance_operations_are_dispatched(self):
         responses, controller = self.invoke(

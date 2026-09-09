@@ -43,7 +43,7 @@ def sites() -> dict[str, object]:
 
 def snapshot(state: str = "active") -> dict[str, object]:
     return {
-        "protocol_version": 5,
+        "protocol_version": 6,
         "dashboard": dashboard(state),
         "services": {"instances": []},
         "sites": sites(),
@@ -61,6 +61,7 @@ def snapshot(state: str = "active") -> dict[str, object]:
                 {"major": "22", "release": "22.19.0", "architecture": "x86_64", "installed": True, "available": True, "path": "/node/22"},
             ],
         },
+        "parking": {"paths": ["/home/demo/Code"], "conflicts": []},
         "theme": None,
     }
 
@@ -87,6 +88,10 @@ for line in sys.stdin:
         result = {"ok": True, "summary": f"Installed PHP {params['minor']}", "detail": None, "snapshot": snapshot()["php"]}
     elif method == "node.install":
         result = {"ok": True, "summary": f"Installed Node.js {params['major']}", "detail": None, "snapshot": snapshot()["node"]}
+    elif method == "parking.add":
+        result = {"ok": True, "summary": f"Parked {params['path']}", "detail": None, "snapshot": snapshot()["parking"]}
+    elif method == "parking.remove":
+        result = {"ok": True, "summary": f"Forgot {params['path']}", "detail": None, "snapshot": {"paths": [], "conflicts": []}}
     else:
         result = {
             "ok": True, "summary": f"Completed {method}", "detail": None,

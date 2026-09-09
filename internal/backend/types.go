@@ -7,6 +7,7 @@ type Snapshot struct {
 	Sites           LinkedSitesSnapshot      `json:"sites"`
 	PHP             PHPVersionsSnapshot      `json:"php"`
 	Node            NodeVersionsSnapshot     `json:"node"`
+	Parking         ParkingSnapshot          `json:"parking"`
 	Theme           *ThemePalette            `json:"theme"`
 }
 
@@ -50,6 +51,18 @@ type NodeInstallResult struct {
 	Summary  string               `json:"summary"`
 	Detail   *string              `json:"detail"`
 	Snapshot NodeVersionsSnapshot `json:"snapshot"`
+}
+
+type ParkingSnapshot struct {
+	Paths     []string `json:"paths"`
+	Conflicts []string `json:"conflicts"`
+}
+
+type ParkingOperationResult struct {
+	OK       bool            `json:"ok"`
+	Summary  string          `json:"summary"`
+	Detail   *string         `json:"detail"`
+	Snapshot ParkingSnapshot `json:"snapshot"`
 }
 
 type ThemePalette struct {

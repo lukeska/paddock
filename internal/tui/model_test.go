@@ -29,6 +29,14 @@ func (f *fakeAPI) InstallNode(major string) (backend.NodeInstallResult, error) {
 	f.calls = append(f.calls, "node-install:"+major)
 	return backend.NodeInstallResult{OK: true, Summary: "Installed Node.js " + major, Snapshot: f.snapshot.Node}, nil
 }
+func (f *fakeAPI) AddParkingPath(path string) (backend.ParkingOperationResult, error) {
+	f.calls = append(f.calls, "parking-add:"+path)
+	return backend.ParkingOperationResult{OK: true, Summary: "Parked " + path, Snapshot: backend.ParkingSnapshot{Paths: []string{path}}}, nil
+}
+func (f *fakeAPI) RemoveParkingPath(path string) (backend.ParkingOperationResult, error) {
+	f.calls = append(f.calls, "parking-remove:"+path)
+	return backend.ParkingOperationResult{OK: true, Summary: "Forgot " + path, Snapshot: backend.ParkingSnapshot{}}, nil
+}
 func (f *fakeAPI) CreateService(kind, label string, port *int, autostart bool) (backend.ServiceOperationResult, error) {
 	f.calls = append(f.calls, fmt.Sprintf("service-create:%s:%s:%d:%t", kind, label, *port, autostart))
 	return backend.ServiceOperationResult{OK: true}, nil
@@ -108,6 +116,7 @@ func sampleSnapshot() backend.Snapshot {
 			{Major: "24", Release: "24.8.0", Architecture: "x86_64", Available: true},
 			{Major: "22", Release: "22.19.0", Architecture: "x86_64", Available: true, Installed: true},
 		}},
+		Parking: backend.ParkingSnapshot{Paths: []string{"/home/demo/Code"}},
 		Sites: backend.LinkedSitesSnapshot{Sites: []backend.Site{{
 			Name: "linguine", Host: "linguine.test", URL: "https://linguine.test",
 			PHP: "8.5", Node: &node, Secured: true, Root: "/srv/linguine",
@@ -169,6 +178,42 @@ func TestNodePageListsAndInstallsAvailableVersions(t *testing.T) {
 	_, command = m.installSelectedNode()
 	if command != nil {
 		t.Fatal("installed Node.js offered another installation")
+	}
+}
+
+func TestParkingPageAddsAndRemovesWithoutDeletingTheFolder(t *testing.T) {
+	api := &fakeAPI{}
+	m := NewWithAPI(api)
+	m.loaded, m.snapshot, m.tab, m.width = true, sampleSnapshot(), 5, 80
+	api.snapshot = m.snapshot
+	if rendered := ansi.Strip(m.renderParking()); !strings.Contains(rendered, "/home/demo/Code") || !strings.Contains(rendered, "Add Folder") {
+		t.Fatalf("parking page is incomplete: %q", rendered)
+	}
+
+	m.parkingForm, m.parkingPath = true, "/home/demo/Projects"
+	updated, command := m.addParkingPath()
+	m = updated.(Model)
+	if !m.parkingBusy || command == nil {
+		t.Fatal("parking add did not start")
+	}
+	executeCommand(command)
+	if api.calls[len(api.calls)-1] != "parking-add:/home/demo/Projects" {
+		t.Fatalf("parking add calls = %v", api.calls)
+	}
+
+	m.busy, m.parkingBusy, m.parkingForm, m.parkingCursor = false, false, false, 0
+	updated, command = m.removeSelectedParkingPath()
+	if command == nil {
+		t.Fatal("parking removal did not start")
+	}
+	executeCommand(command)
+	if api.calls[len(api.calls)-1] != "parking-remove:/home/demo/Code" {
+		t.Fatalf("parking remove calls = %v", api.calls)
+	}
+	m = updated.(Model)
+	m.parkingConfirm = true
+	if rendered := ansi.Strip(m.renderParking()); !strings.Contains(rendered, "remain on disk") {
+		t.Fatalf("removal confirmation does not explain preservation: %q", rendered)
 	}
 }
 
