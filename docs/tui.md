@@ -47,6 +47,11 @@ and remove workflows. Removing an entry never deletes the folder or projects.
 - `o` opens the selected site in the system browser.
 - With mouse reporting available, clicking a row opens its detail view and
   clicking its Open link launches the site directly.
+- Tabs and primary controls can also be clicked. Clicking a service or detail
+  row opens or activates it; runtime rows install available releases; and the
+  Dashboard, Services, and Parking headers expose their Start/Add controls.
+  The mouse wheel moves through tables and detail actions, and scrolls open log
+  or error views by three lines at a time.
 - `/` filters sites by name or path.
 - In site details, up/down selects an action and `enter` activates it. Left/right
   cycles installed PHP or Node versions when the corresponding row is selected.

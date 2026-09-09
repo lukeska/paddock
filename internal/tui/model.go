@@ -509,6 +509,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, command
 	case tea.MouseClickMsg:
 		return m.handleMouseClick(msg)
+	case tea.MouseWheelMsg:
+		return m.handleMouseWheel(msg)
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
@@ -516,7 +518,106 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
-	if msg.Button != tea.MouseLeft || m.tab != 1 || m.detailOpen {
+	if msg.Button != tea.MouseLeft {
+		return m, nil
+	}
+	if m.errorOpen || m.logsOpen {
+		return m, nil
+	}
+	if tab, ok := m.tabAt(msg.X, msg.Y); ok {
+		m.tab, m.cursor, m.detailOpen, m.serviceDetail = tab, 0, false, false
+		m.serviceForm, m.serviceConfirm, m.parkingForm, m.parkingConfirm, m.filtering = "", false, false, false, false
+		return m, nil
+	}
+	if m.serviceConfirm {
+		if msg.Y == 7 {
+			return m.removeSelectedService()
+		}
+		return m, nil
+	}
+	if m.parkingConfirm {
+		if msg.Y == 9 {
+			return m.removeSelectedParkingPath()
+		}
+		return m, nil
+	}
+	if m.serviceForm != "" {
+		if msg.Y >= 6 && msg.Y <= 9 {
+			m.serviceField = msg.Y - 6
+			return m, nil
+		}
+		if msg.Y == 11 {
+			return m.saveServiceForm()
+		}
+		return m, nil
+	}
+	if m.parkingForm {
+		if msg.Y == 9 {
+			return m.addParkingPath()
+		}
+		return m, nil
+	}
+	if m.tab == 0 {
+		if msg.Y == 3 {
+			return m.mutateDashboard()
+		}
+		return m, nil
+	}
+	if m.tab == 2 && m.serviceDetail {
+		if index, ok := clickedDetailAction(m.renderServiceDetail(), m.serviceActions(), msg.X, msg.Y, m.width); ok {
+			m.serviceAction = index
+			return m.activateServiceAction()
+		}
+		return m, nil
+	}
+	if m.tab == 1 && m.detailOpen {
+		if index, ok := clickedDetailAction(m.renderSiteDetail(), m.detailActions(), msg.X, msg.Y, m.width); ok {
+			m.detailCursor = index
+			return m.activateDetailAction()
+		}
+		return m, nil
+	}
+	if m.tab == 2 {
+		if msg.Y == 3 {
+			m.beginAddService()
+			return m, nil
+		}
+		index := msg.Y - 6
+		if index >= 0 && index < len(m.snapshot.Services.Instances) {
+			m.serviceCursor = index
+			service := m.snapshot.Services.Instances[index]
+			m.serviceDetail, m.serviceID, m.serviceAction = true, service.ID, 0
+		}
+		return m, nil
+	}
+	if m.tab == 3 {
+		index := msg.Y - 6
+		if index >= 0 && index < len(m.snapshot.PHP.Versions) {
+			m.phpCursor = index
+			return m.installSelectedPHP()
+		}
+		return m, nil
+	}
+	if m.tab == 4 {
+		index := msg.Y - 6
+		if index >= 0 && index < len(m.snapshot.Node.Versions) {
+			m.nodeCursor = index
+			return m.installSelectedNode()
+		}
+		return m, nil
+	}
+	if m.tab == 5 {
+		if msg.Y == 3 {
+			m.parkingForm, m.parkingPath, m.parkingMatches = true, "", nil
+			return m, nil
+		}
+		index := msg.Y - 5
+		if index >= 0 && index < len(m.snapshot.Parking.Paths) {
+			m.parkingCursor, m.parkingConfirm = index, true
+		}
+		return m, nil
+	}
+	if m.tab != 1 {
 		return m, nil
 	}
 	if msg.Y >= 3 && msg.Y <= 5 {
@@ -540,6 +641,87 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m.openSelectedSite()
 	}
 	m.detailOpen, m.detailSite = true, sites[m.cursor].Name
+	return m, nil
+}
+
+func (m Model) tabAt(x, y int) (int, bool) {
+	if y != 1 {
+		return 0, false
+	}
+	names, separator := []string{"Dashboard", "Sites", "Services", "PHP", "Node.js", "Parking"}, 2
+	if m.width < 60 {
+		names, separator = []string{"Dash", "Sites", "Svc", "PHP", "Node", "Park"}, 1
+	}
+	left := 11 // two cells of outer padding, PADDOCK, then two spaces
+	for index, name := range names {
+		right := left + ansi.StringWidth(name)
+		if x >= left && x < right {
+			return index, true
+		}
+		left = right + separator
+	}
+	return 0, false
+}
+
+func clickedDetailAction(rendered string, actions []detailAction, x, y, width int) (int, bool) {
+	line := y - 3 // body begins below the padded header and blank separator
+	rows := strings.Split(ansi.Strip(rendered), "\n")
+	if line < 0 || line >= len(rows) {
+		return 0, false
+	}
+	candidates := []int{}
+	for index, action := range actions {
+		if strings.Contains(rows[line], action.label) {
+			candidates = append(candidates, index)
+		}
+	}
+	if len(candidates) == 1 {
+		return candidates[0], true
+	}
+	if len(candidates) > 1 && width >= 80 {
+		wantWorkers := x >= width/2
+		for _, index := range candidates {
+			if (actions[index].section == "Workers") == wantWorkers {
+				return index, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	delta := 1
+	if msg.Button == tea.MouseWheelUp {
+		delta = -1
+	} else if msg.Button != tea.MouseWheelDown {
+		return m, nil
+	}
+	if m.logsOpen {
+		m.logOffset = min(max(0, len(m.logs)-m.logHeight()), max(0, m.logOffset+delta*3))
+		return m, nil
+	}
+	if m.errorOpen {
+		m.errorOffset = min(max(0, len(m.errorLines())-m.errorHeight()), max(0, m.errorOffset+delta*3))
+		return m, nil
+	}
+	if m.detailOpen {
+		m.detailCursor = min(max(0, len(m.detailActions())-1), max(0, m.detailCursor+delta))
+	} else if m.serviceDetail {
+		m.serviceAction = min(max(0, len(m.serviceActions())-1), max(0, m.serviceAction+delta))
+	} else {
+		switch m.tab {
+		case 1:
+			m.cursor = min(max(0, len(m.filteredSites())-1), max(0, m.cursor+delta))
+		case 2:
+			m.serviceCursor = min(max(0, len(m.snapshot.Services.Instances)-1), max(0, m.serviceCursor+delta))
+		case 3:
+			m.phpCursor = min(max(0, len(m.snapshot.PHP.Versions)-1), max(0, m.phpCursor+delta))
+		case 4:
+			m.nodeCursor = min(max(0, len(m.snapshot.Node.Versions)-1), max(0, m.nodeCursor+delta))
+		case 5:
+			m.parkingCursor = min(max(0, len(m.snapshot.Parking.Paths)-1), max(0, m.parkingCursor+delta))
+		}
+	}
 	return m, nil
 }
 

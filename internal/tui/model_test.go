@@ -780,6 +780,74 @@ func TestMouseClickOpensRowOrItsOpenLink(t *testing.T) {
 	}
 }
 
+func TestMouseCanNavigateTabsAndPrimaryTables(t *testing.T) {
+	api := &fakeAPI{}
+	m := NewWithAPI(api)
+	m.loaded, m.snapshot, m.width, m.height = true, sampleSnapshot(), 80, 24
+
+	updated, _ := m.handleMouseClick(tea.MouseClickMsg{X: 29, Y: 1, Button: tea.MouseLeft})
+	m = updated.(Model)
+	if m.tab != 2 {
+		t.Fatalf("clicking Services tab selected tab %d", m.tab)
+	}
+	updated, _ = m.handleMouseClick(tea.MouseClickMsg{X: 4, Y: 6, Button: tea.MouseLeft})
+	m = updated.(Model)
+	if !m.serviceDetail || m.serviceID != "redis-a1" {
+		t.Fatal("clicking a service row did not open its details")
+	}
+
+	m.serviceDetail = false
+	updated, _ = m.handleMouseClick(tea.MouseClickMsg{X: 39, Y: 1, Button: tea.MouseLeft})
+	m = updated.(Model)
+	if m.tab != 3 {
+		t.Fatalf("clicking PHP tab selected tab %d", m.tab)
+	}
+	updated, command := m.handleMouseClick(tea.MouseClickMsg{X: 4, Y: 6, Button: tea.MouseLeft})
+	if command == nil || !updated.(Model).phpBusy {
+		t.Fatal("clicking an available PHP runtime did not start installation")
+	}
+}
+
+func TestMouseActivatesDetailRowsAndScrollsOverlays(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.loaded, m.snapshot, m.tab, m.width, m.height = true, sampleSnapshot(), 1, 80, 14
+	m.detailOpen, m.detailSite = true, "linguine"
+	actions := m.detailActions()
+	index, ok := clickedDetailAction(m.renderSiteDetail(), actions, 6, 6, m.width)
+	if !ok || actions[index].id != "security" {
+		t.Fatalf("first clicked detail action = %v, %t", index, ok)
+	}
+
+	m.logsOpen = true
+	m.logs = []string{"1", "2", "3", "4", "5", "6", "7", "8"}
+	updated, _ := m.handleMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = updated.(Model)
+	if m.logOffset == 0 {
+		t.Fatal("mouse wheel did not scroll the log viewport")
+	}
+	updated, _ = m.handleMouseWheel(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	if updated.(Model).logOffset != 0 {
+		t.Fatal("mouse wheel did not scroll the log viewport back to the top")
+	}
+}
+
+func TestMouseClicksDashboardAndParkingControls(t *testing.T) {
+	api := &fakeAPI{}
+	m := NewWithAPI(api)
+	m.loaded, m.snapshot, m.width, m.height = true, sampleSnapshot(), 80, 24
+	updated, command := m.handleMouseClick(tea.MouseClickMsg{X: 4, Y: 3, Button: tea.MouseLeft})
+	if command == nil || !updated.(Model).dashboardBusy {
+		t.Fatal("clicking the dashboard control did not start the operation")
+	}
+
+	m = NewWithAPI(api)
+	m.loaded, m.snapshot, m.tab, m.width, m.height = true, sampleSnapshot(), 5, 80, 24
+	updated, _ = m.handleMouseClick(tea.MouseClickMsg{X: 4, Y: 3, Button: tea.MouseLeft})
+	if !updated.(Model).parkingForm {
+		t.Fatal("clicking Add Folder did not open the parking form")
+	}
+}
+
 func TestSitesAlwaysShowASearchBox(t *testing.T) {
 	m := NewWithAPI(&fakeAPI{})
 	m.loaded, m.snapshot, m.tab, m.width = true, sampleSnapshot(), 1, 80
