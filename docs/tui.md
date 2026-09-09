@@ -58,7 +58,9 @@ and remove workflows. Removing an entry never deletes the folder or projects.
 - `enter` on a service opens its details. Actions start or stop it, toggle
   autostart, open recent journal logs, edit its name and port, or remove it.
   Removal requires a separate confirmation because it permanently deletes the
-  service's Podman data volume.
+  service's Podman data volume. Selecting the Connection row and pressing
+  `enter`, or pressing `c` anywhere in service details, copies its complete
+  multiline environment block.
 - On PHP, up/down selects a release and `enter` installs an available runtime.
   Installed releases are read-only and installation displays a spinner until
   it completes.
@@ -66,7 +68,9 @@ and remove workflows. Removing an entry never deletes the folder or projects.
   releases are read-only and installation displays a spinner until completion.
 - On Parking, `a` opens an absolute-path input and `d` removes the selected
   parking entry after confirmation. The confirmation makes clear that files on
-  disk are preserved.
+  disk are preserved. While entering a path, `tab` completes directory names;
+  ambiguous matches extend to their shared prefix and are listed below the
+  input so another character can disambiguate them.
 - `r` refreshes immediately; the UI also refreshes every five seconds.
 - `q` or `ctrl+c` exits.
 

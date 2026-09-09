@@ -98,7 +98,18 @@ class WebProjector:
             "sites/000-default.conf": self._catch_all(),
         }
         for name, site in sorted(sites.items()):
-            files[f"sites/{name}.conf"] = self._site(name, site)
+            fragments: list[tuple[Path, str]] = []
+            for index, source in enumerate(
+                siteconfig.describe(self.paths, name, site).includable
+            ):
+                relative = f"fragments/{name}-{index:02d}.conf"
+                try:
+                    content = source.read_text(encoding="utf-8")
+                except (OSError, UnicodeError) as error:
+                    raise WebError(f"cannot read nginx fragment {source}: {error}") from error
+                files[relative] = f"# Source: {source}\n{content}"
+                fragments.append((source, relative))
+            files[f"sites/{name}.conf"] = self._site(name, site, fragments)
         return Generation(self._next_generation(), files)
 
     def _main(self) -> str:
@@ -264,7 +275,9 @@ class WebProjector:
             ]
         )
 
-    def _site(self, name: str, site: dict[str, Any]) -> str:
+    def _site(
+        self, name: str, site: dict[str, Any], fragments: list[tuple[Path, str]]
+    ) -> str:
         hostname = f"{name}.test"
         root = Path(site["root"])
         # Absent for records written before drivers existed, which all
@@ -389,19 +402,13 @@ class WebProjector:
             ]
         )
 
-        # Included last so a plain directive here overrides the generated one
-        # above it, and by path rather than by copying the contents in, so
-        # nginx reports a mistake against the file its author edited.
-        #
-        # An include is emitted only for a fragment that exists and, for a
-        # project fragment, is trusted. A glob that picked one up whenever it
-        # appeared would mean an unrelated operation's reload failing on an
-        # edit nobody had validated yet; this way the render that notices a
-        # fragment is the render that validates it.
-        custom = siteconfig.describe(self.paths, name, site).includable
-        if custom:
+        # Each editable source is copied into the candidate before validation.
+        # The promoted generation therefore remains restart-safe if its source
+        # is subsequently edited into an invalid state.
+        if fragments:
             lines.append("")
-            for fragment in custom:
+            for source, fragment in fragments:
+                lines.append(f"\t# Source: {source}")
                 lines.append(f"\tinclude {_quote(fragment)};")
         lines.extend(["}", ""])
         return "\n".join(lines)

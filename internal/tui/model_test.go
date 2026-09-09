@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -218,6 +219,35 @@ func TestParkingPageAddsAndRemovesWithoutDeletingTheFolder(t *testing.T) {
 	}
 }
 
+func TestParkingPathTabCompletionOnlyOffersDirectories(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"alpha", "alpine", "beta"} {
+		if err := os.Mkdir(root+"/"+name, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(root+"/also-a-file", []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := directoryCompletions(root + "/al")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 2 || strings.Contains(strings.Join(matches, " "), "also-a-file") {
+		t.Fatalf("directory matches = %v", matches)
+	}
+	if prefix := commonPathPrefix(matches); prefix != root+"/alp" {
+		t.Fatalf("common prefix = %q", prefix)
+	}
+
+	m := NewWithAPI(&fakeAPI{})
+	m.parkingForm, m.parkingPath = true, root+"/bet"
+	updated, _ := m.handleKey(press(tea.KeyTab, "tab", 0))
+	if path := updated.(Model).parkingPath; path != root+"/beta/" {
+		t.Fatalf("tab completed path to %q", path)
+	}
+}
+
 func TestStaleSnapshotCannotOverwriteNewerState(t *testing.T) {
 	m := NewWithAPI(&fakeAPI{})
 	m.generation = 3
@@ -354,6 +384,35 @@ func TestServiceActionsDispatchAndRemovalRequiresConfirmation(t *testing.T) {
 	executeCommand(command)
 	if api.calls[len(api.calls)-1] != "service-remove:redis-a1" {
 		t.Fatalf("calls = %v", api.calls)
+	}
+}
+
+func TestServiceConnectionCanBeCopiedWithoutFlatteningIt(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.loaded, m.snapshot, m.tab, m.serviceDetail, m.serviceID = true, sampleSnapshot(), 2, true, "redis-a1"
+	copied := ""
+	m.copyText = func(value string) error { copied = value; return nil }
+	for index, action := range m.serviceActions() {
+		if action.id == "service-env" {
+			m.serviceAction = index
+			break
+		}
+	}
+	_, command := m.activateServiceAction()
+	if command == nil {
+		t.Fatal("connection row did not create a copy command")
+	}
+	updated, _ := m.Update(command())
+	m = updated.(Model)
+	want := "REDIS_HOST=127.0.0.1\nREDIS_PORT=6379\n"
+	if copied != want || m.status != "Copied Cache connection settings" {
+		t.Fatalf("copied=%q status=%q", copied, m.status)
+	}
+
+	m.snapshot.Services.Instances[0].Connection = nil
+	_, command = m.copyServiceConnection(m.snapshot.Services.Instances[0])
+	if command != nil || serviceConnectionLabel(nil) != "Not available" {
+		t.Fatal("empty connection settings should not offer copying")
 	}
 }
 

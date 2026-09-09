@@ -126,6 +126,21 @@ class SiteConfigurationTests(unittest.TestCase):
         # the last of two conflicting directives.
         self.assertLess(rendered.index(str(self.fragment)), rendered.index(str(user)))
 
+    def test_promoted_fragment_survives_a_broken_source_edit(self) -> None:
+        user = siteconfig.user_path(self.paths, "app")
+        user.parent.mkdir(parents=True, exist_ok=True)
+        user.write_text("client_max_body_size 2g;\n", encoding="utf-8")
+        self.manager.reproject(reload=False)
+        promoted = self.projector.current / "fragments/app-00.conf"
+        self.assertIn("client_max_body_size 2g", promoted.read_text(encoding="utf-8"))
+
+        user.write_text("this_is_not_a_real_nginx_directive on;\n", encoding="utf-8")
+        frozen = promoted.read_text(encoding="utf-8")
+        self.assertIn("client_max_body_size 2g", frozen)
+        self.assertNotIn("this_is_not_a_real", frozen)
+        self.assertIn('include "fragments/app-00.conf";', self.rendered())
+        self.assertNotIn(f"include {user};", self.rendered())
+
     def test_a_user_fragment_is_picked_up_by_reprojecting(self) -> None:
         user = siteconfig.user_path(self.paths, "app")
         self.assertNotIn(str(user), self.rendered())

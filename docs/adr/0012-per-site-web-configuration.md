@@ -78,19 +78,20 @@ both of which outrank a regex whatever the order. The template
 `paddock config edit` writes says so, because the alternative is a rule that is
 discovered by having it not work.
 
-## Included by path, and only when present
+## Snapshotted into validated generations
 
-An include names the fragment rather than copying its contents into the
-generated file, so nginx reports a mistake against the file its author edited,
-with the right line number.
+Each included fragment is copied into the candidate generation before
+validation. The generated site block records the editable source path in a
+comment and includes the immutable copy. A later broken edit therefore cannot
+make nginx's last-known-good generation fail during a restart or reboot.
 
 The include is emitted only for a fragment that exists and, for a project
 fragment, is trusted. A glob that picked one up whenever it appeared would mean
 an unrelated operation's reload failing on an edit nobody had validated —
 linking a second site would fail because of a half-finished fragment for the
-first. This way the render that notices a fragment is the render that validates
-it: `nginx -t` reads it as part of the candidate, and a rejection leaves the
-promoted generation serving.
+first. This way the render that notices a fragment is the render that snapshots
+and validates it: `nginx -t` reads the copied bytes as part of the candidate,
+and a rejection leaves the promoted generation serving and restartable.
 
 Because a fragment lives outside the site registry, nothing in Paddock's state
 changes when one is written or edited. `paddock reload`, and the UIs' "Apply

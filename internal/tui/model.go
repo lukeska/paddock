@@ -2,7 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -79,6 +81,7 @@ type Model struct {
 	nodeInstalling string
 	parkingForm    bool
 	parkingPath    string
+	parkingMatches []string
 	parkingConfirm bool
 	parkingBusy    bool
 	openURL        func(string) error
@@ -628,10 +631,25 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.parkingForm {
 		switch key {
 		case "esc":
-			m.parkingForm, m.parkingPath = false, ""
+			m.parkingForm, m.parkingPath, m.parkingMatches = false, "", nil
 		case "enter":
 			return m.addParkingPath()
+		case "tab":
+			matches, err := directoryCompletions(m.parkingPath)
+			if err != nil {
+				m.err = "Could not complete folder path: " + err.Error()
+				return m, nil
+			}
+			m.parkingMatches = matches
+			if len(matches) == 1 {
+				m.parkingPath, m.parkingMatches = matches[0], nil
+			} else if len(matches) > 1 {
+				if prefix := commonPathPrefix(matches); len(prefix) > len(m.parkingPath) {
+					m.parkingPath = prefix
+				}
+			}
 		case "backspace":
+			m.parkingMatches = nil
 			if m.parkingPath != "" {
 				_, size := utf8.DecodeLastRuneInString(m.parkingPath)
 				m.parkingPath = m.parkingPath[:len(m.parkingPath)-size]
@@ -639,6 +657,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		default:
 			if utf8.RuneCountInString(key) == 1 {
 				m.parkingPath += key
+				m.parkingMatches = nil
 			}
 		}
 		return m, nil
@@ -701,6 +720,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 		case "enter", " ", "space":
 			return m.activateServiceAction()
+		case "c":
+			if service, ok := m.selectedServiceDetail(); ok {
+				return m.copyServiceConnection(service)
+			}
 		}
 		return m, nil
 	}
@@ -798,7 +821,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.tab == 2 {
 			m.beginAddService()
 		} else if m.tab == 5 {
-			m.parkingForm, m.parkingPath = true, ""
+			m.parkingForm, m.parkingPath, m.parkingMatches = true, "", nil
 		}
 	case "d":
 		if m.tab == 5 && len(m.snapshot.Parking.Paths) > 0 {
@@ -890,6 +913,8 @@ func (m Model) activateServiceAction() (tea.Model, tea.Cmd) {
 		return m.saveServiceForm()
 	case "service-logs":
 		return m.openServiceLogs(service)
+	case "service-env":
+		return m.copyServiceConnection(service)
 	case "service-dashboard":
 		return m.openServiceDashboard(service)
 	case "service-edit":
@@ -898,6 +923,17 @@ func (m Model) activateServiceAction() (tea.Model, tea.Cmd) {
 		m.serviceConfirm = true
 	}
 	return m, nil
+}
+
+func (m Model) copyServiceConnection(service backend.ServiceInstance) (tea.Model, tea.Cmd) {
+	if m.copyText == nil || len(service.Connection) == 0 {
+		return m, nil
+	}
+	copyText := m.copyText
+	value := strings.Join(service.Connection, "\n") + "\n"
+	return m, func() tea.Msg {
+		return clipboardMsg{summary: "Copied " + service.Label + " connection settings", err: copyText(value)}
+	}
 }
 
 func (m Model) openServiceDashboard(service backend.ServiceInstance) (tea.Model, tea.Cmd) {
@@ -1787,9 +1823,20 @@ func (m Model) renderParking() string {
 		if m.parkingBusy {
 			button = "[ Adding… ]"
 		}
-		return m.styles.section.Render("Add parking folder") + "\n\n" +
+		result := m.styles.section.Render("Add parking folder") + "\n\n" +
 			m.renderFieldset("Folder", []string{value}) + "\n\n" +
 			m.styles.worker.Render(button)
+		if len(m.parkingMatches) > 0 {
+			result += "\n\n" + m.styles.muted.Render("Matches:")
+			for index, match := range m.parkingMatches {
+				if index == 5 {
+					result += m.styles.muted.Render(fmt.Sprintf("\n  …and %d more", len(m.parkingMatches)-index))
+					break
+				}
+				result += m.styles.muted.Render("\n  " + match)
+			}
+		}
+		return result
 	}
 	paths := m.snapshot.Parking.Paths
 	if m.parkingConfirm && len(paths) > 0 {
@@ -1817,6 +1864,63 @@ func (m Model) renderParking() string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func directoryCompletions(value string) ([]string, error) {
+	typed := value
+	scanValue := value
+	if value == "~" {
+		return []string{"~/"}, nil
+	}
+	if strings.HasPrefix(value, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		scanValue = filepath.Join(home, strings.TrimPrefix(value, "~/"))
+	}
+	directory, prefix := filepath.Split(scanValue)
+	if directory == "" {
+		directory = "."
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, err
+	}
+	typedDirectory, _ := filepath.Split(typed)
+	if strings.HasPrefix(typed, "~/") {
+		typedDirectory = "~/" + filepath.Dir(strings.TrimPrefix(typed, "~/"))
+		if typedDirectory != "~/" {
+			typedDirectory = strings.TrimSuffix(typedDirectory, ".")
+			if !strings.HasSuffix(typedDirectory, "/") {
+				typedDirectory += "/"
+			}
+		}
+	}
+	matches := []string{}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) {
+			matches = append(matches, typedDirectory+entry.Name()+"/")
+		}
+	}
+	return matches, nil
+}
+
+func commonPathPrefix(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	prefix := []rune(values[0])
+	for _, value := range values[1:] {
+		candidate := []rune(value)
+		limit := min(len(prefix), len(candidate))
+		index := 0
+		for index < limit && prefix[index] == candidate[index] {
+			index++
+		}
+		prefix = prefix[:index]
+	}
+	return string(prefix)
 }
 
 func (m Model) addParkingPath() (tea.Model, tea.Cmd) {
@@ -1927,7 +2031,7 @@ func (m Model) serviceActions() []detailAction {
 		{"service-port", "Configuration", "Addresses", strings.Join(service.Addresses, "  ")},
 		{"service-image", "Configuration", "Image", service.Image},
 		{"service-volume", "Configuration", "Data volume", service.Volume},
-		{"service-env", "Connection", "Environment", strings.Join(service.Connection, "  ")},
+		{"service-env", "Connection", "Environment", serviceConnectionLabel(service.Connection)},
 		{"service-logs", "Manage", "Logs", "Open"},
 		{"service-edit", "Manage", "Settings", "Edit"},
 		{"service-remove", "Danger zone", "Remove service", "Delete data…"},
@@ -1939,6 +2043,13 @@ func (m Model) serviceActions() []detailAction {
 		)...)
 	}
 	return actions
+}
+
+func serviceConnectionLabel(connection []string) string {
+	if len(connection) == 0 {
+		return "Not available"
+	}
+	return strings.Join(connection, "  ") + " · Copy"
 }
 
 func (m Model) renderServiceDetail() string {
@@ -1966,6 +2077,9 @@ func (m Model) renderServiceDetail() string {
 		value := action.value
 		if action.id == "service-active" {
 			value = stateGlyph(service.State) + " " + value
+		}
+		if action.id == "service-env" && len(service.Connection) > 0 && index != m.serviceAction {
+			value = m.styles.accent.Underline(true).Render(value)
 		}
 		line := "  " + siteCell(action.label, labelWidth) + "  " + siteCell(value, valueWidth)
 		if index == m.serviceAction {
@@ -2289,7 +2403,7 @@ func (m Model) renderFooter() string {
 	if m.tab == 2 {
 		help = "↑/↓ select · enter details · a add service · tab sections · q quit"
 		if m.serviceDetail {
-			help = "↑/↓ select · enter activate · esc back"
+			help = "↑/↓ select · enter activate · c copy connection · esc back"
 		}
 		if m.serviceForm != "" {
 			help = "tab/↑/↓ field · ←/→ change · enter save · esc cancel"
@@ -2307,7 +2421,7 @@ func (m Model) renderFooter() string {
 	if m.tab == 5 {
 		help = "↑/↓ select · a add folder · d remove · tab sections · q quit"
 		if m.parkingForm {
-			help = "type folder path · enter add · esc cancel"
+			help = "type folder path · tab complete · enter add · esc cancel"
 		}
 		if m.parkingConfirm {
 			help = "y/enter remove parking entry · n/esc cancel"
