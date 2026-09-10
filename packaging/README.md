@@ -32,8 +32,9 @@ when `podman` was added.
   `paddock uninstall`, using a root-owned installation record, while projects,
   configuration, runtimes, logs, cache, and the private CA survive. Reinstall
   plus setup restored a healthy stack without recreating user state.
-- The installed package downloads PHP 8.4.23 and 8.5.8 from the public GitHub
-  prerelease and both survive a reboot with zero restarts.
+- The installed package downloads published PHP runtimes from the public GitHub
+  prerelease; the currently published PHP 8.4 and 8.5 runtimes both survive a
+  reboot with zero restarts.
 - Redis, MySQL and PostgreSQL run as rootless containers in user units and
   return after a reboot.
 - The optional Omarchy plugin passes `omarchy plugin validate`.
@@ -44,9 +45,11 @@ when `podman` was added.
 ## Published runtime prerelease
 
 The packaged artifact index points at the `php-2026.08.18` GitHub prerelease.
-Paddock-owned PHP 8.4.23 and 8.5.8 x86_64 archives, checksums, file-level SPDX
+Paddock-owned PHP 8.4 and 8.5 x86_64 archives, checksums, file-level SPDX
 inventories, ABI records, and unsigned provenance are public and have passed a
-fresh production-installer download test.
+fresh production-installer download test. The release build matrix additionally
+covers PHP 8.0 through 8.3; those versions become installable only after their
+CI-built archives pass the promotion process and enter the packaged index.
 
 ## Remaining publication gates
 

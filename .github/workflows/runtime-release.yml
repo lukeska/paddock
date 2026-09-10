@@ -10,6 +10,10 @@ on:
         type: choice
         options:
           - all
+          - "8.0"
+          - "8.1"
+          - "8.2"
+          - "8.3"
           - "8.4"
           - "8.5"
 
@@ -24,7 +28,7 @@ jobs:
   build:
     name: Build PHP ${{ inputs.runtime }}
     runs-on: ubuntu-22.04
-    timeout-minutes: 180
+    timeout-minutes: 360
     permissions:
       contents: read
       id-token: write

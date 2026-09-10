@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -131,3 +132,26 @@ class SelectionTests(unittest.TestCase):
             self.assertIn("8.4", output.call_args_list[0].args[0])
             self.assertEqual(run(["php", "use", "8.5"]), 0)
         self.assertEqual(select_php(self.project, self.store).version, "8.5")
+
+    def test_cli_php_catalog_installs_a_user_override(self) -> None:
+        source = Path(self.temporary.name) / "local-artifacts.json"
+        source.write_text(json.dumps({
+            "schema_version": 1,
+            "artifacts": [{
+                "php": "8.0.30", "minor": "8.0", "architecture": "x86_64",
+                "url": "file:///tmp/php-8.0.tar.gz", "sha256": "1" * 64,
+            }],
+        }), encoding="utf-8")
+        environment = {
+            "HOME": str(Path(self.temporary.name) / "home"),
+            "XDG_CONFIG_HOME": str(self.store.paths.config.parent),
+            "XDG_DATA_HOME": str(self.store.paths.data.parent),
+            "XDG_STATE_HOME": str(self.store.paths.state.parent),
+            "XDG_CACHE_HOME": str(self.store.paths.cache.parent),
+        }
+
+        with patch.dict("os.environ", environment, clear=True):
+            self.assertEqual(run(["php", "catalog", str(source)]), 0)
+
+        installed = self.store.paths.config / "artifacts.json"
+        self.assertEqual(json.loads(source.read_text()), json.loads(installed.read_text()))

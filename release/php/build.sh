@@ -9,6 +9,7 @@ architecture=$(uname -m)
 source_date_epoch=${SOURCE_DATE_EPOCH:-1786924800}
 work_root=${PADDOCK_RELEASE_WORK:-"$repository/release/work"}
 dist_root=${PADDOCK_RELEASE_DIST:-"$repository/release/dist"}
+download_cache=${PADDOCK_RELEASE_DOWNLOAD_CACHE:-"$work_root/download-cache"}
 cache_root=${PADDOCK_RELEASE_CACHE:-"${XDG_CACHE_HOME:-$HOME/.cache}/paddock-release"}
 builder_archive="$cache_root/spc-2.8.5-linux-x86_64.tar.gz"
 builder_dir="$cache_root/spc-2.8.5"
@@ -51,15 +52,25 @@ for php_version in "${versions[@]}"; do
   log="$dist_root/paddock-php-$php_version-linux-$architecture.build.log"
   rm -rf -- "$workspace"
   mkdir -p "$workspace"
+  if [[ -d "$download_cache" ]]; then
+    mkdir -p "$workspace/downloads"
+    cp -a -- "$download_cache/." "$workspace/downloads/"
+    rm -f -- "$workspace/downloads/.lock.json"
+  fi
   printf 'Building PHP %s for %s\n' "$php_version" "$architecture" | tee "$log"
   (
     export SOURCE_DATE_EPOCH="$source_date_epoch"
     export SPC_BIN="$builder"
     export BUILD_WORKSPACE="$workspace"
+    if [[ "$php_version" == 8.0.* || "$php_version" == 8.1.* ]]; then
+      export SPC_DEFAULT_C_FLAGS="-fPIC -Os -std=gnu17"
+    fi
     "$repository/experiments/phase-0/php/build-runtime.sh" "$php_version"
     "$repository/experiments/phase-0/php/build-optional-extension.sh" xdebug
     "$repository/experiments/phase-0/php/probe-runtime-config.sh" "$workspace/buildroot"
   ) 2>&1 | tee -a "$log"
+  mkdir -p "$download_cache"
+  cp -an -- "$workspace/downloads/." "$download_cache/"
   runtime_roots+=("$workspace/buildroot")
 done
 

@@ -17,7 +17,8 @@ from .lifecycle import Lifecycle
 from .integration import INSTALL_CHANGES, REMOVE_CHANGES, Integration
 from .paths import Paths
 from .parking import ParkingManager
-from .artifacts import ArtifactManifest
+from .artifacts import ArtifactManifest, artifact_manifest_paths
+from .atomic import atomic_write
 from .php_runtime import RuntimeInstaller
 from .projectfile import PROJECT_FILE, ProjectFileError, Reconciler, find, load
 from .projects import write_node_selection, write_project_selection
@@ -60,6 +61,7 @@ OVERVIEW: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     ("PHP", (
         ("php list", "List the installed PHP runtimes"),
         ("php install VERSION", "Install a Paddock-built PHP runtime"),
+        ("php catalog PATH", "Use a local PHP artifact catalog"),
         ("php remove VERSION", "Remove an installed PHP runtime"),
         ("php use VERSION", "Select the PHP version for this project"),
         ("php -- ARGS", "Run PHP with the version selected here"),
@@ -124,6 +126,7 @@ def overview() -> str:
 PHP_DETAIL = """Subcommands:
   paddock php list             List the installed runtimes and their paths
   paddock php install VERSION  Install the Paddock-built runtime for VERSION
+  paddock php catalog PATH     Use a local PHP artifact catalog
   paddock php remove VERSION   Remove the installed runtime for VERSION
   paddock php use VERSION      Record VERSION in ./.paddock.json
   paddock php -- ARGS          Run ARGS with the PHP selected for this directory
@@ -374,11 +377,23 @@ def run(argv: list[str] | None = None) -> int:
         if not explicit_execution and forwarded[:1] == ["install"]:
             if len(forwarded) != 2:
                 raise ValueError("Usage: paddock php install VERSION")
-            manifest_path = Path("/usr/share/paddock/artifacts.json")
+            manifest_path = next(
+                (path for path in artifact_manifest_paths(store.paths.config) if path.is_file()),
+                artifact_manifest_paths(store.paths.config)[0],
+            )
             destination = RuntimeInstaller(store).install(
                 forwarded[1], ArtifactManifest.load(manifest_path)
             )
             print(f"Installed PHP {forwarded[1]} at {destination}")
+            return 0
+        if not explicit_execution and forwarded[:1] == ["catalog"]:
+            if len(forwarded) != 2:
+                raise ValueError("Usage: paddock php catalog PATH")
+            source = Path(forwarded[1]).expanduser().resolve()
+            ArtifactManifest.load(source)
+            destination = store.paths.config / "artifacts.json"
+            atomic_write(destination, source.read_bytes())
+            print(f"Using PHP artifact catalog {destination}")
             return 0
         if not explicit_execution and forwarded[:1] == ["remove"]:
             if len(forwarded) != 2:

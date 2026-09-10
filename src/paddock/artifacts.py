@@ -14,6 +14,15 @@ class ManifestError(ValueError):
     pass
 
 
+def artifact_manifest_paths(config_dir: Path) -> tuple[Path, ...]:
+    """Return PHP catalogs in user-override, packaged, source-tree order."""
+    return (
+        config_dir / "artifacts.json",
+        Path("/usr/share/paddock/artifacts.json"),
+        Path(__file__).resolve().parents[2] / "resources" / "artifacts.json",
+    )
+
+
 @dataclass(frozen=True)
 class Artifact:
     php: str

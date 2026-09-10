@@ -15,8 +15,8 @@ gh workflow run runtime-release.yml --repo lukeska/paddock --ref main \
   --field runtime=8.5
 ```
 
-Uncached, a single runtime takes roughly 30 minutes; `runtime=all` builds the
-two sequentially in one job, so budget about an hour.
+Uncached, a single runtime takes roughly 30 minutes; `runtime=all` builds all
+six PHP 8 minors sequentially in one job, so budget about three hours.
 
 Two failure modes seen in practice, both environmental:
 

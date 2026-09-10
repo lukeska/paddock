@@ -6,7 +6,12 @@ import shutil
 import subprocess
 from typing import Callable
 
-from .artifacts import ArtifactManifest, ManifestError, normalized_architecture
+from .artifacts import (
+    ArtifactManifest,
+    ManifestError,
+    artifact_manifest_paths,
+    normalized_architecture,
+)
 from .composer import install_composer
 from .config_watcher import ConfigWatcher
 from .php_runtime import RuntimeInstaller
@@ -66,9 +71,8 @@ class Integration:
     ):
         self.store = store
         self.runner = runner
-        self.artifact_paths = artifact_paths or (
-            Path("/usr/share/paddock/artifacts.json"),
-            Path(__file__).resolve().parents[2] / "resources" / "artifacts.json",
+        self.artifact_paths = artifact_paths or artifact_manifest_paths(
+            store.paths.config
         )
         self.composer_paths = composer_paths or (
             Path("/usr/share/paddock/composer.json"),

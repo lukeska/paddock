@@ -21,7 +21,12 @@ import socket
 import subprocess
 from typing import Callable
 
-from .artifacts import ArtifactManifest, ManifestError, normalized_architecture
+from .artifacts import (
+    ArtifactManifest,
+    ManifestError,
+    artifact_manifest_paths,
+    normalized_architecture,
+)
 from .atomic import atomic_write, exclusive_lock
 from .config_watcher import ConfigWatcher
 from .parking import ParkingManager
@@ -406,9 +411,8 @@ class PaddockController:
         )
         self.parking = ParkingManager(store, runner)
         self.port_available = port_available or _port_available
-        self.artifact_paths = artifact_paths or (
-            Path("/usr/share/paddock/artifacts.json"),
-            Path(__file__).resolve().parents[2] / "resources" / "artifacts.json",
+        self.artifact_paths = artifact_paths or artifact_manifest_paths(
+            store.paths.config
         )
         self.node_artifact_paths = node_artifact_paths or (
             Path("/usr/share/paddock/node-artifacts.json"),

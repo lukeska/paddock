@@ -39,9 +39,20 @@ fi
 printf 'Building optional extension %s for PHP %s in %s\n' \
   "$extension" "$php_minor" "$workspace"
 
+download_options=()
+if [[ "$extension" == xdebug && ( "$php_minor" == 8.0 || "$php_minor" == 8.1 ) ]]; then
+  # Xdebug 3.5 requires PHP 8.2+. Keep PHP 8.0 on the final 3.2 patch,
+  # which supports PHP 8.0 while retaining the same module interface.
+  download_options+=(
+    --custom-url
+    "xdebug:https://github.com/xdebug/xdebug/archive/refs/tags/3.2.2.tar.gz"
+  )
+fi
+
 (
   cd "$workspace"
-  "$spc_binary" download "$extension" --with-php="$php_minor" --no-interaction
+  "$spc_binary" download "$extension" --with-php="$php_minor" \
+    "${download_options[@]}" --no-interaction
   SPC_TARGET=native-native-gnu.2.17 "$spc_binary" build "$static_extensions" \
     --build-cli \
     --build-fpm \

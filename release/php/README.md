@@ -1,7 +1,13 @@
 # PHP runtime release pipeline
 
 `build.sh` uses the pinned StaticPHP 2.8.5 builder and the accepted Phase 0
-craft manifest to build PHP 8.4.23 and 8.5.8 for glibc 2.17+ on x86_64.
+craft manifest to build the latest patch of every PHP 8 minor (8.0 through
+8.5) for glibc 2.17+ on x86_64.
+
+PHP 8.0 and 8.1 are retained strictly for legacy-project compatibility and are
+end-of-life upstream. The UI should not imply that installing one makes an old
+application secure. PHP 8.2 and 8.3 receive security fixes, while PHP 8.4 and
+8.5 are actively supported at the time this matrix was updated.
 
 ```bash
 ./release/php/build.sh all

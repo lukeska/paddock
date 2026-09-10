@@ -392,6 +392,24 @@ class DashboardTests(ApplicationFixture, unittest.TestCase):
 
 
 class PhpVersionsSnapshotTests(ApplicationFixture, unittest.TestCase):
+    def test_prefers_the_user_php_catalog(self) -> None:
+        architecture = normalized_architecture()
+        user_catalog = self.store.paths.config / "artifacts.json"
+        user_catalog.write_text(json.dumps({
+            "schema_version": 1,
+            "artifacts": [{
+                "php": "8.0.30", "minor": "8.0",
+                "architecture": architecture,
+                "url": "file:///tmp/php-8.0.tar.gz", "sha256": "1" * 64,
+            }],
+        }), encoding="utf-8")
+
+        snapshot = PaddockController(
+            self.store, StateRunner()
+        ).php_versions_snapshot()
+
+        self.assertEqual(["8.0.30"], [item.release for item in snapshot.versions])
+
     def test_lists_published_and_installed_versions_newest_first(self) -> None:
         manifest = Path(self.temporary.name) / "artifacts.json"
         architecture = normalized_architecture()
