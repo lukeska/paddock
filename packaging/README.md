@@ -16,7 +16,7 @@ It deliberately does **not** own the Omarchy plugin: ADR 0008 reserves
 
 Runtime dependencies include `python`, `python-yaml`, `python-gobject`, `gtk4`,
 `libadwaita`, `nginx`, `dnsmasq`, `mkcert`, `nss`, `p11-kit`, `networkmanager`,
-`polkit`, and `podman`. `python-yaml` reads `paddock.yml`; PyGObject provides
+`polkit`, `podman`, and `curl`. `python-yaml` reads `paddock.yml`; PyGObject provides
 the native GTK interface. Note that every hard dependency must exist
 wherever the package is **built**, not only where it runs — `makepkg` resolves
 runtime dependencies before building, which broke both CI and the local build

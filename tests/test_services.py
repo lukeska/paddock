@@ -67,7 +67,7 @@ class ServiceManagerTests(ServiceFixture, unittest.TestCase):
 
     def test_the_catalog_covers_the_documented_services(self) -> None:
         self.assertEqual(
-            {"mailpit", "meilisearch", "mysql", "postgres", "redis", "rustfs"},
+            {"mailpit", "meilisearch", "mysql", "postgres", "redis", "rustfs", "typesense"},
             set(CATALOG),
         )
 
@@ -236,7 +236,7 @@ class DatabaseUnitTests(ServiceFixture, unittest.TestCase):
             ("mailpit", "readyz"), ("meilisearch", "/health"),
             ("mysql", "mysqladmin"),
             ("postgres", "pg_isready"), ("redis", "redis-cli"),
-            ("rustfs", "/health"),
+            ("rustfs", "/health"), ("typesense", "/health"),
         ):
             unit = self.render(name)
             self.assertIn("ExecStartPost=", unit, name)
@@ -265,6 +265,13 @@ class DatabaseUnitTests(ServiceFixture, unittest.TestCase):
         self.assertIn("--env RUSTFS_ACCESS_KEY=lerd", unit)
         self.assertIn("--env RUSTFS_SECRET_KEY=lerdpassword", unit)
         self.assertIn("rustfs:1.0.0-beta.12 --console-enable /data", unit)
+
+    def test_typesense_persists_indexes_and_uses_laravel_defaults(self) -> None:
+        unit = self.render("typesense")
+        self.assertIn("--publish 127.0.0.1:8108:8108", unit)
+        self.assertIn("--volume paddock-typesense:/data", unit)
+        self.assertIn("typesense:30.2 --data-dir=/data --api-key=xyz --enable-cors", unit)
+        self.assertIn("/usr/bin/curl --fail --silent http://127.0.0.1:8108/health", unit)
 
     def test_the_probe_runs_inside_the_container(self) -> None:
         # Connecting to the published port from the host proves nothing:

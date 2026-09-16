@@ -393,5 +393,6 @@ class Reconciler:
 
 CATALOG_LABELS = {
     "redis": "Redis", "mysql": "MySQL", "postgres": "PostgreSQL",
-    "mailpit": "Mailpit",
+    "mailpit": "Mailpit", "meilisearch": "Meilisearch", "rustfs": "RustFS",
+    "typesense": "Typesense",
 }

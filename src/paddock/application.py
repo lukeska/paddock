@@ -79,7 +79,7 @@ def service_image_version(image: str) -> str:
 
 SERVICE_VERSION_PARTS = {
     "redis": 3, "mysql": 3, "postgres": 2, "mailpit": 3, "meilisearch": 3,
-    "rustfs": 3,
+    "rustfs": 3, "typesense": 2,
 }
 
 
@@ -1151,6 +1151,7 @@ class PaddockController:
         title = {
             "mysql": "MySQL", "postgres": "PostgreSQL", "redis": "Redis",
             "mailpit": "Mailpit", "meilisearch": "Meilisearch", "rustfs": "RustFS",
+            "typesense": "Typesense",
         }[name]
         return DashboardOperationResult(
             True,

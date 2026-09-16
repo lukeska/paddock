@@ -16,8 +16,8 @@ service instances. Each dashboard section uses a responsive bordered fieldset
 with its section name embedded in the top border. Sites presents a table with
 name, PHP, Node, HTTP/HTTPS lock state, and an Open link. A selected row opens
 an actionable detail view with the same configuration, launch, and worker
-controls as the desktop UI. Services presents every independent cache and
-database instance with its type, pinned version, loopback port, and live state.
+controls as the desktop UI. Services presents every independent supporting
+service instance with its type, pinned version, loopback port, and live state.
 A service detail view exposes connection variables, container and volume
 information, lifecycle controls, logs, settings, and removal.
 The search input remains visible above the table and can be focused with `/` or
@@ -57,8 +57,8 @@ and remove workflows. Removing an entry never deletes the folder or projects.
   cycles installed PHP or Node versions when the corresponding row is selected.
 - Detail actions toggle HTTP/HTTPS, open the URL or project path, launch a
   terminal or Zed, and control queue/Reverb state, autostart, and logs.
-- On Services, `a` opens the Add Service form. Left/right selects Redis, MySQL,
-  or PostgreSQL; tab or up/down moves between type, name, port, and autostart.
+- On Services, `a` opens the Add Service form. Left/right selects a catalog
+  service; tab or up/down moves between type, name, port, and autostart.
   `enter` saves and `esc` cancels.
 - `enter` on a service opens its details. Actions start or stop it, toggle
   autostart, open recent journal logs, edit its name and port, or remove it.

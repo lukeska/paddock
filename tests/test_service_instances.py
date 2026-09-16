@@ -129,6 +129,19 @@ class ServiceInstanceTests(unittest.TestCase):
             self.manager.connection_lines(storage.id),
         )
 
+    def test_typesense_has_project_aware_connection_and_no_fake_dashboard(self) -> None:
+        search = self.manager.create("typesense", "Typesense", 8110)
+        self.assertEqual(((8110, 8108),), self.manager.ports(search.id))
+        self.assertIsNone(self.manager.dashboard_url(search.id))
+        self.assertEqual(
+            (
+                "SCOUT_DRIVER=typesense", "TYPESENSE_API_KEY=xyz",
+                "TYPESENSE_HOST=127.0.0.1", "TYPESENSE_PORT=8110",
+                "TYPESENSE_PATH=", "TYPESENSE_PROTOCOL=http",
+            ),
+            self.manager.connection_lines(search.id),
+        )
+
     def test_an_unchanged_active_port_can_be_saved(self) -> None:
         instance = self.manager.create("redis", "Cache", 6379)
         unavailable = ServiceInstanceManager(

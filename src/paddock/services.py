@@ -78,6 +78,10 @@ class Catalog:
     # service's own protocol over TCP; see `render` for why nothing simpler
     # works.
     ready: tuple[str, ...] = ()
+    # Some minimal images do not ship a probing client. For HTTP services,
+    # querying the published endpoint from the host still proves application
+    # readiness (unlike merely opening the forwarded TCP port).
+    ready_host_path: str = ""
 
 
 # Images are registry-qualified and pinned to a complete semantic release: a
@@ -170,6 +174,23 @@ CATALOG: dict[str, Catalog] = {
             ("MEILISEARCH_KEY", "null"),
         ),
         ready=("curl", "--fail", "--silent", "http://127.0.0.1:7700/health"),
+    ),
+    "typesense": Catalog(
+        image="docker.io/typesense/typesense:30.2",
+        port=8108,
+        container_port=8108,
+        data="/data",
+        volume="paddock-typesense",
+        command=("--data-dir=/data", "--api-key=xyz", "--enable-cors"),
+        connection=(
+            ("SCOUT_DRIVER", "typesense"),
+            ("TYPESENSE_API_KEY", "xyz"),
+            ("TYPESENSE_HOST", "127.0.0.1"),
+            ("TYPESENSE_PORT", "8108"),
+            ("TYPESENSE_PATH", ""),
+            ("TYPESENSE_PROTOCOL", "http"),
+        ),
+        ready_host_path="/health",
     ),
     "rustfs": Catalog(
         image="docker.io/rustfs/rustfs:1.0.0-beta.12",
@@ -309,12 +330,11 @@ class ServiceManager:
         `ExecStartPost=` therefore blocks until the service answers, which is
         the readiness discipline ADR 0005 requires of PHP-FPM.
 
-        The probe runs *inside* the container and speaks the service's own
-        protocol. Connecting to the published port from the host does not
-        work: podman binds that port as soon as the container starts, so the
-        connection is accepted by the port forwarder while the database is
-        still initialising. Measured on a cold start, that false signal
-        returned in 0.6s against a Postgres that refused the next query.
+        Protocol probes normally run inside the container. Minimal HTTP
+        images may not include curl, so those are queried through the
+        published endpoint from the host instead. An HTTP health response
+        proves application readiness; merely opening the forwarded TCP port
+        would not, because podman binds it before the service is ready.
         """
         catalog = self.known(service.name)
         environment = "".join(
@@ -342,6 +362,11 @@ class ServiceManager:
             f"{env_flags}"
             f" --pull missing -- {service.image}{command}\n"
             + (
+                f"ExecStartPost=/usr/bin/timeout {READY_TIMEOUT} /bin/sh -c"
+                f" 'until /usr/bin/curl --fail --silent"
+                f" http://127.0.0.1:{service.port}{catalog.ready_host_path}"
+                f" >/dev/null 2>&1; do sleep 0.5; done'\n"
+                if catalog.ready_host_path else
                 f"ExecStartPost=/usr/bin/timeout {READY_TIMEOUT} /bin/sh -c"
                 f" 'until /usr/bin/{ENGINE} exec {service.container}"
                 f" {' '.join(catalog.ready)} >/dev/null 2>&1; do sleep 0.5; done'\n"

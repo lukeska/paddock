@@ -357,6 +357,15 @@ func TestServicesTabRendersCatalogAndOpensDetails(t *testing.T) {
 	}
 }
 
+func TestServiceCatalogOffersTypesense(t *testing.T) {
+	for _, service := range serviceKinds {
+		if service.kind == "typesense" && service.label == "Typesense" && service.port == "8108" {
+			return
+		}
+	}
+	t.Fatal("Typesense is missing from the add-service catalog")
+}
+
 func TestServiceActionsDispatchAndRemovalRequiresConfirmation(t *testing.T) {
 	api := &fakeAPI{}
 	m := NewWithAPI(api)

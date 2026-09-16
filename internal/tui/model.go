@@ -2142,6 +2142,7 @@ var serviceKinds = []struct{ kind, label, port string }{
 	{"postgres", "PostgreSQL", "5432"},
 	{"mailpit", "Mailpit", "1025"},
 	{"meilisearch", "Meilisearch", "7700"},
+	{"typesense", "Typesense", "8108"},
 	{"rustfs", "RustFS", "9000"},
 }
 

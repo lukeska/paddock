@@ -91,8 +91,8 @@ regex locations use `^~` or an exact `=` match. Everything is validated with
 `nginx -t` before it is promoted, so a mistake is reported against your file
 and the site keeps serving what it served before.
 
-Supported services are `mailpit`, `meilisearch`, `mysql`, `postgres`, `redis`, and
-`rustfs`.
+Supported services are `mailpit`, `meilisearch`, `mysql`, `postgres`, `redis`,
+`rustfs`, and `typesense`.
 `version` replaces
 only the image tag; the registry and repository stay Paddock's, so a project
 file cannot point the machine at an arbitrary image.

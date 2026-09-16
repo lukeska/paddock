@@ -6,7 +6,7 @@ arch=('x86_64' 'aarch64')
 url='https://github.com/lukeska/paddock'
 license=('MIT')
 depends=('python' 'python-yaml' 'python-gobject' 'gtk4' 'libadwaita' 'nginx' 'dnsmasq' 'mkcert'
-         'nss' 'p11-kit' 'networkmanager' 'polkit' 'podman' 'wl-clipboard')
+         'nss' 'p11-kit' 'networkmanager' 'polkit' 'podman' 'curl' 'wl-clipboard')
 makedepends=('go')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz")

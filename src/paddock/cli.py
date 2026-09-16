@@ -273,7 +273,8 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
     service = command(
         "service",
         "Configure and control a supporting service.",
-        epilog="Supported services: mailpit, meilisearch, mysql, postgres, redis, rustfs. "
+        epilog="Supported services: mailpit, meilisearch, mysql, postgres, redis, rustfs, "
+               "typesense. "
                "Removing an instance "
                "also permanently removes its data. Pin a different "
                "version with --image, e.g. --image docker.io/library/postgres:16.",
@@ -507,6 +508,7 @@ def run(argv: list[str] | None = None) -> int:
             label = arguments.label or {
                 "redis": "Redis", "mysql": "MySQL", "postgres": "PostgreSQL",
                 "mailpit": "Mailpit", "meilisearch": "Meilisearch", "rustfs": "RustFS",
+                "typesense": "Typesense",
             }.get(kind, kind)
             service = instances.create(
                 kind, label, arguments.port, image=arguments.image

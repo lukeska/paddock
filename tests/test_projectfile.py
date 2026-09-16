@@ -192,6 +192,14 @@ class SharedServiceTests(ReconcilerFixture, unittest.TestCase):
             self.calls,
         )
 
+    def test_typesense_uses_the_catalog_label_image_and_port(self) -> None:
+        self.reconciler.apply(self.root, ProjectFile(
+            php="8.5", services=(DeclaredService("typesense"),)))
+        instance = self.services.list()[0]
+        self.assertEqual("Typesense", instance.label)
+        self.assertEqual("docker.io/typesense/typesense:30.2", instance.image)
+        self.assertEqual(8108, instance.port)
+
     def test_a_version_disagreement_is_reported_not_imposed(self) -> None:
         self.services.create(
             "postgres", "PostgreSQL", 5432,

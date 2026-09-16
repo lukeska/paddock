@@ -316,6 +316,11 @@ class ServiceInstanceManager:
             f" --pull missing -- {instance.image}{command}\n"
             + (
                 f"ExecStartPost=/usr/bin/timeout {READY_TIMEOUT} /bin/sh -c"
+                f" 'until /usr/bin/curl --fail --silent"
+                f" http://127.0.0.1:{instance.port}{catalog.ready_host_path}"
+                f" >/dev/null 2>&1; do sleep 0.5; done'\n"
+                if catalog.ready_host_path else
+                f"ExecStartPost=/usr/bin/timeout {READY_TIMEOUT} /bin/sh -c"
                 f" 'until /usr/bin/{ENGINE} exec {instance.container}"
                 f" {' '.join(catalog.ready)} >/dev/null 2>&1; do sleep 0.5; done'\n"
                 if catalog.ready else ""
