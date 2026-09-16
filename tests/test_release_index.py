@@ -20,8 +20,11 @@ class ReleaseIndexTests(unittest.TestCase):
     def test_generates_strict_https_public_index_and_ignores_unknown_files(self):
         with tempfile.TemporaryDirectory() as temporary_name:
             directory = Path(temporary_name)
-            artifact = directory / "paddock-php-8.4.23-linux-x86_64.tar.gz"
+            artifact = directory / "paddock-php-8.4.25-linux-x86_64.tar.gz"
             artifact.write_bytes(b"artifact")
+            (directory / "paddock-php-8.4.23-linux-x86_64.tar.gz").write_bytes(
+                b"stale artifact"
+            )
             (directory / "unrelated.tar.gz").write_bytes(b"ignore")
             output = directory / "index.json"
             with patch.object(

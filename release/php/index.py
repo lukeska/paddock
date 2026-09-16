@@ -10,6 +10,7 @@ import re
 
 
 PATTERN = re.compile(r"paddock-php-(\d+\.\d+\.\d+)-linux-(x86_64|aarch64)\.tar\.gz$")
+VERSIONS_PATH = Path(__file__).with_name("versions.json")
 
 
 def sha256(path: Path) -> str:
@@ -22,12 +23,20 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--base-url", default=os.environ.get("ARTIFACT_BASE_URL"))
     args = parser.parse_args()
+    matrix = json.loads(VERSIONS_PATH.read_text(encoding="utf-8"))
+    configured = {
+        (runtime["php"], architecture)
+        for runtime in matrix["runtimes"]
+        for architecture in runtime["architectures"]
+    }
     artifacts = []
     for path in sorted(args.dist.glob("paddock-php-*-linux-*.tar.gz")):
         match = PATTERN.fullmatch(path.name)
         if not match:
             continue
         version, architecture = match.groups()
+        if (version, architecture) not in configured:
+            continue
         url = f"{args.base_url.rstrip('/')}/{path.name}" if args.base_url else path.resolve().as_uri()
         artifacts.append(
             {
