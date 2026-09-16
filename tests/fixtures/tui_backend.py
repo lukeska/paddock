@@ -29,6 +29,8 @@ def sites() -> dict[str, object]:
             "reverb_port": 8080, "queue_available": True,
             "queue_configured": True, "queue_state": "active",
             "queue_autostart": True,
+            "scheduler_available": True, "scheduler_configured": True,
+            "scheduler_state": "active", "scheduler_autostart": True,
             "type": "laravel", "document_root": "public",
             "custom_config": "/home/demo/.config/paddock/nginx/linguine.custom.conf",
             "custom_config_present": False,
@@ -43,7 +45,7 @@ def sites() -> dict[str, object]:
 
 def snapshot(state: str = "active") -> dict[str, object]:
     return {
-        "protocol_version": 6,
+        "protocol_version": 7,
         "dashboard": dashboard(state),
         "services": {"instances": []},
         "sites": sites(),

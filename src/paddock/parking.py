@@ -219,6 +219,8 @@ class ParkingManager:
                 parked[site.name]["reverb"] = old["reverb"]
             if old is not None and old.get("queue") is not None:
                 parked[site.name]["queue"] = old["queue"]
+            if old is not None and old.get("scheduler") is not None:
+                parked[site.name]["scheduler"] = old["scheduler"]
             materialized.append(site)
         sites = {**explicit, **parked}
         if sites != registry["sites"]:

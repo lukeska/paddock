@@ -144,7 +144,7 @@ def validate_sites(raw: Any) -> dict[str, Any]:
         record = _object(record_raw, f"site {name}")
         required = {"name", "root", "php", "secured"}
         allowed = required | {
-            "origin", "parking_path", "node", "reverb", "queue",
+            "origin", "parking_path", "node", "reverb", "queue", "scheduler",
             "type", "document_root", "nginx",
         }
         missing = required - set(record)
@@ -179,6 +179,14 @@ def validate_sites(raw: Any) -> dict[str, Any]:
             or queue != {"configured": True}
         ):
             raise SchemaError(f"site {name}.queue must be a configured worker record")
+        scheduler = record.get("scheduler")
+        if scheduler is not None and (
+            not isinstance(scheduler, dict)
+            or scheduler != {"configured": True}
+        ):
+            raise SchemaError(
+                f"site {name}.scheduler must be a configured worker record"
+            )
         if not isinstance(record["secured"], bool):
             raise SchemaError(f"site {name}.secured must be a boolean")
         # Both are optional so records written before drivers existed stay

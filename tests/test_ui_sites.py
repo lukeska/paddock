@@ -21,6 +21,9 @@ class SiteActionTests(unittest.TestCase):
             reverb_available = True
             reverb_configured = True
             reverb_state = "active"
+            scheduler_available = False
+            scheduler_configured = False
+            scheduler_state = "not-configured"
 
         self.assertEqual("Reverb running", site_worker_summary(Site()))
         Site.reverb_state = "failed"
@@ -34,6 +37,15 @@ class SiteActionTests(unittest.TestCase):
         Site.queue_configured = True
         Site.queue_state = "active"
         self.assertEqual("Queue running", site_worker_summary(Site()))
+        Site.scheduler_available = True
+        self.assertEqual(
+            "Queue running · Scheduler available", site_worker_summary(Site())
+        )
+        Site.scheduler_configured = True
+        Site.scheduler_state = "active"
+        self.assertEqual(
+            "Queue running · Scheduler running", site_worker_summary(Site())
+        )
 
     def test_site_details_expose_reverb_controls_and_logs(self) -> None:
         source = (Path(__file__).parents[1] / "src/paddock/ui/app.py").read_text(
@@ -42,6 +54,7 @@ class SiteActionTests(unittest.TestCase):
         for control in (
             "site_reverb_toggle", "site_reverb_autostart", "site_reverb_logs",
             "site_queue_toggle", "site_queue_autostart", "site_queue_logs",
+            "site_scheduler_toggle", "site_scheduler_autostart", "site_scheduler_logs",
         ):
             self.assertIn(control, source)
 

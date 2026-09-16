@@ -20,10 +20,11 @@ from .ui.theme import ThemeError, load_palette
 
 
 # 6 adds parking-folder discovery and management.
+# 7 adds the per-site Laravel scheduler worker.
 # The bridge and the Go client ship in one package, so both
 # sides check for equality and move together.
-PROTOCOL_VERSION = 6
-WORKERS = {"queue", "reverb"}
+PROTOCOL_VERSION = 7
+WORKERS = {"queue", "reverb", "scheduler"}
 
 
 class RequestError(ValueError):
@@ -50,7 +51,9 @@ def _required_bool(params: dict[str, object], name: str) -> bool:
 def _worker(params: dict[str, object]) -> str:
     worker = _required_string(params, "worker")
     if worker not in WORKERS:
-        raise RequestError("invalid_params", "worker must be queue or reverb")
+        raise RequestError(
+            "invalid_params", "worker must be queue, reverb, or scheduler"
+        )
     return worker
 
 

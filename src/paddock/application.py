@@ -37,6 +37,7 @@ from . import report
 from .runtimes import RuntimeRegistry
 from .reverb import ReverbManager, detects_reverb
 from .queue_worker import QueueWorkerManager, detects_laravel
+from .scheduler_worker import SchedulerWorkerManager
 from .services import CATALOG, Service, ServiceManager
 from .service_instances import ServiceInstanceManager
 from .state import StateError, StateStore
@@ -261,6 +262,10 @@ class LinkedSiteView:
     # from the repository is being served.
     project_config: str | None = None
     project_config_status: str = "none"
+    scheduler_available: bool = False
+    scheduler_configured: bool = False
+    scheduler_state: str = "not-configured"
+    scheduler_autostart: bool = False
 
 
 def _configuration_view(configuration) -> tuple[str, bool, str | None, str]:
@@ -469,6 +474,7 @@ class PaddockController:
         except (OSError, StateError, ValueError): node_versions = ()
         reverb = ReverbManager(self.store, self.runner, self.port_available)
         queue = QueueWorkerManager(self.store, self.runner)
+        scheduler = SchedulerWorkerManager(self.store, self.runner)
         try:
             configurations = SiteManager(
                 self.store, WebProjector(self.store.paths, self.runner)
@@ -510,6 +516,10 @@ class PaddockController:
                 site.driver,
                 site.document_root,
                 *configuration_view(site),
+                detects_laravel(site.root),
+                scheduler.worker(site.name) is not None,
+                scheduler.state(site.name),
+                scheduler.enabled(site.name),
             )
             for site in sorted(sites, key=lambda item: item.name.casefold())
         ), versions, node_versions)
@@ -585,6 +595,42 @@ class PaddockController:
 
     def queue_logs(self, name: str, lines: int = 200) -> tuple[str, ...]:
         return QueueWorkerManager(self.store, self.runner).logs(name, lines)
+
+    def set_scheduler_active(
+        self, name: str, active: bool
+    ) -> LinkedSitesOperationResult:
+        try:
+            SchedulerWorkerManager(self.store, self.runner).control(
+                "start" if active else "stop", name
+            )
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return LinkedSitesOperationResult(
+                False, "Scheduler could not be changed", str(error),
+                self.linked_sites_snapshot(),
+            )
+        return LinkedSitesOperationResult(
+            True, f"{'Started' if active else 'Stopped'} scheduler for {name}.test",
+            None, self.linked_sites_snapshot(),
+        )
+
+    def set_scheduler_autostart(
+        self, name: str, enabled: bool
+    ) -> LinkedSitesOperationResult:
+        try:
+            SchedulerWorkerManager(self.store, self.runner).set_autostart(name, enabled)
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return LinkedSitesOperationResult(
+                False, "Scheduler autostart could not be changed", str(error),
+                self.linked_sites_snapshot(),
+            )
+        return LinkedSitesOperationResult(
+            True,
+            f"Scheduler autostart {'enabled' if enabled else 'disabled'} for {name}.test",
+            None, self.linked_sites_snapshot(),
+        )
+
+    def scheduler_logs(self, name: str, lines: int = 200) -> tuple[str, ...]:
+        return SchedulerWorkerManager(self.store, self.runner).logs(name, lines)
 
     def parking_snapshot(self) -> ParkingSnapshot:
         try:

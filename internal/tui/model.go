@@ -1357,6 +1357,13 @@ func (m Model) detailActions() []detailAction {
 			detailAction{"reverb-logs", "Workers", "Reverb logs", "Open"},
 		)
 	}
+	if site.SchedulerAvailable || site.SchedulerConfigured {
+		actions = append(actions,
+			detailAction{"scheduler-active", "Workers", "Scheduler", workerState(site.SchedulerConfigured, site.SchedulerState)},
+			detailAction{"scheduler-autostart", "Workers", "Scheduler autostart", onOff(site.SchedulerAutostart)},
+			detailAction{"scheduler-logs", "Workers", "Scheduler logs", "Open"},
+		)
+	}
 	return actions
 }
 
@@ -1430,6 +1437,12 @@ func (m Model) activateDetailAction() (tea.Model, tea.Cmd) {
 		return m.mutateDetailWorker("reverb", true)
 	case "reverb-logs":
 		return m.openDetailLogs("reverb")
+	case "scheduler-active":
+		return m.mutateDetailWorker("scheduler", false)
+	case "scheduler-autostart":
+		return m.mutateDetailWorker("scheduler", true)
+	case "scheduler-logs":
+		return m.openDetailLogs("scheduler")
 	}
 	return m, nil
 }
@@ -1531,10 +1544,14 @@ func (m Model) mutateDetailWorker(worker string, autostart bool) (tea.Model, tea
 }
 
 func (m Model) workerFor(site backend.Site, worker string) (string, bool, string, bool) {
-	if worker == "queue" {
+	switch worker {
+	case "queue":
 		return worker, site.QueueAvailable, site.QueueState, site.QueueAutostart
+	case "scheduler":
+		return worker, site.SchedulerAvailable, site.SchedulerState, site.SchedulerAutostart
+	default:
+		return worker, site.ReverbAvailable, site.ReverbState, site.ReverbAutostart
 	}
-	return worker, site.ReverbAvailable, site.ReverbState, site.ReverbAutostart
 }
 
 func (m Model) openDetailLogs(worker string) (tea.Model, tea.Cmd) {
@@ -1662,10 +1679,14 @@ func (m Model) reloadWeb() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) selectedWorker(site backend.Site) (string, bool, string, bool) {
-	if m.worker == 0 {
+	switch m.worker % 3 {
+	case 0:
 		return "queue", site.QueueAvailable, site.QueueState, site.QueueAutostart
+	case 1:
+		return "reverb", site.ReverbAvailable, site.ReverbState, site.ReverbAutostart
+	default:
+		return "scheduler", site.SchedulerAvailable, site.SchedulerState, site.SchedulerAutostart
 	}
-	return "reverb", site.ReverbAvailable, site.ReverbState, site.ReverbAutostart
 }
 
 func (m Model) mutateActive() (tea.Model, tea.Cmd) {
@@ -2433,7 +2454,7 @@ func (m Model) renderSiteDetail() string {
 			marker = "› "
 		}
 		lineWidth := max(16, m.detailBoxWidth()-4)
-		labelWidth := min(18, max(10, lineWidth/3))
+		labelWidth := min(20, max(10, lineWidth/3+2))
 		valueWidth := max(4, lineWidth-labelWidth-4)
 		value := siteCell(action.value, valueWidth)
 		ledState := ""
@@ -2445,6 +2466,11 @@ func (m Model) renderSiteDetail() string {
 		} else if action.id == "reverb-active" {
 			ledState = site.ReverbState
 			if !site.ReverbConfigured {
+				ledState = "inactive"
+			}
+		} else if action.id == "scheduler-active" {
+			ledState = site.SchedulerState
+			if !site.SchedulerConfigured {
 				ledState = "inactive"
 			}
 		}
@@ -2513,12 +2539,16 @@ func (m Model) detailBoxWidth() int {
 func (m Model) workerSummary(site backend.Site) string {
 	queue := workerLabel("queue", site.QueueAvailable, site.QueueState, site.QueueAutostart)
 	reverb := workerLabel("reverb", site.ReverbAvailable, site.ReverbState, site.ReverbAutostart)
-	if m.worker == 0 {
+	scheduler := workerLabel("scheduler", site.SchedulerAvailable, site.SchedulerState, site.SchedulerAutostart)
+	switch m.worker % 3 {
+	case 0:
 		queue = m.styles.worker.Render("[" + queue + "]")
-	} else {
+	case 1:
 		reverb = m.styles.worker.Render("[" + reverb + "]")
+	default:
+		scheduler = m.styles.worker.Render("[" + scheduler + "]")
 	}
-	return queue + "  " + reverb
+	return queue + "  " + reverb + "  " + scheduler
 }
 
 func workerLabel(name string, available bool, state string, autostart bool) string {

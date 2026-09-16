@@ -44,10 +44,15 @@ def detects_laravel(root: Path) -> bool:
 
 
 class QueueWorkerManager:
+    key = "queue"
+    display_name = "Queue"
+    command = ("queue:work", "--no-interaction", "--sleep=1", "--tries=3")
+    error_type = QueueWorkerError
+
     def __init__(self, store: StateStore, runner: Runner = subprocess.run):
         self.store = store
         self.runner = runner
-        self.lock = store.paths.state / "queue-worker-operation.lock"
+        self.lock = store.paths.state / f"{self.key}-worker-operation.lock"
 
     @property
     def unit_directory(self) -> Path:
@@ -58,7 +63,7 @@ class QueueWorkerManager:
 
     def worker(self, site: str) -> QueueWorker | None:
         record = self._site(site)
-        if record.get("queue") is None:
+        if record.get(self.key) is None:
             return None
         return QueueWorker(site, Path(record["root"]), self._unit_name(site))
 
@@ -68,9 +73,9 @@ class QueueWorkerManager:
             record = self._site(site, registry)
             root = Path(record["root"])
             if not detects_laravel(root):
-                raise QueueWorkerError(f"{site}.test is not a detected Laravel project")
-            if record.get("queue") is None:
-                record = {**record, "queue": {"configured": True}}
+                raise self.error_type(f"{site}.test is not a detected Laravel project")
+            if record.get(self.key) is None:
+                record = {**record, self.key: {"configured": True}}
                 registry["sites"][site] = record
                 self.store.write("sites", registry)
             worker = QueueWorker(site, root, self._unit_name(site))
@@ -79,11 +84,13 @@ class QueueWorkerManager:
 
     def control(self, action: str, site: str) -> QueueWorker:
         if action not in {"start", "stop", "restart"}:
-            raise QueueWorkerError(f"unsupported queue action: {action}")
+            raise self.error_type(f"unsupported {self.key} action: {action}")
         worker = self.worker(site)
         if worker is None:
             if action == "stop":
-                raise QueueWorkerError(f"Queue is not configured for {site}.test")
+                raise self.error_type(
+                    f"{self.display_name} is not configured for {site}.test"
+                )
             worker = self.configure(site)
         if action in {"start", "restart"}:
             self._project(worker, self._site(site)["php"])
@@ -116,16 +123,20 @@ class QueueWorkerManager:
 
     def logs(self, site: str, lines: int = 200) -> tuple[str, ...]:
         if isinstance(lines, bool) or not isinstance(lines, int) or not 1 <= lines <= 5000:
-            raise QueueWorkerError("log line count must be between 1 and 5000")
+            raise self.error_type("log line count must be between 1 and 5000")
         worker = self.worker(site)
         if worker is None:
-            raise QueueWorkerError(f"Queue is not configured for {site}.test")
+            raise self.error_type(
+                f"{self.display_name} is not configured for {site}.test"
+            )
         result = self.runner(
             ["journalctl", "--user-unit", worker.unit, "--no-pager", "--output=cat", "--lines", str(lines)],
             text=True, capture_output=True, check=False,
         )
         if result.returncode:
-            raise QueueWorkerError(result.stderr.strip() or "cannot read queue logs")
+            raise self.error_type(
+                result.stderr.strip() or f"cannot read {self.key} logs"
+            )
         return tuple((result.stdout or "").splitlines())
 
     def reproject(self, site: str) -> None:
@@ -147,7 +158,7 @@ class QueueWorkerManager:
         )
         (self.unit_directory / worker.unit).unlink(missing_ok=True)
         registry = self.store.read("sites")
-        registry["sites"][site].pop("queue", None)
+        registry["sites"][site].pop(self.key, None)
         self.store.write("sites", registry)
         self._reload()
 
@@ -156,8 +167,7 @@ class QueueWorkerManager:
         php_root = runtime.path.parent.parent
         arguments = (
             "-d", f"extension_dir={php_root / 'modules'}",
-            str(worker.root / "artisan"), "queue:work", "--no-interaction",
-            "--sleep=1", "--tries=3",
+            str(worker.root / "artisan"), *self.command,
         )
         environment = "".join(
             f"Environment={key}={shlex.quote(value)}\n"
@@ -168,7 +178,7 @@ class QueueWorkerManager:
         )
         unit = (
             "[Unit]\n"
-            f"Description=Paddock queue worker for {worker.site}.test\n"
+            f"Description=Paddock {self.key} worker for {worker.site}.test\n"
             "After=network.target\n\n"
             "[Service]\n"
             f"WorkingDirectory={shlex.quote(str(worker.root))}\n"
@@ -189,7 +199,7 @@ class QueueWorkerManager:
         try:
             return (registry or self.store.read("sites"))["sites"][site]
         except KeyError:
-            raise QueueWorkerError(f"site is not linked: {site}.test") from None
+            raise self.error_type(f"site is not linked: {site}.test") from None
 
     def _systemctl(self, action: str, unit: str) -> None:
         result = self.runner(
@@ -197,8 +207,9 @@ class QueueWorkerManager:
             text=True, capture_output=True, check=False,
         )
         if result.returncode:
-            raise QueueWorkerError(
-                result.stderr.strip() or result.stdout.strip() or f"cannot {action} queue"
+            raise self.error_type(
+                result.stderr.strip() or result.stdout.strip()
+                or f"cannot {action} {self.key}"
             )
 
     def _reload(self) -> None:
@@ -207,6 +218,6 @@ class QueueWorkerManager:
             text=True, capture_output=True, check=False,
         )
 
-    @staticmethod
-    def _unit_name(site: str) -> str:
-        return f"paddock-queue-{site}.service"
+    @classmethod
+    def _unit_name(cls, site: str) -> str:
+        return f"paddock-{cls.key}-{site}.service"

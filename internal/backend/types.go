@@ -144,22 +144,26 @@ type LinkedSitesSnapshot struct {
 }
 
 type Site struct {
-	Name             string  `json:"name"`
-	Host             string  `json:"host"`
-	URL              string  `json:"url"`
-	PHP              string  `json:"php"`
-	Secured          bool    `json:"secured"`
-	Root             string  `json:"root"`
-	Node             *string `json:"node"`
-	ReverbAvailable  bool    `json:"reverb_available"`
-	ReverbConfigured bool    `json:"reverb_configured"`
-	ReverbState      string  `json:"reverb_state"`
-	ReverbAutostart  bool    `json:"reverb_autostart"`
-	ReverbPort       *int    `json:"reverb_port"`
-	QueueAvailable   bool    `json:"queue_available"`
-	QueueConfigured  bool    `json:"queue_configured"`
-	QueueState       string  `json:"queue_state"`
-	QueueAutostart   bool    `json:"queue_autostart"`
+	Name                string  `json:"name"`
+	Host                string  `json:"host"`
+	URL                 string  `json:"url"`
+	PHP                 string  `json:"php"`
+	Secured             bool    `json:"secured"`
+	Root                string  `json:"root"`
+	Node                *string `json:"node"`
+	ReverbAvailable     bool    `json:"reverb_available"`
+	ReverbConfigured    bool    `json:"reverb_configured"`
+	ReverbState         string  `json:"reverb_state"`
+	ReverbAutostart     bool    `json:"reverb_autostart"`
+	ReverbPort          *int    `json:"reverb_port"`
+	QueueAvailable      bool    `json:"queue_available"`
+	QueueConfigured     bool    `json:"queue_configured"`
+	QueueState          string  `json:"queue_state"`
+	QueueAutostart      bool    `json:"queue_autostart"`
+	SchedulerAvailable  bool    `json:"scheduler_available"`
+	SchedulerConfigured bool    `json:"scheduler_configured"`
+	SchedulerState      string  `json:"scheduler_state"`
+	SchedulerAutostart  bool    `json:"scheduler_autostart"`
 
 	// Project type and the directory served for it.
 	Type         string `json:"type"`

@@ -118,6 +118,10 @@ class FakeController:
         self.calls.append(("active", "reverb", site, active))
         return self._result("reverb changed")
 
+    def set_scheduler_active(self, site, active):
+        self.calls.append(("active", "scheduler", site, active))
+        return self._result("scheduler changed")
+
     def set_queue_autostart(self, site, enabled):
         self.calls.append(("autostart", "queue", site, enabled))
         return self._result("queue autostart changed")
@@ -125,6 +129,10 @@ class FakeController:
     def set_reverb_autostart(self, site, enabled):
         self.calls.append(("autostart", "reverb", site, enabled))
         return self._result("reverb autostart changed")
+
+    def set_scheduler_autostart(self, site, enabled):
+        self.calls.append(("autostart", "scheduler", site, enabled))
+        return self._result("scheduler autostart changed")
 
     def set_linked_site_php(self, site, version):
         self.calls.append(("site", "php", site, version))
@@ -145,6 +153,10 @@ class FakeController:
     def reverb_logs(self, site, lines):
         self.calls.append(("logs", "reverb", site, lines))
         return ("three",)
+
+    def scheduler_logs(self, site, lines):
+        self.calls.append(("logs", "scheduler", site, lines))
+        return ("four",)
 
 
 def request(identifier: int, method: str, params=None, protocol=PROTOCOL_VERSION):
@@ -209,6 +221,15 @@ class BridgeTests(unittest.TestCase):
             request(3, "worker.logs", {
                 "site": "linguine", "worker": "queue", "lines": 50,
             }),
+            request(4, "worker.set_active", {
+                "site": "linguine", "worker": "scheduler", "active": True,
+            }),
+            request(5, "worker.set_autostart", {
+                "site": "linguine", "worker": "scheduler", "enabled": True,
+            }),
+            request(6, "worker.logs", {
+                "site": "linguine", "worker": "scheduler", "lines": 25,
+            }),
         )
         self.assertTrue(all(response["ok"] for response in responses))
         self.assertEqual(["one", "two"], responses[2]["result"]["lines"])
@@ -216,6 +237,9 @@ class BridgeTests(unittest.TestCase):
             ("active", "queue", "linguine", True),
             ("autostart", "reverb", "linguine", False),
             ("logs", "queue", "linguine", 50),
+            ("active", "scheduler", "linguine", True),
+            ("autostart", "scheduler", "linguine", True),
+            ("logs", "scheduler", "linguine", 25),
         ], controller.calls)
 
     def test_dashboard_start_stop_is_dispatched(self):

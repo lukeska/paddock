@@ -127,6 +127,8 @@ class SiteManager:
                 record["reverb"] = previous["reverb"]
             if previous.get("queue") is not None:
                 record["queue"] = previous["queue"]
+            if previous.get("scheduler") is not None:
+                record["scheduler"] = previous["scheduler"]
             # Preserved rather than re-derived: only the project file knows
             # what is declared, and only `init` reads it.
             if previous.get("nginx") is not None:
@@ -151,6 +153,9 @@ class SiteManager:
         if previous.get("queue") is not None:
             from .queue_worker import QueueWorkerManager
             QueueWorkerManager(self.store, self.projector.runner).reproject(site_name)
+        if previous.get("scheduler") is not None:
+            from .scheduler_worker import SchedulerWorkerManager
+            SchedulerWorkerManager(self.store, self.projector.runner).reproject(site_name)
         return Site.from_record(record)
 
     def unlink(

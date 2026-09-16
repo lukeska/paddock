@@ -37,6 +37,15 @@ def site_worker_summary(site) -> str:
             statuses.append("Reverb failed")
         else:
             statuses.append("Reverb stopped")
+    if site.scheduler_available or site.scheduler_configured:
+        if not site.scheduler_configured:
+            statuses.append("Scheduler available")
+        elif site.scheduler_state == "active":
+            statuses.append("Scheduler running")
+        elif site.scheduler_state == "failed":
+            statuses.append("Scheduler failed")
+        else:
+            statuses.append("Scheduler stopped")
     if not statuses:
         return "No workers"
     return " · ".join(statuses)

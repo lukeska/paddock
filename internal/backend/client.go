@@ -14,7 +14,7 @@ import (
 // Moves with tui_bridge.PROTOCOL_VERSION. Both sides check for equality
 // rather than a minimum, because the bridge and this client ship in the
 // same package and a mismatch means a broken install, not an old peer.
-const ProtocolVersion = 6
+const ProtocolVersion = 7
 
 type rpcError struct {
 	Code    string `json:"code"`

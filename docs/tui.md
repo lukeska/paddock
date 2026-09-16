@@ -56,7 +56,7 @@ and remove workflows. Removing an entry never deletes the folder or projects.
 - In site details, up/down selects an action and `enter` activates it. Left/right
   cycles installed PHP or Node versions when the corresponding row is selected.
 - Detail actions toggle HTTP/HTTPS, open the URL or project path, launch a
-  terminal or Zed, and control queue/Reverb state, autostart, and logs.
+  terminal or Zed, and control queue/Reverb/scheduler state, autostart, and logs.
 - On Services, `a` opens the Add Service form. Left/right selects a catalog
   service; tab or up/down moves between type, name, port, and autostart.
   `enter` saves and `esc` cancels.

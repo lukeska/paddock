@@ -151,10 +151,14 @@ image when a project needs a version other than the catalog default.
 | `paddock worker stop queue [SITE]` | Stop the queue worker. |
 | `paddock worker restart queue [SITE]` | Restart the queue worker. |
 | `paddock worker logs queue [SITE]` | Print the queue worker journal. |
+| `paddock worker start scheduler [SITE]` | Start Laravel's scheduler for the site. |
+| `paddock worker stop scheduler [SITE]` | Stop the site's scheduler. |
+| `paddock worker restart scheduler [SITE]` | Restart the site's scheduler. |
+| `paddock worker logs scheduler [SITE]` | Print the scheduler journal. |
 
 The site defaults to the linked project containing the current directory.
-Reverb is available when the project has `laravel/reverb`; queue controls are
-available for detected Laravel projects.
+Reverb is available when the project has `laravel/reverb`; queue and scheduler
+controls are available for detected Laravel projects.
 
 ### Paddock lifecycle and diagnostics
 

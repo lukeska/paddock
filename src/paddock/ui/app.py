@@ -317,6 +317,19 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.site_queue_row.add_suffix(self.site_queue_autostart)
         self.site_queue_row.add_suffix(self.site_queue_logs)
         self.site_queue_row.add_suffix(self.site_queue_toggle)
+        self.site_scheduler_row = Adw.ActionRow(title="Scheduler")
+        self.site_scheduler_toggle = Gtk.Button(label="Start")
+        self.site_scheduler_toggle.set_valign(Gtk.Align.CENTER)
+        self.site_scheduler_toggle.connect("clicked", self._toggle_site_scheduler)
+        self.site_scheduler_logs = Gtk.Button(label="Logs")
+        self.site_scheduler_logs.set_valign(Gtk.Align.CENTER)
+        self.site_scheduler_logs.connect("clicked", self._open_site_scheduler_logs)
+        self.site_scheduler_autostart = Gtk.CheckButton(valign=Gtk.Align.CENTER)
+        self.site_scheduler_autostart.set_tooltip_text("Start the scheduler automatically")
+        self.site_scheduler_autostart.connect("toggled", self._toggle_site_scheduler_autostart)
+        self.site_scheduler_row.add_suffix(self.site_scheduler_autostart)
+        self.site_scheduler_row.add_suffix(self.site_scheduler_logs)
+        self.site_scheduler_row.add_suffix(self.site_scheduler_toggle)
         self.site_url_row = Adw.ActionRow(title="URL")
         self.site_url_link = Gtk.LinkButton(uri="http://localhost", label="Open")
         self.site_url_link.add_css_class("paddock-text-link")
@@ -389,6 +402,7 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.site_workers_section = PaddockSection("Workers")
         self.site_workers_section.add(self.site_queue_row)
         self.site_workers_section.add(self.site_reverb_row)
+        self.site_workers_section.add(self.site_scheduler_row)
         details.append(self.site_workers_section)
         self.site_detail_stack.add_named(details, "details")
         right.append(self.site_detail_stack)
@@ -1339,9 +1353,27 @@ class PaddockWindow(Adw.ApplicationWindow):
         self.site_queue_autostart.set_active(site.queue_autostart)
         self._updating_queue_autostart = False
         self.site_queue_autostart.set_sensitive(not self.mutation_busy)
+        self.site_scheduler_row.set_visible(
+            site.scheduler_available or site.scheduler_configured
+        )
+        self.site_scheduler_row.set_subtitle(
+            site.scheduler_state.replace("-", " ").capitalize()
+            if site.scheduler_configured else "Available · not running"
+        )
+        scheduler_active = site.scheduler_state == "active"
+        self.site_scheduler_toggle.set_label("Stop" if scheduler_active else "Start")
+        self.site_scheduler_toggle.set_sensitive(not self.mutation_busy)
+        self.site_scheduler_logs.set_sensitive(
+            not self.mutation_busy and site.scheduler_configured
+        )
+        self._updating_scheduler_autostart = True
+        self.site_scheduler_autostart.set_active(site.scheduler_autostart)
+        self._updating_scheduler_autostart = False
+        self.site_scheduler_autostart.set_sensitive(not self.mutation_busy)
         self.site_workers_section.set_visible(
             site.reverb_available or site.reverb_configured
             or site.queue_available or site.queue_configured
+            or site.scheduler_available or site.scheduler_configured
         )
         self.site_url_link.set_uri(site.url)
         self.site_url_link.set_label(site.url)
@@ -1491,6 +1523,68 @@ class PaddockWindow(Adw.ApplicationWindow):
     def _site_queue_failed(self, error: BaseException) -> None:
         self._set_mutation_busy(False)
         self.show_error("Queue worker could not be changed", str(error))
+        self.refresh()
+
+    def _toggle_site_scheduler(self, _button=None) -> None:
+        if self.mutation_busy:
+            return
+        site = self._selected_site()
+        if site is None:
+            return
+        active = site.scheduler_state != "active"
+        self.operation_spinner.set_tooltip_text(
+            f"{'Starting' if active else 'Stopping'} scheduler for {site.host}"
+        )
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            f"site-scheduler-{site.name}",
+            lambda: self.controller.set_scheduler_active(site.name, active),
+            self._site_scheduler_finished,
+            self._site_scheduler_failed,
+        )
+
+    def _toggle_site_scheduler_autostart(self, button) -> None:
+        if getattr(self, "_updating_scheduler_autostart", False) or self.mutation_busy:
+            return
+        site = self._selected_site()
+        if site is None:
+            return
+        enabled = button.get_active()
+        self._set_mutation_busy(True)
+        self.tasks.submit(
+            f"site-scheduler-autostart-{site.name}",
+            lambda: self.controller.set_scheduler_autostart(site.name, enabled),
+            self._site_scheduler_finished,
+            self._site_scheduler_failed,
+        )
+
+    def _open_site_scheduler_logs(self, _button=None) -> None:
+        if self.mutation_busy:
+            return
+        site = self._selected_site()
+        if site is None:
+            return
+        self.tasks.submit(
+            f"site-scheduler-logs-{site.name}",
+            lambda: self.controller.scheduler_logs(site.name, 200),
+            lambda lines: self.show_error(
+                f"Scheduler logs · {site.host}",
+                "\n".join(lines) or "No log entries were found.",
+            ),
+            lambda error: self.show_error("Scheduler logs unavailable", str(error)),
+        )
+
+    def _site_scheduler_finished(self, result: LinkedSitesOperationResult) -> None:
+        self._set_mutation_busy(False)
+        self._show_linked_sites(result.snapshot)
+        if result.ok:
+            self.show_toast(result.summary)
+        else:
+            self.show_error(result.summary, result.detail or "Unknown scheduler error")
+
+    def _site_scheduler_failed(self, error: BaseException) -> None:
+        self._set_mutation_busy(False)
+        self.show_error("Scheduler could not be changed", str(error))
         self.refresh()
 
     def _choose_site_node(self, _button, version: str) -> None:

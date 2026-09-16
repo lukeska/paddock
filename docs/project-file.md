@@ -172,6 +172,20 @@ paddock worker logs queue my-app
 It runs `artisan queue:work` with the PHP version selected for the site. Queue
 workers need no published port or web-server route.
 
+## Scheduler workers
+
+Every detected Laravel site exposes a scheduler worker alongside its queue:
+
+```bash
+paddock worker start scheduler
+paddock worker stop scheduler
+paddock worker restart scheduler my-app
+paddock worker logs scheduler my-app
+```
+
+It runs `artisan schedule:work --no-interaction` with the PHP version selected
+for the site. Autostart can be enabled independently from the queue and Reverb.
+
 ## Applying it
 
 ```bash

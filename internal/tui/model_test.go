@@ -124,6 +124,7 @@ func sampleSnapshot() backend.Snapshot {
 			PHP: "8.5", Node: &node, Secured: true, Root: "/srv/linguine",
 			QueueAvailable: true, QueueConfigured: true, QueueState: "active", QueueAutostart: true,
 			ReverbAvailable: true, ReverbConfigured: true, ReverbState: "inactive",
+			SchedulerAvailable: true, SchedulerConfigured: true, SchedulerState: "active", SchedulerAutostart: true,
 			Type: "laravel", DocumentRoot: "public",
 			CustomConfig:  "/home/demo/.config/paddock/nginx/linguine.custom.conf",
 			ProjectConfig: &projectConfig, ProjectConfigStatus: "pending",
@@ -584,6 +585,7 @@ func TestSiteDetailMirrorsDesktopInformationAndActions(t *testing.T) {
 		"URL", "https://linguine.test", "Path", "/srv/linguine", "Terminal", "Zed",
 		"Workers", "Queue", "● Active · Stop", "Queue autostart", "Queue logs",
 		"Reverb", "○ Inactive · Start", "Reverb autostart", "Reverb logs",
+		"Scheduler", "Scheduler autostart", "Scheduler logs",
 	} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("site detail missing %q: %q", expected, rendered)
@@ -656,6 +658,13 @@ func TestSiteDetailActionsUseControllerAndDesktopLaunchCommands(t *testing.T) {
 	executeCommand(command)
 	if last() != "active:linguine:queue:false" {
 		t.Fatalf("queue action calls = %v", api.calls)
+	}
+
+	at("scheduler-active")
+	_, command = m.activateDetailAction()
+	executeCommand(command)
+	if last() != "active:linguine:scheduler:false" {
+		t.Fatalf("scheduler action calls = %v", api.calls)
 	}
 
 	launched := ""

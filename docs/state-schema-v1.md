@@ -41,6 +41,8 @@ its allocated loopback `port`; runtime and autostart state remain owned by
 systemd rather than duplicated in JSON.
 A configured Laravel queue worker is represented by a `queue` worker record;
 its running and autostart state likewise remains owned by systemd.
+A configured Laravel scheduler is represented by an equivalent `scheduler`
+worker record; it also leaves running and autostart state to systemd.
 
 `service_labels` is UI-only metadata keyed by stable catalog service name. Old
 version-1 settings records without it normalize to an empty map when read.

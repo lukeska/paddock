@@ -26,6 +26,7 @@ from .node_runtime import NodeInstaller, NodeManifest, NodeRegistry
 from .report import build as build_report
 from .reverb import ReverbManager
 from .queue_worker import QueueWorkerManager
+from .scheduler_worker import SchedulerWorkerManager
 from .runtimes import RuntimeRegistry
 from .service_instances import ServiceInstanceManager
 from .state import StateStore
@@ -88,6 +89,10 @@ OVERVIEW: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("worker stop queue [SITE]", "Stop the site's queue worker"),
         ("worker restart queue [SITE]", "Restart the site's queue worker"),
         ("worker logs queue [SITE]", "Show the site's queue worker journal"),
+        ("worker start scheduler [SITE]", "Start Laravel's scheduler for a site"),
+        ("worker stop scheduler [SITE]", "Stop the site's scheduler"),
+        ("worker restart scheduler [SITE]", "Restart the site's scheduler"),
+        ("worker logs scheduler [SITE]", "Show the site's scheduler journal"),
     )),
     ("Services", (
         ("tui", "Open the terminal dashboard for services and sites"),
@@ -289,10 +294,13 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
     worker = command(
         "worker",
         "Control a worker belonging to a linked site.",
-        epilog="Reverb is available when laravel/reverb is installed in the project.",
+        epilog=(
+            "Reverb requires laravel/reverb; queue and scheduler are available "
+            "for detected Laravel projects."
+        ),
     )
     worker.add_argument("action", choices=("start", "stop", "restart", "logs"))
-    worker.add_argument("type", choices=("reverb", "queue"))
+    worker.add_argument("type", choices=("reverb", "queue", "scheduler"))
     worker.add_argument("site", nargs="?", help="site name; defaults to the site rooted here")
     logs = command("logs", "Show the journal for the web, PHP-FPM, and DNS services.")
     logs.add_argument("--follow", action="store_true", help="keep printing new entries")
@@ -433,11 +441,11 @@ def run(argv: list[str] | None = None) -> int:
             if arguments.site
             else manager._name_for_directory(records, Path.cwd())
         )
-        worker_manager = (
-            ReverbManager(store)
-            if arguments.type == "reverb"
-            else QueueWorkerManager(store)
-        )
+        worker_manager = {
+            "reverb": lambda: ReverbManager(store),
+            "queue": lambda: QueueWorkerManager(store),
+            "scheduler": lambda: SchedulerWorkerManager(store),
+        }[arguments.type]()
         if arguments.action == "logs":
             for line in worker_manager.logs(site_name):
                 print(line)
@@ -475,6 +483,7 @@ def run(argv: list[str] | None = None) -> int:
         )
         ReverbManager(store).remove(site_name)
         QueueWorkerManager(store).remove(site_name)
+        SchedulerWorkerManager(store).remove(site_name)
         site = manager.unlink(arguments.name, Path.cwd())
         print(f"Unlinked {site.name}.test")
     if arguments.command == "reload":
