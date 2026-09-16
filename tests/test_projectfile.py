@@ -37,11 +37,16 @@ class SchemaTests(unittest.TestCase):
         declared = parse({
             "name": "my-app", "php": "8.5", "secure": True,
             "services": {"postgres": {"version": "16"}, "redis": None},
+            "env": {"APP_ENV": "local", "FEATURE_FLAG": "true"},
         })
         self.assertEqual("my-app", declared.name)
         self.assertEqual("8.5", declared.php)
         self.assertTrue(declared.secure)
         self.assertEqual({"postgres", "redis"}, {s.name for s in declared.services})
+        self.assertEqual(
+            (("APP_ENV", "local"), ("FEATURE_FLAG", "true")),
+            declared.environment,
+        )
 
     def test_an_unknown_key_is_refused(self) -> None:
         with self.assertRaises(ProjectFileError) as caught:
@@ -68,6 +73,17 @@ class SchemaTests(unittest.TestCase):
     def test_secure_must_be_a_boolean(self) -> None:
         with self.assertRaises(ProjectFileError):
             parse({"secure": "yes"})
+
+    def test_environment_keys_and_values_are_strict(self) -> None:
+        for document in (
+            {"env": {"NOT-VALID": "value"}},
+            {"env": {"PORT": 8000}},
+            {"env": {"MULTILINE": "first\nsecond"}},
+            {"env": {"TAB": "first\tsecond"}},
+            {"env": ["APP_ENV=local"]},
+        ):
+            with self.subTest(document=document), self.assertRaises(ProjectFileError):
+                parse(document)
 
     def test_a_version_only_replaces_the_tag(self) -> None:
         # A project file must not be able to point the machine at any image.
@@ -178,6 +194,33 @@ class ReconcilerTests(ReconcilerFixture, unittest.TestCase):
         steps = self.reconciler.apply(self.root, ProjectFile(php="8.5"), dry_run=True)
         self.assertIn("changed", self.outcomes(steps))
         self.assertEqual([], self.sites.list())
+
+    def test_environment_is_reconciled_without_touching_unrelated_values(self) -> None:
+        path = self.root / ".env"
+        path.write_text(
+            "# keep this comment\nAPP_ENV=production\nLOCAL_ONLY=mine\n",
+            encoding="utf-8",
+        )
+        declared = ProjectFile(
+            php="8.5", environment=(("APP_ENV", "local"), ("APP_NAME", "My App")),
+        )
+        first = self.reconciler.apply(self.root, declared)
+        self.assertIn("write 2 environment variables to .env", [step.detail for step in first])
+        self.assertEqual(
+            '# keep this comment\nAPP_ENV=local\nLOCAL_ONLY=mine\n\nAPP_NAME="My App"\n',
+            path.read_text(encoding="utf-8"),
+        )
+        second = self.reconciler.apply(self.root, declared)
+        self.assertIn(".env already matches paddock.yml", [step.detail for step in second])
+
+    def test_environment_dry_run_does_not_create_env(self) -> None:
+        steps = self.reconciler.apply(
+            self.root,
+            ProjectFile(php="8.5", environment=(("APP_ENV", "local"),)),
+            dry_run=True,
+        )
+        self.assertIn("write 1 environment variable to .env", [step.detail for step in steps])
+        self.assertFalse((self.root / ".env").exists())
 
 
 class SharedServiceTests(ReconcilerFixture, unittest.TestCase):

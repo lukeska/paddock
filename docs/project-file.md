@@ -12,6 +12,11 @@ type: laravel         # optional; detected from the project when omitted
 root: public          # optional; the type's own default when omitted
 nginx: .paddock/nginx.conf   # optional; inert until trusted, see below
 
+env:                  # optional; quoted strings written to the local .env
+  APP_ENV: local
+  APP_NAME: "My App"
+  FEATURE_FLAG: "true"
+
 services:             # optional
   postgres:
     version: "17"     # optional; defaults to the catalog version
@@ -45,6 +50,41 @@ arrives with a clone.
 
 A type chosen explicitly — in this file or with `paddock link --type` — is
 preserved by later links, so `paddock init` never silently reverts it.
+
+## Local environment
+
+`env` declares non-secret environment values that every local checkout of the
+project should use. `paddock init` writes those keys to the project's `.env`:
+
+```yaml
+env:
+  APP_ENV: local
+  CACHE_STORE: redis
+  SCOUT_DRIVER: typesense
+  TYPESENSE_HOST: 127.0.0.1
+  TYPESENSE_PORT: "8108"
+```
+
+Keys must be valid environment-variable names. Values must be YAML strings;
+quote values such as numbers and booleans so YAML does not turn them into a
+different type. Paddock encodes spaces and other special characters safely for
+Laravel's dotenv parser.
+
+When `.env` does not exist, Paddock starts it from `.env.example` when that file
+is present, then applies the declaration. A newly created `.env` is readable
+only by its owner. For an existing file, Paddock:
+
+- changes active assignments for declared keys;
+- appends declared keys that are missing;
+- preserves comments, blank lines, unrelated values, and the file mode;
+- makes duplicate active assignments consistent so a later one cannot win;
+- reports no change when the result already matches.
+
+The declaration is intentionally one-way and conservative. Removing a key from
+`paddock.yml` does not delete it from `.env`, because the local value may have
+been customized or adopted by another tool. Delete unwanted local keys
+explicitly. Do not commit secrets to `paddock.yml`; it is part of the project
+repository just like `.env.example`.
 
 ## Shipping nginx directives
 
@@ -160,14 +200,13 @@ every other project's database. Resolve it by agreeing on a version, or by
 running the odd one out on its own port.
 
 `init` also refuses to take a site name that already serves a different
-directory.
-
-Nothing here writes your `.env`. `paddock service add` prints the connection
-settings; which of them a project wants is the project's business.
+directory. Service connection settings are not injected automatically;
+`paddock service add` prints them, and a project can explicitly declare the
+ones it wants under `env`.
 
 ## Strictness
 
 An unknown key is an error rather than something quietly ignored, because a
 typo in a committed file should fail on the first machine that reads it rather
-than do nothing on all of them. Keys that are planned but not yet implemented —
-`aliases`, `env` — say so specifically rather than reading as typos.
+than do nothing on all of them. The `aliases` key is planned but not yet
+implemented, so it says so specifically rather than reading as a typo.

@@ -18,9 +18,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 from typing import Any
 
 from . import siteconfig
+from .dotenv import reconcile as reconcile_environment
 from .drivers import DRIVERS, DriverError, normalize_document_root
 from .runtimes import normalize_minor
 from .services import CATALOG
@@ -29,12 +31,15 @@ from .sites import normalize_site_name
 
 PROJECT_FILE = "paddock.yml"
 
-TOP_LEVEL = {"name", "php", "node", "secure", "services", "type", "root", "nginx"}
+TOP_LEVEL = {
+    "name", "php", "node", "secure", "services", "type", "root", "nginx", "env",
+}
 SERVICE_KEYS = {"version", "port"}
+ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # Declared but not implemented. Named explicitly so the error says "not yet"
 # rather than "unknown", which would read like a typo.
-PLANNED = {"aliases", "env"}
+PLANNED = {"aliases"}
 
 
 class ProjectFileError(ValueError):
@@ -73,6 +78,9 @@ class ProjectFile:
     # it is arbitrary server configuration arriving with a clone, so it stays
     # inert until someone trusts it.
     nginx: str | None = None
+    # ``None`` means no declaration. An empty tuple means the project
+    # explicitly supplied ``env: {}``, which is valid and changes nothing.
+    environment: tuple[tuple[str, str], ...] | None = None
 
 
 def _object(value: Any, label: str) -> dict[str, Any]:
@@ -156,6 +164,25 @@ def parse(raw: Any) -> ProjectFile:
         except DriverError as error:
             raise ProjectFileError(str(error)) from None
 
+    environment = None
+    if "env" in value:
+        environment_value = _object(value["env"], "env")
+        declared_environment = []
+        for key, environment_value_item in environment_value.items():
+            if not isinstance(key, str) or not ENVIRONMENT_KEY.fullmatch(key):
+                raise ProjectFileError(
+                    "env keys must be valid environment variable names"
+                )
+            if not isinstance(environment_value_item, str):
+                raise ProjectFileError(
+                    f'env.{key} must be a quoted string'
+                )
+            if any(ord(character) < 32 or ord(character) == 127
+                   for character in environment_value_item):
+                raise ProjectFileError(f"env.{key} must be a single-line value")
+            declared_environment.append((key, environment_value_item))
+        environment = tuple(declared_environment)
+
     declared = []
     services = value.get("services")
     if services is not None:
@@ -180,6 +207,7 @@ def parse(raw: Any) -> ProjectFile:
     return ProjectFile(
         name=name, php=php, node=node, secure=secure, services=tuple(declared),
         driver=driver, document_root=document_root, nginx=fragment,
+        environment=environment,
     )
 
 
@@ -301,8 +329,21 @@ class Reconciler:
             steps.append(Step("unchanged", f"{site_name}.test already served over HTTPS"))
 
         steps.extend(self._nginx(site_name, declared, current, dry_run=dry_run))
+        steps.extend(self._environment(root, declared, dry_run=dry_run))
         steps.extend(self._services(declared, dry_run=dry_run))
         return steps
+
+    @staticmethod
+    def _environment(root: Path, declared: ProjectFile, *, dry_run: bool) -> list[Step]:
+        if declared.environment is None:
+            return []
+        desired = dict(declared.environment)
+        changed = reconcile_environment(root, desired, dry_run=dry_run)
+        if changed:
+            count = len(desired)
+            noun = "variable" if count == 1 else "variables"
+            return [Step("changed", f"write {count} environment {noun} to .env")]
+        return [Step("unchanged", ".env already matches paddock.yml")]
 
     def _nginx(self, site_name, declared, current, *, dry_run: bool) -> list[Step]:
         """Mirror the project's declaration, and never grant it trust.

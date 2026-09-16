@@ -86,9 +86,10 @@ evidence the model is workable rather than merely appealing.
 the port is not predictable before the service exists. Named instances remain
 possible later.
 
-**Writing the project's `.env`.** Deliberately not done. The file is
-user-owned, and a shared instance on the default port means a stock Laravel
-configuration already works.
+**Automatically writing service settings to the project's `.env`.**
+Deliberately not done. The file is user-owned, and Paddock cannot infer which
+of several instances a project intends to use. A project may explicitly opt in
+to individual non-secret values with the `env` mapping in `paddock.yml`.
 
 ## Consequences
 
@@ -105,7 +106,8 @@ configuration already works.
   maintainer accepted this.
 - Image tags, not digests, are pinned. Runtime archives are checksum- and
   attestation-verified; container images are not yet held to that standard.
-- The catalog now holds Redis, MySQL and PostgreSQL. Adding one needs no
+- The catalog now holds the built-in supporting services documented in the
+  project-file reference. Adding one needs no
   privileged action and no new architecture: an entry naming the image, port,
   data path, environment, connection settings and readiness probe. MariaDB and
   the `paddock.yml` reconciliation in the roadmap build on the same unit and
@@ -113,11 +115,11 @@ configuration already works.
 - Databases run without a password, which is the local-development convention
   Herd, Valet and DBngin follow, and is what an unedited Laravel `.env`
   expects. It is defensible only because every port is published on loopback
-  alone. `paddock service add` prints the settings rather than writing the
-  `.env`, which stays the user's file.
-- Readiness cannot be measured from the host. Podman binds a published port as
+  alone. `paddock service add` prints the settings rather than automatically
+  writing `.env`.
+- Bare TCP readiness cannot be measured from the host. Podman binds a published port as
   soon as the container starts, so the forwarder accepts while the database is
   still initialising: a cold Postgres reported ready in 0.6s and refused the
-  next query. The probe therefore runs inside the container and speaks the
-  service's protocol over TCP, since both entrypoints run a temporary
-  socket-only server during first-run initialisation.
+  next query. Protocol probes therefore normally run inside the container.
+  An HTTP health endpoint may be queried through the published port because a
+  successful application response, unlike a TCP connection, proves readiness.
