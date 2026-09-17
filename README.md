@@ -66,7 +66,7 @@ another program require `--` before those arguments.
 | `paddock secure [NAME]` | Issue a locally trusted certificate and switch the site to HTTPS. |
 | `paddock unsecure [NAME]` | Switch the site back to plain HTTP. |
 | `paddock reload` | Regenerate, validate, and reload the nginx configuration. |
-| `paddock init [--dry-run]` | Apply the nearest project's `paddock.yml`, including its declared local environment. `--dry-run` reports changes without applying them. |
+| `paddock init [--dry-run]` | Apply the nearest project's `paddock.yml`, including its environment, services, and site workers. `--dry-run` reports changes without applying them. |
 
 Supported values for `paddock link --type` are `laravel`, `php`, `statamic`,
 `static`, `symfony`, and `wordpress`.

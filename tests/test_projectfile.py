@@ -16,7 +16,7 @@ import unittest
 from paddock.web import WebProjector
 from paddock.paths import Paths
 from paddock.projectfile import (
-    DeclaredService, ProjectFile, ProjectFileError, Reconciler, parse,
+    DeclaredService, DeclaredWorker, ProjectFile, ProjectFileError, Reconciler, parse,
 )
 from paddock.runtimes import RuntimeRegistry
 from paddock.service_instances import ServiceInstanceManager
@@ -37,12 +37,25 @@ class SchemaTests(unittest.TestCase):
         declared = parse({
             "name": "my-app", "php": "8.5", "secure": True,
             "services": {"postgres": {"version": "16"}, "redis": None},
+            "workers": {
+                "queue": {"autostart": True},
+                "scheduler": None,
+                "reverb": {"autostart": False},
+            },
             "env": {"APP_ENV": "local", "FEATURE_FLAG": "true"},
         })
         self.assertEqual("my-app", declared.name)
         self.assertEqual("8.5", declared.php)
         self.assertTrue(declared.secure)
         self.assertEqual({"postgres", "redis"}, {s.name for s in declared.services})
+        self.assertEqual(
+            (
+                DeclaredWorker("queue", True),
+                DeclaredWorker("scheduler", True),
+                DeclaredWorker("reverb", False),
+            ),
+            declared.workers,
+        )
         self.assertEqual(
             (("APP_ENV", "local"), ("FEATURE_FLAG", "true")),
             declared.environment,
@@ -73,6 +86,16 @@ class SchemaTests(unittest.TestCase):
     def test_secure_must_be_a_boolean(self) -> None:
         with self.assertRaises(ProjectFileError):
             parse({"secure": "yes"})
+
+    def test_workers_are_strict(self) -> None:
+        for document in (
+            {"workers": {"horizon": None}},
+            {"workers": {"queue": {"enabled": True}}},
+            {"workers": {"scheduler": {"autostart": "yes"}}},
+            {"workers": ["queue"]},
+        ):
+            with self.subTest(document=document), self.assertRaises(ProjectFileError):
+                parse(document)
 
     def test_environment_keys_and_values_are_strict(self) -> None:
         for document in (
@@ -110,6 +133,7 @@ class ReconcilerFixture:
         self.store = StateStore(self.paths)
         self.store.initialize()
         self.calls: list[list[str]] = []
+        self.enabled_units: set[str] = set()
 
         def runner(command, *args, **kwargs):
             self.calls.append(list(command))
@@ -119,6 +143,17 @@ class ReconcilerFixture:
             if "is-active" in command:
                 units = command[command.index("is-active") + 1:]
                 out = "active\n" * len(units)
+            if command[:3] == ["systemctl", "--user", "enable"]:
+                self.enabled_units.add(command[-1])
+            if command[:3] == ["systemctl", "--user", "disable"]:
+                self.enabled_units.discard(command[-1])
+            if "is-enabled" in command:
+                unit = command[-1]
+                enabled = unit in self.enabled_units
+                return subprocess.CompletedProcess(
+                    command, 0 if enabled else 1,
+                    "enabled\n" if enabled else "disabled\n", "",
+                )
             return subprocess.CompletedProcess(command, 0, out, "")
 
         self.runner = runner
@@ -131,6 +166,13 @@ class ReconcilerFixture:
 
         self.root = base / "my-app"
         (self.root / "public").mkdir(parents=True)
+        (self.root / "bootstrap").mkdir()
+        (self.root / "bootstrap/app.php").write_text("<?php", encoding="utf-8")
+        (self.root / "artisan").write_text("artisan", encoding="utf-8")
+        (self.root / "composer.json").write_text(
+            '{"require":{"laravel/framework":"^12.0","laravel/reverb":"^1.0"}}',
+            encoding="utf-8",
+        )
 
         projector = WebProjector(self.paths, runner)
         self.sites = SiteManager(self.store, projector)
@@ -286,6 +328,98 @@ class SharedServiceTests(ReconcilerFixture, unittest.TestCase):
         self.assertEqual(1, len(blocked))
         self.assertIn(first.id, blocked[0].detail)
         self.assertIn(second.id, blocked[0].detail)
+
+
+class WorkerTests(ReconcilerFixture, unittest.TestCase):
+    def test_declared_workers_are_started_and_autostart_is_converged(self) -> None:
+        declared = ProjectFile(
+            php="8.5",
+            workers=(
+                DeclaredWorker("queue"),
+                DeclaredWorker("scheduler"),
+                DeclaredWorker("reverb", autostart=False),
+            ),
+        )
+        first = self.reconciler.apply(self.root, declared)
+        details = [step.detail for step in first]
+        self.assertIn("start queue for my-app.test", details)
+        self.assertIn("start scheduler for my-app.test", details)
+        self.assertIn("start reverb for my-app.test", details)
+        self.assertIn("enable queue autostart", details)
+        self.assertIn("enable scheduler autostart", details)
+        self.assertIn("reverb autostart already disabled", details)
+        records = self.store.read("sites")["sites"]["my-app"]
+        self.assertIn("queue", records)
+        self.assertIn("scheduler", records)
+        self.assertIn("reverb", records)
+
+        second = self.reconciler.apply(self.root, declared)
+        worker_steps = [
+            step for step in second
+            if any(name in step.detail for name in ("queue", "scheduler", "reverb"))
+        ]
+        self.assertTrue(worker_steps)
+        self.assertEqual({"unchanged"}, {step.outcome for step in worker_steps})
+
+    def test_worker_dry_run_reports_without_writing_units_or_state(self) -> None:
+        steps = self.reconciler.apply(
+            self.root,
+            ProjectFile(php="8.5", workers=(DeclaredWorker("scheduler"),)),
+            dry_run=True,
+        )
+        self.assertIn("start scheduler for my-app.test", [step.detail for step in steps])
+        self.assertNotIn(
+            "scheduler", self.store.read("sites").get("sites", {}).get("my-app", {})
+        )
+        self.assertFalse(any("paddock-scheduler" in " ".join(call) for call in self.calls))
+
+    def test_autostart_false_disables_an_enabled_worker_without_stopping_it(self) -> None:
+        self.reconciler.apply(
+            self.root,
+            ProjectFile(php="8.5", workers=(DeclaredWorker("queue"),)),
+        )
+        unit = "paddock-queue-my-app.service"
+        self.assertIn(unit, self.enabled_units)
+
+        steps = self.reconciler.apply(
+            self.root,
+            ProjectFile(
+                php="8.5", workers=(DeclaredWorker("queue", autostart=False),)
+            ),
+        )
+        self.assertIn("disable queue autostart", [step.detail for step in steps])
+        self.assertNotIn(unit, self.enabled_units)
+        self.assertNotIn(
+            ["systemctl", "--user", "stop", unit], self.calls
+        )
+
+    def test_unavailable_worker_is_blocked(self) -> None:
+        (self.root / "composer.json").write_text(
+            '{"require":{"laravel/framework":"^12.0"}}', encoding="utf-8"
+        )
+        steps = self.reconciler.apply(
+            self.root,
+            ProjectFile(php="8.5", workers=(DeclaredWorker("reverb"),)),
+        )
+        blocked = [step for step in steps if step.outcome == "blocked"]
+        self.assertEqual(1, len(blocked))
+        self.assertIn("laravel/reverb is not installed", blocked[0].detail)
+
+    def test_dry_run_accounts_for_a_declared_reverb_environment(self) -> None:
+        (self.root / "composer.json").write_text(
+            '{"require":{"laravel/framework":"^12.0"}}', encoding="utf-8"
+        )
+        steps = self.reconciler.apply(
+            self.root,
+            ProjectFile(
+                php="8.5",
+                environment=(("BROADCAST_CONNECTION", "reverb"),),
+                workers=(DeclaredWorker("reverb"),),
+            ),
+            dry_run=True,
+        )
+        self.assertIn("start reverb for my-app.test", [step.detail for step in steps])
+        self.assertFalse(any(step.outcome == "blocked" for step in steps))
 
 
 if __name__ == "__main__":

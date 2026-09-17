@@ -22,6 +22,13 @@ services:             # optional
     version: "17"     # optional; defaults to the catalog version
     port: 5432        # optional; defaults to the catalog port
   redis:              # an empty body means "the defaults"
+
+workers:              # optional Laravel site workers
+  queue:              # starts now and at login; autostart defaults to true
+  scheduler:
+    autostart: true
+  reverb:
+    autostart: false  # starts now, but not automatically after login
 ```
 
 ## Project types
@@ -136,6 +143,36 @@ Supported services are `mailpit`, `meilisearch`, `mysql`, `postgres`, `redis`,
 `version` replaces
 only the image tag; the registry and repository stay Paddock's, so a project
 file cannot point the machine at an arbitrary image.
+
+## Declaring site workers
+
+The `workers` mapping starts Laravel processes belonging to this site. Supported
+workers are `queue`, `scheduler`, and `reverb`:
+
+```yaml
+workers:
+  queue:
+  scheduler:
+    autostart: true
+  reverb:
+    autostart: false
+```
+
+An empty worker body uses the defaults. Declared workers are started whenever
+`paddock init` runs. `autostart` controls whether the worker also starts with
+the user's systemd session and defaults to `true`; setting it to `false` does
+not stop a worker that is currently running.
+
+Queue and scheduler declarations require a detected Laravel project. Reverb
+also requires `laravel/reverb` in Composer metadata (or the existing Reverb
+environment declaration). An unavailable declared worker is reported as
+blocked, and `paddock init` exits non-zero instead of silently ignoring it.
+
+Removing a worker from `paddock.yml` does not stop or delete an already
+configured worker. This is deliberately conservative: declarations converge
+what they contain without treating an omitted entry as permission to stop a
+developer's local process. Use the worker controls in the GUI/TUI or
+`paddock worker stop TYPE` explicitly.
 
 ## Reverb workers
 

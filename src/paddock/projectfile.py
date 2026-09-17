@@ -24,7 +24,10 @@ from typing import Any
 from . import siteconfig
 from .dotenv import reconcile as reconcile_environment
 from .drivers import DRIVERS, DriverError, normalize_document_root
+from .queue_worker import QueueWorkerManager, detects_laravel
+from .reverb import ReverbManager, detects_reverb
 from .runtimes import normalize_minor
+from .scheduler_worker import SchedulerWorkerManager
 from .services import CATALOG
 from .sites import normalize_site_name
 
@@ -32,9 +35,11 @@ from .sites import normalize_site_name
 PROJECT_FILE = "paddock.yml"
 
 TOP_LEVEL = {
-    "name", "php", "node", "secure", "services", "type", "root", "nginx", "env",
+    "name", "php", "node", "secure", "services", "workers", "type", "root", "nginx", "env",
 }
 SERVICE_KEYS = {"version", "port"}
+WORKER_KEYS = {"autostart"}
+WORKERS = {"queue", "reverb", "scheduler"}
 ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # Declared but not implemented. Named explicitly so the error says "not yet"
@@ -64,12 +69,19 @@ class DeclaredService:
 
 
 @dataclass(frozen=True)
+class DeclaredWorker:
+    name: str
+    autostart: bool = True
+
+
+@dataclass(frozen=True)
 class ProjectFile:
     name: str | None = None
     php: str | None = None
     node: str | None = None
     secure: bool = False
     services: tuple[DeclaredService, ...] = field(default_factory=tuple)
+    workers: tuple[DeclaredWorker, ...] = field(default_factory=tuple)
     # `type` and `root` in the file. Absent means detect the project type and
     # take that type's document root, which is what most projects want.
     driver: str | None = None
@@ -204,8 +216,27 @@ def parse(raw: Any) -> ProjectFile:
                 raise ProjectFileError(f"services.{service_name}.port must be an integer")
             declared.append(DeclaredService(service_name, version, port))
 
+    declared_workers = []
+    workers = value.get("workers")
+    if workers is not None:
+        for worker_name, body in _object(workers, "workers").items():
+            if worker_name not in WORKERS:
+                raise ProjectFileError(
+                    f"unknown worker '{worker_name}'; "
+                    f"supported: {', '.join(sorted(WORKERS))}"
+                )
+            body = {} if body is None else _object(body, f"workers.{worker_name}")
+            _reject_unknown(body, WORKER_KEYS, f"workers.{worker_name}")
+            autostart = body.get("autostart", True)
+            if not isinstance(autostart, bool):
+                raise ProjectFileError(
+                    f"workers.{worker_name}.autostart must be true or false"
+                )
+            declared_workers.append(DeclaredWorker(worker_name, autostart))
+
     return ProjectFile(
         name=name, php=php, node=node, secure=secure, services=tuple(declared),
+        workers=tuple(declared_workers),
         driver=driver, document_root=document_root, nginx=fragment,
         environment=environment,
     )
@@ -257,6 +288,7 @@ class Reconciler:
         self.sites = sites
         self.security = security
         self.services = services
+        self.runner = runner or services.runner
 
     def apply(self, root: Path, declared: ProjectFile, *, dry_run: bool = False) -> list[Step]:
         steps: list[Step] = []
@@ -331,6 +363,65 @@ class Reconciler:
         steps.extend(self._nginx(site_name, declared, current, dry_run=dry_run))
         steps.extend(self._environment(root, declared, dry_run=dry_run))
         steps.extend(self._services(declared, dry_run=dry_run))
+        steps.extend(self._workers(root, site_name, declared, dry_run=dry_run))
+        return steps
+
+    def _workers(
+        self, root: Path, site_name: str, declared: ProjectFile, *, dry_run: bool
+    ) -> list[Step]:
+        if not declared.workers:
+            return []
+        managers = {
+            "queue": QueueWorkerManager(self.store, self.runner),
+            "reverb": ReverbManager(
+                self.store, self.runner, self.services.port_available
+            ),
+            "scheduler": SchedulerWorkerManager(self.store, self.runner),
+        }
+        linked = site_name in self.store.read("sites")["sites"]
+        declared_environment = dict(declared.environment or ())
+        steps: list[Step] = []
+        for wanted in declared.workers:
+            manager = managers[wanted.name]
+            available = (
+                detects_reverb(root)
+                or declared_environment.get("BROADCAST_CONNECTION") == "reverb"
+                if wanted.name == "reverb"
+                else detects_laravel(root)
+            )
+            if not available:
+                requirement = (
+                    "laravel/reverb is not installed"
+                    if wanted.name == "reverb"
+                    else "the site is not a detected Laravel project"
+                )
+                steps.append(Step(
+                    "blocked", f"cannot start {wanted.name}: {requirement}"
+                ))
+                continue
+
+            configured = linked and manager.worker(site_name) is not None
+            active = configured and manager.state(site_name) == "active"
+            if active:
+                steps.append(Step("unchanged", f"{wanted.name} already running"))
+            else:
+                steps.append(Step("changed", f"start {wanted.name} for {site_name}.test"))
+                if not dry_run:
+                    manager.control("start", site_name)
+
+            enabled = configured and manager.enabled(site_name)
+            if enabled == wanted.autostart:
+                state = "enabled" if enabled else "disabled"
+                steps.append(Step(
+                    "unchanged", f"{wanted.name} autostart already {state}"
+                ))
+            else:
+                state = "enable" if wanted.autostart else "disable"
+                steps.append(Step(
+                    "changed", f"{state} {wanted.name} autostart"
+                ))
+                if not dry_run:
+                    manager.set_autostart(site_name, wanted.autostart)
         return steps
 
     @staticmethod
