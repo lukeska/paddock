@@ -15,6 +15,13 @@ case "$package" in
 esac
 
 test -f "$package"
+
+# The official minimal Arch container excludes packaged documentation to keep
+# the image small. Paddock intentionally ships its user documentation, and the
+# integrity check below should verify those files rather than inherit that
+# container-only omission. Preserve every other NoExtract rule.
+sed -i '/^[[:space:]]*NoExtract[[:space:]]/ s#usr/share/doc/\*##g' /etc/pacman.conf
+
 pacman -U --needed --noconfirm "$package"
 pacman -Q paddock
 pacman -Qkk paddock
