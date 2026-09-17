@@ -1,6 +1,6 @@
 # Packaging and development release status
 
-Current at revision `paddock 0.1.0-16`.
+Current at revision `paddock 0.1.0-24`.
 
 ## What the package owns
 
@@ -13,6 +13,13 @@ artifact index, and the state-schema and project-file references under
 
 It deliberately does **not** own the Omarchy plugin: ADR 0008 reserves
 `~/.config/omarchy/plugins` for Omarchy, and pacman must not write there.
+
+CI installs each newly built main package into a second, fresh Arch container.
+That job resolves the package's declared runtime dependencies with `pacman`,
+checks package ownership and file integrity, then runs the installed CLI as an
+unprivileged user from outside the checkout. This catches missing package files,
+undeclared dependencies, accidental source-tree imports, and install hooks that
+mutate user or system integration before `paddock setup`.
 
 Runtime dependencies include `python`, `python-yaml`, `python-gobject`, `gtk4`,
 `libadwaita`, `nginx`, `dnsmasq`, `mkcert`, `nss`, `p11-kit`, `networkmanager`,
