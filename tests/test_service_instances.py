@@ -158,6 +158,14 @@ class ServiceInstanceTests(unittest.TestCase):
                 image="redis:8\nExecStart=/usr/bin/evil",
             )
 
+    def test_a_signal_terminated_image_stops_without_failing_the_unit(self) -> None:
+        # Meilisearch installs no SIGTERM handler, so podman run exits 128+15
+        # on a clean stop. Without this the instance unit was left failed by a
+        # shutdown that had worked, with nothing in the journal to explain it.
+        instance = self.manager.create("meilisearch", "Search", 7700)
+        unit = (self.manager.unit_directory / instance.unit).read_text()
+        self.assertIn("SuccessExitStatus=143 SIGTERM", unit)
+
     def test_renaming_does_not_change_operational_identity(self) -> None:
         before = self.manager.create("postgres", "Main Database", 5432)
         after = self.manager.update(before.id, "Reporting Database", 5433)

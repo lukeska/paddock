@@ -326,6 +326,7 @@ class ServiceInstanceManager:
                 if catalog.ready else ""
             )
             + f"ExecStop=/usr/bin/{ENGINE} stop --ignore {instance.container}\n"
+            "SuccessExitStatus=143 SIGTERM\n"
             "Restart=on-failure\nRestartSec=500ms\n\n[Install]\nWantedBy=default.target\n"
         )
         path = self.unit_directory / instance.unit

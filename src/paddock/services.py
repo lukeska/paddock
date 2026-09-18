@@ -335,6 +335,15 @@ class ServiceManager:
         published endpoint from the host instead. An HTTP health response
         proves application readiness; merely opening the forwarded TCP port
         would not, because podman binds it before the service is ready.
+
+        `SuccessExitStatus=143` is what keeps `paddock service stop` from
+        reporting a failure it did not cause. `ExecStop=` asks podman to
+        stop the container, podman sends SIGTERM, and an image that does not
+        install a handler dies by that signal; `podman run` then reports the
+        container's 128+15 as its own exit code. Meilisearch does exactly
+        this, so a clean shutdown left the unit `failed` with nothing in the
+        journal to explain it — the stop had worked. Images that trap SIGTERM
+        and exit 0, such as Redis and Postgres, never showed the problem.
         """
         catalog = self.known(service.name)
         environment = "".join(
@@ -373,6 +382,7 @@ class ServiceManager:
                 if catalog.ready else ""
             ) +
             f"ExecStop=/usr/bin/{ENGINE} stop --ignore {service.container}\n"
+            "SuccessExitStatus=143 SIGTERM\n"
             "Restart=on-failure\n"
             "RestartSec=500ms\n"
             "\n"

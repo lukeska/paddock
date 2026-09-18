@@ -211,6 +211,17 @@ class ServiceManagerTests(ServiceFixture, unittest.TestCase):
         self.manager.configure("redis")
         self.assertIn(["systemctl", "--user", "daemon-reload"], self.calls)
 
+    def test_a_signal_terminated_image_stops_without_failing_the_unit(self) -> None:
+        # ExecStop= asks podman to stop the container, podman sends SIGTERM,
+        # and an image that installs no handler dies by that signal; podman
+        # run reports the container's 128+15 as its own exit code. Without
+        # this, `paddock service stop meilisearch` left the unit failed after
+        # a shutdown that had worked, and the journal said nothing about why.
+        self.assertIn(
+            "SuccessExitStatus=143 SIGTERM",
+            self.manager.render(self.manager.configure("meilisearch")),
+        )
+
 
 class DatabaseUnitTests(ServiceFixture, unittest.TestCase):
     """Databases need more from the unit than Redis does."""
