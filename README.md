@@ -127,7 +127,10 @@ After `paddock setup`, new terminal sessions also expose project-aware `php`,
 | Command | Description |
 | --- | --- |
 | `paddock services` | List configured service instances, their state, address, and image. |
+| `paddock services --json` | Print the stable, versioned machine-readable instance inventory. |
 | `paddock service add TYPE [--name NAME] [--image IMAGE] [--port PORT]` | Create and start an independent service instance. |
+| `paddock service enable ID` | Start a service instance automatically with the user session. |
+| `paddock service disable ID` | Disable automatic startup without stopping the instance. |
 | `paddock service start ID` | Start a service instance. |
 | `paddock service stop ID` | Temporarily stop a service instance. |
 | `paddock service restart ID` | Restart a service instance. |
@@ -138,6 +141,8 @@ After `paddock setup`, new terminal sessions also expose project-aware `php`,
 or `typesense`. Use the instance ID printed by `paddock services` for lifecycle,
 logs, and removal commands. `--image` accepts a registry-qualified, pinned
 image when a project needs a version other than the catalog default.
+The JSON contract is documented in
+[supporting-service inventory schema v1](docs/service-inventory-v1.md).
 
 ### Site workers
 
@@ -206,6 +211,10 @@ go vet ./...
 
 Python discovery includes the PTY acceptance tests for the compiled TUI. CI
 provisions the Go version declared in `go.mod` and runs both suites explicitly.
+
+For hands-on compatibility checks across Laravel 9/13, PHP 8.0–8.5, Node
+22/24, workers, and every supporting service, use the
+[in-repository compatibility lab](tests/lab/README.md).
 
 Build the local Arch package:
 

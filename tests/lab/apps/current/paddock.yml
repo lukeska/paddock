@@ -1,0 +1,10 @@
+name: paddock-lab
+php: "8.5"
+node: "24"
+secure: true
+type: laravel
+nginx: .paddock/nginx.conf
+workers:
+  queue: {autostart: true}
+  scheduler: {autostart: true}
+  reverb: {autostart: true}

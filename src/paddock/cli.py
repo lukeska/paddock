@@ -23,7 +23,7 @@ from .php_runtime import RuntimeInstaller
 from .projectfile import PROJECT_FILE, ProjectFileError, Reconciler, find, load
 from .projects import write_node_selection, write_project_selection
 from .node_runtime import NodeInstaller, NodeManifest, NodeRegistry
-from .report import build as build_report
+from .report import build as build_report, build_service_inventory
 from .reverb import ReverbManager
 from .queue_worker import QueueWorkerManager
 from .scheduler_worker import SchedulerWorkerManager
@@ -74,9 +74,12 @@ OVERVIEW: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     )),
     ("Supporting services", (
         ("services", "List configured services and their state"),
+        ("services --json", "Print the versioned service inventory"),
         ("service add TYPE", "Add a service instance, e.g. redis"),
         ("service start ID", "Start a service instance"),
         ("service stop ID", "Stop a service instance"),
+        ("service enable ID", "Start an instance automatically at login"),
+        ("service disable ID", "Disable automatic startup for an instance"),
         ("service logs ID", "Show one instance's journal"),
         ("service remove ID", "Remove an instance and its data"),
     )),
@@ -274,7 +277,11 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
     )
     for action in ("start", "stop", "restart"):
         command(action, f"{action.capitalize()} the Paddock services (paddock.target).")
-    command("services", "List configured supporting services and their state.")
+    services = command("services", "List configured supporting services and their state.")
+    services.add_argument(
+        "--json", action="store_true",
+        help="print the versioned machine-readable service inventory",
+    )
     service = command(
         "service",
         "Configure and control a supporting service.",
@@ -285,7 +292,8 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
                "version with --image, e.g. --image docker.io/library/postgres:16.",
     )
     service.add_argument(
-        "action", choices=("add", "start", "stop", "restart", "logs", "remove")
+        "action",
+        choices=("add", "start", "stop", "restart", "enable", "disable", "logs", "remove"),
     )
     service.add_argument("target", help="service type for add; instance ID otherwise")
     service.add_argument("--name", dest="label", help="add: display name for the instance")
@@ -503,6 +511,9 @@ def run(argv: list[str] | None = None) -> int:
         print(f"Unsecured http://{site.name}.test")
     instances = ServiceInstanceManager(store)
     if arguments.command == "services":
+        if arguments.json:
+            print(json.dumps(build_service_inventory(store), indent=2, sort_keys=True))
+            return 0
         configured = instances.list()
         states = instances.states_of(configured)
         for service in configured:
@@ -545,6 +556,12 @@ def run(argv: list[str] | None = None) -> int:
         if arguments.action == "remove":
             service = instances.remove(arguments.target)
             print(f"Removed {service.label} ({service.id}) and deleted {service.volume}")
+            return 0
+        if arguments.action in {"enable", "disable"}:
+            enabled = arguments.action == "enable"
+            instances.set_autostart(arguments.target, enabled)
+            service = instances.require(arguments.target)
+            print(f"{'Enabled' if enabled else 'Disabled'} {service.label} at login")
             return 0
         # Re-project before starting so an edited image or port takes effect
         # and a missing file cannot leave the unit inert via ConditionPathExists.

@@ -1,0 +1,9 @@
+name: paddock-lab-legacy
+php: "8.2"
+node: "22"
+secure: true
+type: laravel
+nginx: .paddock/nginx.conf
+workers:
+  queue: {autostart: true}
+  scheduler: {autostart: true}

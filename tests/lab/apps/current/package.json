@@ -1,0 +1,8 @@
+{
+    "name": "paddock-lab-current",
+    "private": true,
+    "type": "module",
+    "scripts": {"build": "vite build"},
+    "dependencies": {"laravel-echo": "^2.2.0", "pusher-js": "^8.4.0"},
+    "devDependencies": {"vite": "^7.1.0"}
+}

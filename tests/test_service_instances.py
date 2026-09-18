@@ -9,6 +9,7 @@ from paddock.paths import Paths
 from paddock.application import PaddockController
 from paddock.service_instances import ServiceInstanceManager
 from paddock.services import ServiceError
+from paddock.report import build_service_inventory
 from paddock.state import StateStore
 
 
@@ -236,6 +237,30 @@ class ServiceInstanceTests(unittest.TestCase):
         removed = controller.remove_service_instance(instance.id)
         self.assertTrue(removed.ok)
         self.assertEqual((), removed.snapshot.instances)
+
+    def test_machine_inventory_contains_connections_ports_and_dashboard(self) -> None:
+        mailpit = self.manager.create("mailpit", "Lab Mail", 11025)
+        inventory = build_service_inventory(self.store, self.runner)
+        self.assertEqual(1, inventory["schema_version"])
+        self.assertEqual(1, len(inventory["instances"]))
+        item = inventory["instances"][0]
+        self.assertEqual(mailpit.id, item["id"])
+        self.assertEqual("1.31.1", item["version"])
+        self.assertEqual("active", item["state"])
+        self.assertTrue(item["autostart"])
+        self.assertIn("MAIL_PORT=11025", item["connection"])
+        self.assertEqual(
+            ["127.0.0.1:11025 \u2192 1025", "127.0.0.1:18025 \u2192 8025"],
+            item["addresses"],
+        )
+        self.assertEqual("http://127.0.0.1:18025", item["dashboard_url"])
+        self.assertEqual(
+            {
+                "id", "type", "label", "image", "version", "port", "volume",
+                "state", "autostart", "connection", "addresses", "dashboard_url",
+            },
+            set(item),
+        )
 
 
 if __name__ == "__main__":

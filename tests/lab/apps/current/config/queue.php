@@ -1,0 +1,1 @@
+<?php return ['default'=>env('QUEUE_CONNECTION','redis'),'connections'=>['sync'=>['driver'=>'sync'],'redis'=>['driver'=>'redis','connection'=>'default','queue'=>'paddock-lab-current','retry_after'=>90,'block_for'=>1]],'failed'=>['driver'=>'null']];

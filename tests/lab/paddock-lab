@@ -1,0 +1,513 @@
+#!/usr/bin/env python3
+"""Materialize and operate Paddock's disposable manual compatibility lab."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import socket
+import subprocess
+import sys
+import uuid
+
+
+SCHEMA_VERSION = 1
+LAB_ROOT = Path(__file__).resolve().parent
+PROJECTS = {
+    "current": {"directory": "paddock-lab", "site": "paddock-lab", "php": "8.5", "node": "24"},
+    "legacy": {"directory": "paddock-lab-legacy", "site": "paddock-lab-legacy", "php": "8.2", "node": "22"},
+}
+PHP_MATRIX = {"legacy": ("8.0", "8.1", "8.2"), "current": ("8.3", "8.4", "8.5")}
+NODE_MATRIX = ("22", "24")
+SERVICES = {
+    "redis": 16379,
+    "mysql": 13306,
+    "postgres": 15432,
+    "mailpit": 11025,
+    "meilisearch": 17700,
+    "typesense": 18108,
+    "rustfs": 19000,
+}
+EXTRA_PORTS = {"mailpit": (18025,), "rustfs": (19001,)}
+PRESERVED_PARTS = {
+    ".env", ".paddock.json", "vendor", "node_modules", "storage", "bootstrap/cache", "public/build",
+    "database/database.sqlite",
+}
+
+
+class LabError(RuntimeError):
+    pass
+
+
+class Lab:
+    def __init__(self, park: Path | None = None, *, executable: str | None = None):
+        self.park = (park or Path.home() / "Paddock").expanduser().resolve()
+        self.control = self.park / ".paddock-lab"
+        self.manifest_path = self.control / "manifest.json"
+        self.paddock = executable or os.environ.get("PADDOCK_BIN", "paddock")
+
+    def run(self, *arguments: str, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
+        result = subprocess.run(
+            [self.paddock, *arguments], cwd=cwd, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        if check and result.returncode:
+            detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+            raise LabError(f"paddock {' '.join(arguments)}: {detail}")
+        return result
+
+    def load(self, *, required: bool = True) -> dict:
+        if self.control.is_symlink() or self.manifest_path.is_symlink():
+            raise LabError(f"refusing symlinked lab control path: {self.control}")
+        if not self.manifest_path.is_file():
+            if required:
+                raise LabError(f"lab is not installed in {self.park}; run install first")
+            return {}
+        try:
+            value = json.loads(self.manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise LabError(f"cannot read {self.manifest_path}: {error}") from error
+        if value.get("schema_version") != SCHEMA_VERSION or value.get("park") != str(self.park):
+            raise LabError(f"invalid or foreign lab manifest: {self.manifest_path}")
+        return value
+
+    def save(self, manifest: dict) -> None:
+        if self.control.is_symlink() or self.manifest_path.is_symlink():
+            raise LabError(f"refusing symlinked lab control path: {self.control}")
+        self.control.mkdir(parents=True, exist_ok=True)
+        temporary = self.manifest_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(temporary, self.manifest_path)
+
+    def inventory(self) -> dict:
+        result = self.run("services", "--json")
+        try:
+            value = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise LabError("paddock services --json returned invalid JSON") from error
+        if value.get("schema_version") != 1 or not isinstance(value.get("instances"), list):
+            raise LabError("unsupported paddock services --json schema")
+        return value
+
+    def install(self) -> None:
+        self.park.mkdir(parents=True, exist_ok=True)
+        manifest = self.load(required=False)
+        if not manifest:
+            manifest = {
+                "schema_version": SCHEMA_VERSION,
+                "installation_id": str(uuid.uuid4()),
+                "park": str(self.park),
+                "projects": {}, "services": {}, "files": {},
+            }
+            self.save(manifest)
+        installation_id = manifest["installation_id"]
+        print(f"Paddock lab {installation_id}")
+        self.run("park", str(self.park))
+
+        for version in (*PHP_MATRIX["legacy"], *PHP_MATRIX["current"]):
+            result = self.run("php", "install", version, check=False)
+            _report_optional(f"PHP {version}", result)
+        for version in NODE_MATRIX:
+            result = self.run("node", "install", version, check=False)
+            _report_optional(f"Node {version}", result)
+
+        existing = {item["id"]: item for item in self.inventory()["instances"]}
+        for kind, port in SERVICES.items():
+            recorded = manifest["services"].get(kind)
+            if recorded and recorded in existing:
+                if existing[recorded]["type"] != kind or installation_id not in existing[recorded]["label"]:
+                    raise LabError(f"recorded service is not owned by this lab: {recorded}")
+                print(f"OK   {kind}: {recorded}")
+                continue
+            label = f"Paddock Lab {kind.title()} [{installation_id}]"
+            recovered = next(
+                (item for item in existing.values() if item["label"] == label), None
+            )
+            if recovered:
+                manifest["services"][kind] = recovered["id"]
+                self.save(manifest)
+                print(f"OK   {kind}: recovered {recovered['id']}")
+                continue
+            for candidate in (port, *EXTRA_PORTS.get(kind, ())):
+                if not _port_available(candidate):
+                    raise LabError(f"port unavailable: {candidate} ({kind})")
+            self.run("service", "add", kind, "--name", label, "--port", str(port))
+            refreshed = self.inventory()["instances"]
+            created = next((item for item in refreshed if item["label"] == label), None)
+            if created is None:
+                raise LabError(f"Paddock did not report the newly created {kind} instance")
+            manifest["services"][kind] = created["id"]
+            self.save(manifest)
+            self.run("service", "enable", created["id"])
+            print(f"OK   {kind}: {created['id']}")
+
+        self.sync(force=False, manifest=manifest)
+        for key, project in PROJECTS.items():
+            destination = self.park / project["directory"]
+            self._bootstrap_project(key, destination)
+        self.run("park", "--refresh")
+        print("Lab installed. Open https://paddock-lab.test/paddock")
+
+    def sync(self, force: bool, *, manifest: dict | None = None) -> None:
+        manifest = manifest or self.load()
+        installation_id = manifest["installation_id"]
+        for key, project in PROJECTS.items():
+            destination = self._project_path(project["directory"])
+            marker = destination / ".paddock-lab.json"
+            if destination.exists() and not marker.is_file():
+                raise LabError(f"refusing to overwrite unmarked directory: {destination}")
+            if marker.is_file():
+                self._validate_marker(marker, installation_id)
+            destination.mkdir(parents=True, exist_ok=True)
+            source = LAB_ROOT / "apps" / key
+            files = _source_files(source)
+            shared = _source_files(LAB_ROOT / "shared" / "probes")
+            files.update({f"app/PaddockLab/Probes/{name}": path for name, path in shared.items()})
+            old_hashes = manifest["files"].get(key, {})
+            new_hashes: dict[str, str] = {}
+            for relative, source_path in sorted(files.items()):
+                target = self._safe_target(destination, relative)
+                old_hash = old_hashes.get(relative)
+                if target.is_file() and old_hash and _sha256(target) != old_hash and not force:
+                    raise LabError(
+                        f"managed file was edited: {target}; rerun sync --force to replace it"
+                    )
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_path, target)
+                new_hashes[relative] = _sha256(target)
+            for relative, old_hash in old_hashes.items():
+                if relative in files or _preserved(relative):
+                    continue
+                target = self._safe_target(destination, relative)
+                if target.is_file():
+                    if _sha256(target) != old_hash and not force:
+                        raise LabError(f"managed file was edited: {target}")
+                    target.unlink()
+            marker.write_text(json.dumps({
+                "schema_version": SCHEMA_VERSION,
+                "installation_id": installation_id,
+                "project": key,
+            }, indent=2) + "\n", encoding="utf-8")
+            manifest["projects"][key] = str(destination)
+            manifest["files"][key] = new_hashes
+            self.save(manifest)
+            print(f"SYNC {key}: {destination}")
+
+    def _bootstrap_project(self, key: str, destination: Path) -> None:
+        project = PROJECTS[key]
+        env = destination / ".env"
+        if not env.exists():
+            shutil.copy2(destination / ".env.example", env)
+        for directory in (
+            "storage/app", "storage/framework/cache", "storage/framework/sessions",
+            "storage/framework/views", "storage/logs", "bootstrap/cache",
+        ):
+            (destination / directory).mkdir(parents=True, exist_ok=True)
+        self.run("php", "use", project["php"], cwd=destination)
+        self.run("node", "use", project["node"], cwd=destination)
+        self.run("composer", "--", "install", "--no-interaction", "--prefer-dist", cwd=destination)
+        self.run("php", "--", "artisan", "key:generate", "--force", cwd=destination)
+        npm = os.environ.get("PADDOCK_NPM_BIN", "npm")
+        result = subprocess.run(
+            [npm, "ci"], cwd=destination, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        if result.returncode:
+            raise LabError(f"npm ci ({key}): {result.stderr.strip() or result.stdout.strip()}")
+        result = subprocess.run(
+            [npm, "run", "build"], cwd=destination, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        if result.returncode:
+            raise LabError(f"npm run build ({key}): {result.stderr.strip() or result.stdout.strip()}")
+        # The first reconciliation deliberately leaves the committed nginx
+        # fragment inert. Trust its exact digest, then converge once more.
+        self.run("init", cwd=destination, check=False)
+        self.run("config", "trust", project["site"], cwd=destination)
+        self.run("init", cwd=destination)
+
+    def status(self) -> int:
+        manifest = self.load()
+        inventory = {item["id"]: item for item in self.inventory()["instances"]}
+        failed = False
+        print(f"Lab {manifest['installation_id']} in {self.park}")
+        for key, project in PROJECTS.items():
+            path = self.park / project["directory"]
+            present = path.is_dir() and (path / ".paddock-lab.json").is_file()
+            print(f"{'OK' if present else 'MISS'}  {key:8} {path}")
+            failed |= not present
+        for kind in SERVICES:
+            instance_id = manifest["services"].get(kind)
+            if not instance_id:
+                print(f"MISS  {kind:10} not created")
+                failed = True
+                continue
+            item = inventory.get(instance_id)
+            state = item["state"] if item else "missing"
+            print(f"{'OK' if state == 'active' else 'FAIL'}  {kind:10} {instance_id} {state}")
+            failed |= state != "active"
+        return 1 if failed else 0
+
+    def check(self, selection: str) -> int:
+        manifest = self.load()
+        keys = PROJECTS if selection == "all" else (selection,)
+        failed = False
+        for key in keys:
+            destination = Path(manifest["projects"][key])
+            result = self.run("php", "--", "artisan", "paddock:smoke", cwd=destination, check=False)
+            sys.stdout.write(result.stdout)
+            sys.stderr.write(result.stderr)
+            failed |= result.returncode != 0
+        return 1 if failed else 0
+
+    def php_matrix(self) -> int:
+        manifest = self.load()
+        incomplete = failed = False
+        try:
+            installed = {line.split("\t", 1)[0] for line in self.run("php", "list").stdout.splitlines()}
+            for key, versions in PHP_MATRIX.items():
+                destination = Path(manifest["projects"][key])
+                project = PROJECTS[key]
+                for version in versions:
+                    if version not in installed:
+                        print(f"SKIP {key} PHP {version}: runtime unavailable")
+                        incomplete = True
+                        continue
+                    print(f"TEST {key} PHP {version}")
+                    self.run("php", "use", version, cwd=destination)
+                    self.run("link", project["site"], "--php", version, "--node", project["node"], cwd=destination)
+                    composer = self.run("composer", "--", "check-platform-reqs", cwd=destination, check=False)
+                    smoke = self.run("php", "--", "artisan", "paddock:smoke", "--json", cwd=destination, check=False)
+                    http = _fetch_json(f"https://{project['site']}.test/paddock/api/smoke")
+                    reported = http.get("checks", {}).get("php", {}).get("version", "")
+                    if composer.returncode or smoke.returncode or reported.split(".")[:2] != version.split("."):
+                        failed = True
+                        print(f"FAIL {key} PHP {version}")
+                    else:
+                        print(f"PASS {key} PHP {version}")
+        finally:
+            for key, default in (("legacy", "8.2"), ("current", "8.5")):
+                destination = Path(manifest["projects"][key])
+                project = PROJECTS[key]
+                self.run("php", "use", default, cwd=destination, check=False)
+                self.run("link", project["site"], "--php", default, "--node", project["node"], cwd=destination, check=False)
+        return 1 if failed else (2 if incomplete else 0)
+
+    def node_matrix(self) -> int:
+        manifest = self.load()
+        incomplete = failed = False
+        try:
+            installed = {line.split("\t", 1)[0] for line in self.run("node", "list").stdout.splitlines()}
+            for key, project in PROJECTS.items():
+                destination = Path(manifest["projects"][key])
+                for version in NODE_MATRIX:
+                    if version not in installed:
+                        print(f"SKIP {key} Node {version}: runtime unavailable")
+                        incomplete = True
+                        continue
+                    self.run("node", "use", version, cwd=destination)
+                    self.run("link", project["site"], "--php", project["php"], "--node", version, cwd=destination)
+                    result = subprocess.run(
+                        [os.environ.get("PADDOCK_NPM_BIN", "npm"), "run", "build"], cwd=destination,
+                        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+                    )
+                    print(f"{'PASS' if result.returncode == 0 else 'FAIL'} {key} Node {version}")
+                    failed |= result.returncode != 0
+        finally:
+            for key, project in PROJECTS.items():
+                destination = Path(manifest["projects"][key])
+                self.run("node", "use", project["node"], cwd=destination, check=False)
+                self.run("link", project["site"], "--php", project["php"], "--node", project["node"], cwd=destination, check=False)
+        return 1 if failed else (2 if incomplete else 0)
+
+    def reset(self, yes: bool) -> None:
+        manifest = self.load()
+        _confirm("Reset all namespaced Paddock lab data?", yes)
+        for key in PROJECTS:
+            destination = Path(manifest["projects"][key])
+            self.run("php", "--", "artisan", "paddock:lab-reset", "--force", cwd=destination)
+        print("Lab data reset; runtimes, dependencies, and service containers were preserved.")
+
+    def remove(self, yes: bool) -> None:
+        manifest = self.load()
+        _confirm(f"Remove lab {manifest['installation_id']} and its service volumes?", yes)
+        installation_id = manifest["installation_id"]
+        inventory = {item["id"]: item for item in self.inventory()["instances"]}
+        project_paths = []
+        for key, project in PROJECTS.items():
+            path = Path(manifest["projects"].get(key, self.park / project["directory"]))
+            self._validate_project_for_removal(path, installation_id)
+            project_paths.append((key, project, path))
+        for instance_id in manifest["services"].values():
+            if instance_id in inventory and installation_id not in inventory[instance_id].get("label", ""):
+                raise LabError(f"refusing to remove service not owned by this lab: {instance_id}")
+        for key, project, path in project_paths:
+            for worker in ("queue", "scheduler", "reverb"):
+                self.run("worker", "stop", worker, project["site"], check=False)
+            self.run("unlink", project["site"], check=False)
+            if path.exists():
+                shutil.rmtree(path)
+        for instance_id in manifest["services"].values():
+            if instance_id not in inventory:
+                print(f"SKIP missing service {instance_id}")
+                continue
+            self.run("service", "remove", instance_id)
+        self.run("park", "--refresh", check=False)
+        shutil.rmtree(self.control)
+        print("Removed the Paddock lab and its recorded service volumes.")
+
+    def open(self, target: str) -> None:
+        self.load()
+        if target in PROJECTS:
+            url = f"https://{PROJECTS[target]['site']}.test/paddock"
+        else:
+            service_id = self.load()["services"].get(target)
+            item = next((item for item in self.inventory()["instances"] if item["id"] == service_id), None)
+            if not item or not item.get("dashboard_url"):
+                raise LabError(f"{target} has no available dashboard")
+            url = item["dashboard_url"]
+        subprocess.run([os.environ.get("BROWSER", "xdg-open"), url], check=False)
+
+    def _project_path(self, directory: str) -> Path:
+        path = (self.park / directory).resolve()
+        if path.parent != self.park:
+            raise LabError(f"project path escapes parked directory: {path}")
+        return path
+
+    @staticmethod
+    def _validate_marker(marker: Path, installation_id: str) -> None:
+        if marker.is_symlink():
+            raise LabError(f"refusing symlinked project marker: {marker}")
+        try:
+            value = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise LabError(f"invalid project marker: {marker}") from error
+        if value.get("installation_id") != installation_id:
+            raise LabError(f"refusing to touch project owned by another lab: {marker.parent}")
+
+    def _validate_project_for_removal(self, path: Path, installation_id: str) -> None:
+        resolved = path.resolve()
+        if resolved.parent != self.park or resolved.name not in {p["directory"] for p in PROJECTS.values()}:
+            raise LabError(f"refusing to remove path outside the lab: {resolved}")
+        if resolved.exists():
+            marker = resolved / ".paddock-lab.json"
+            if not marker.is_file():
+                raise LabError(f"refusing to remove unmarked directory: {resolved}")
+            self._validate_marker(marker, installation_id)
+
+    @staticmethod
+    def _safe_target(project: Path, relative: str) -> Path:
+        target = project / relative
+        cursor = target
+        while cursor != project:
+            if cursor.is_symlink():
+                raise LabError(f"refusing managed path through a symlink: {cursor}")
+            cursor = cursor.parent
+        if target.exists() and not target.is_file():
+            raise LabError(f"refusing non-file managed target: {target}")
+        return target
+
+
+def _source_files(root: Path) -> dict[str, Path]:
+    return {
+        str(path.relative_to(root)): path
+        for path in root.rglob("*")
+        if path.is_file() and not _preserved(str(path.relative_to(root)))
+    }
+
+
+def _preserved(relative: str) -> bool:
+    return any(relative == part or relative.startswith(part + "/") for part in PRESERVED_PARTS)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _port_available(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        try:
+            listener.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
+def _report_optional(label: str, result: subprocess.CompletedProcess[str]) -> None:
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip() or "unavailable"
+        print(f"SKIP {label}: {detail}")
+    else:
+        print(f"OK   {label}")
+
+
+def _fetch_json(url: str) -> dict:
+    import ssl
+    import urllib.request
+    context = ssl.create_default_context()
+    try:
+        with urllib.request.urlopen(url, context=context, timeout=15) as response:
+            return json.load(response)
+    except Exception as error:
+        return {"error": str(error)}
+
+
+def _confirm(question: str, yes: bool) -> None:
+    if yes:
+        return
+    if not sys.stdin.isatty() or input(f"{question} [y/N] ").strip().lower() not in {"y", "yes"}:
+        raise LabError("cancelled")
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(description=__doc__)
+    commands = result.add_subparsers(dest="command", required=True)
+    install = commands.add_parser("install")
+    install.add_argument("--park", type=Path)
+    sync = commands.add_parser("sync")
+    sync.add_argument("--force", action="store_true")
+    commands.add_parser("status")
+    check = commands.add_parser("check")
+    check.add_argument("selection", choices=("current", "legacy", "all"), default="all", nargs="?")
+    commands.add_parser("php-matrix")
+    commands.add_parser("node-matrix")
+    opening = commands.add_parser("open")
+    opening.add_argument("target", choices=("current", "legacy", "mailpit", "meilisearch", "rustfs"))
+    for name in ("reset", "remove"):
+        command = commands.add_parser(name)
+        command.add_argument("--yes", action="store_true")
+    return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parser().parse_args(argv)
+    selected_park = getattr(arguments, "park", None)
+    if selected_park is None and os.environ.get("PADDOCK_LAB_PARK"):
+        selected_park = Path(os.environ["PADDOCK_LAB_PARK"])
+    lab = Lab(selected_park)
+    try:
+        if arguments.command == "install": lab.install()
+        elif arguments.command == "sync": lab.sync(arguments.force)
+        elif arguments.command == "status": return lab.status()
+        elif arguments.command == "check": return lab.check(arguments.selection)
+        elif arguments.command == "php-matrix": return lab.php_matrix()
+        elif arguments.command == "node-matrix": return lab.node_matrix()
+        elif arguments.command == "open": lab.open(arguments.target)
+        elif arguments.command == "reset": lab.reset(arguments.yes)
+        elif arguments.command == "remove": lab.remove(arguments.yes)
+        return 0
+    except LabError as error:
+        print(f"paddock-lab: {error}", file=sys.stderr)
+        return 78
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

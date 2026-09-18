@@ -141,7 +141,7 @@ class ServiceMessageTests(unittest.TestCase):
         commands = cli.build()[1]
         actions = commands["service"]._actions
         choices = next(a.choices for a in actions if a.dest == "action")
-        for action in ("start", "stop", "restart"):
+        for action in ("start", "stop", "restart", "enable", "disable"):
             self.assertIn(action, choices)
         self.assertEqual("Stopped", cli.ACTION_DONE["stop"])
         self.assertEqual("Started", cli.ACTION_DONE["start"])
@@ -154,7 +154,7 @@ class ServiceMessageTests(unittest.TestCase):
             a.choices for a in commands["service"]._actions if a.dest == "action"
         )
         for action in choices:
-            if action in {"add", "logs", "remove"}:
+            if action in {"add", "enable", "disable", "logs", "remove"}:
                 continue
             self.assertIn(action, cli.ACTION_DONE, action)
 

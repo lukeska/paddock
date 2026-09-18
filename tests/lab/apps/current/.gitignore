@@ -1,0 +1,11 @@
+/.env
+/.paddock.json
+/vendor/
+/node_modules/
+/public/build/
+/bootstrap/cache/*.php
+/storage/**/*.log
+/storage/framework/cache/**
+/storage/framework/sessions/**
+/storage/framework/views/**
+/database/*.sqlite*

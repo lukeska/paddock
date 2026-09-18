@@ -1,0 +1,10 @@
+<?php
+return [
+ 'default'=>env('DB_CONNECTION','mysql_lab'),
+ 'connections'=>[
+  'mysql_lab'=>['driver'=>'mysql','host'=>env('MYSQL_HOST'),'port'=>env('MYSQL_PORT'),'database'=>env('MYSQL_DATABASE'),'username'=>env('MYSQL_USERNAME'),'password'=>env('MYSQL_PASSWORD'),'charset'=>'utf8mb4','collation'=>'utf8mb4_unicode_ci','prefix'=>'','strict'=>true],
+  'pgsql_lab'=>['driver'=>'pgsql','host'=>env('PGSQL_HOST'),'port'=>env('PGSQL_PORT'),'database'=>env('PGSQL_DATABASE'),'username'=>env('PGSQL_USERNAME'),'password'=>env('PGSQL_PASSWORD'),'charset'=>'utf8','prefix'=>'','schema'=>'public','sslmode'=>'prefer'],
+ ],
+ 'migrations'=>'migrations',
+ 'redis'=>['client'=>env('REDIS_CLIENT','predis'),'default'=>['host'=>env('REDIS_HOST'),'port'=>env('REDIS_PORT'),'database'=>0],'cache'=>['host'=>env('REDIS_HOST'),'port'=>env('REDIS_PORT'),'database'=>1]],
+];

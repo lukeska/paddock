@@ -174,9 +174,48 @@ def build_service_instances(
             "image": instance.image,
             "unit": instance.unit,
             "volume": instance.volume,
+            "version": _image_version(instance.image),
+            "connection": list(manager.connection_lines(instance.id)),
+            "addresses": [
+                f"127.0.0.1:{host} \u2192 {container}"
+                for host, container in manager.ports(instance.id)
+            ],
+            "dashboard_url": manager.dashboard_url(instance.id),
         }
         for instance in instances
     ]
+
+
+def _image_version(image: str) -> str | None:
+    """Return the human version carried by an OCI tag.
+
+    Digests are immutable identities rather than display versions, and an
+    untagged image has no version to report.  A leading ``v`` is decoration in
+    the catalogs we ship, so omit it from the machine-facing value.
+    """
+    final = image.rsplit("/", 1)[-1]
+    if "@" in final or ":" not in final:
+        return None
+    tag = final.rsplit(":", 1)[1]
+    return tag.removeprefix("v") or None
+
+
+def build_service_inventory(
+    store: StateStore, runner: Runner = subprocess.run
+) -> dict[str, Any]:
+    """Stable machine-readable inventory for ``paddock services --json``."""
+    instances = build_service_instances(store, runner)
+    public_fields = (
+        "id", "type", "label", "image", "version", "port", "volume",
+        "state", "autostart", "connection", "addresses", "dashboard_url",
+    )
+    return {
+        "schema_version": 1,
+        "instances": [
+            {field: instance[field] for field in public_fields}
+            for instance in instances
+        ],
+    }
 
 
 def health(
