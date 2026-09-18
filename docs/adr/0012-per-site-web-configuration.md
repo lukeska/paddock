@@ -2,6 +2,7 @@
 
 - Status: accepted for implementation
 - Date: 2026-09-05
+- Amended: 2026-09-18 (a project fragment is additive, never required)
 - Depends on: [ADR 0011](0011-nginx-http-server.md)
 - Experiment: [nginx routing and projection safety](../../experiments/nginx/README.md)
 
@@ -130,3 +131,63 @@ edits", re-render from unchanged state for exactly that case.
 - **Copy fragment contents into the generated site file.** Validation would
   still work, but every error message would point at a generated file the user
   did not write.
+
+## Amendment: a project fragment is additive, never required
+
+Dated 2026-09-18. The original justified the project source by saying a team
+wants "the rules a project needs to travel with the project, the same way
+`paddock.yml` already makes PHP and service versions travel". That reasoning is
+narrower than it reads, and this records where it stops.
+
+Trust is per machine and recorded as the fragment's digest, so a freshly cloned
+project's fragment is inert until someone reviews it. The rules travel; they do
+not apply. "Refusing is never an error" holds only while the fragment is
+optional. If it carries something the application needs, the safe outcome is the
+silently broken one, on every teammate's first clone — which is precisely the
+case the justification invoked.
+
+**A project fragment may only carry directives the site is correct without.** A
+marker header, a debug endpoint, a redirect used while developing: absent, the
+site still serves and nothing misleads. Anything the application requires to
+function — a rewrite it depends on, a body-size limit that makes an upload form
+work, a proxy to a sidecar — does not belong in a fragment, because the gate
+will withhold it and the resulting failure does not name its cause.
+
+**A requirement is a named option in `paddock.yml`, not a fragment.** This is
+the original's own distinction applied to its own feature: `paddock.yml` chooses
+between options Paddock defines, and such an option can neither address a file
+outside the project nor need a trust gate, so it both travels and applies. Where
+a directive is common enough that projects reach for a fragment to get it, the
+answer is to define the option rather than widen the hatch.
+`client_max_body_size` is the first of these.
+
+**Removing the project source entirely was reconsidered and rejected.** The
+original recorded the mirror-image rejection — a project fragment with no user
+fragment — but never whether the project source should exist at all. Relying on
+`<site>.custom.conf` alone would have every member of a team hand-write the same
+file on every machine with nothing in the repository to copy from, and would
+leave the additive cases above with no home. The two sources answer different
+needs and neither subsumes the other.
+
+**A gated feature must not fail silently.** The original said `paddock link` and
+`paddock init` "record what a project declares and stop there", but only `init`
+does; `link` never opens the project file, and a parked directory is taken into
+the registry without one being read at all. A project shipping a fragment
+therefore sits at `none` rather than `pending`, and because the UIs correctly
+hide the review control at `none`, it is invisible in every surface at once. The
+declaration is a statement of fact about the repository, not a grant of trust,
+so it is recorded wherever Paddock takes a site into its registry and a project
+file is present — `link`, `init`, and parked discovery alike. Recording it is
+what makes review possible; withholding trust remains a separate act.
+
+## Consequences of this amendment
+
+- The fragment template and `docs/project-file.md` state the additive rule, so
+  the constraint is met where a fragment is written rather than in an ADR.
+- `paddock.yml` gains named options for directives that are requirements. Each
+  one narrows what the escape hatch is needed for.
+- `link` and parked discovery record a declaration when a project file is
+  present. Neither grants trust, so a newly linked project reports `pending`
+  and `init` keeps reporting it with `!`.
+- A site at `pending` is visible in the CLI, TUI, and GTK surfaces. `none` and
+  `pending` are different states and are not presented alike.
