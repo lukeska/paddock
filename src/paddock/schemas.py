@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+import re
 from typing import Any
 
 from .drivers import DRIVERS, DriverError, normalize_document_root
+
+
+# nginx's size syntax: a number, optionally suffixed k, m, or g. Defined
+# here because the registry is the last gate before the value is rendered
+# into a server block, and the project file borrows it rather than keeping
+# a second copy that could drift.
+BODY_SIZE = re.compile(r"^[1-9][0-9]*[kKmMgG]?$")
 
 
 SCHEMA_VERSION = 1
@@ -145,7 +153,7 @@ def validate_sites(raw: Any) -> dict[str, Any]:
         required = {"name", "root", "php", "secured"}
         allowed = required | {
             "origin", "parking_path", "node", "reverb", "queue", "scheduler",
-            "type", "document_root", "nginx",
+            "type", "document_root", "nginx", "client_max_body_size",
         }
         missing = required - set(record)
         unknown = set(record) - allowed
@@ -239,6 +247,16 @@ def validate_sites(raw: Any) -> dict[str, Any]:
                 raise SchemaError(
                     f"site {name}.nginx.sha256 must be a lowercase hex SHA-256"
                 )
+        body_size = record.get("client_max_body_size")
+        # Rendered into a server block unquoted, so the shape is enforced here
+        # as well as at the project-file boundary: a value that reached the
+        # registry by another route must not be able to carry a `;`.
+        if body_size is not None and (
+            not isinstance(body_size, str) or not BODY_SIZE.match(body_size)
+        ):
+            raise SchemaError(
+                f"site {name}.client_max_body_size must be a size like 512m or 1g"
+            )
         origin = record.get("origin", "linked")
         if origin not in {"linked", "parked"}:
             raise SchemaError(f"site {name}.origin must be linked or parked")

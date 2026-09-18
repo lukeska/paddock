@@ -34,6 +34,8 @@ class Site:
     # was granted to. A path with no digest is declared but never reviewed.
     project_config: str | None = None
     project_config_trusted: str | None = None
+    # One of Paddock's own options, so it is applied rather than reviewed.
+    client_max_body_size: str | None = None
 
     @classmethod
     def from_record(cls, record: dict) -> "Site":
@@ -53,6 +55,7 @@ class Site:
             document_root=record.get("document_root", "public"),
             project_config=(record.get("nginx") or {}).get("path"),
             project_config_trusted=(record.get("nginx") or {}).get("sha256"),
+            client_max_body_size=record.get("client_max_body_size"),
         )
 
     @property
@@ -129,10 +132,20 @@ class SiteManager:
                 record["queue"] = previous["queue"]
             if previous.get("scheduler") is not None:
                 record["scheduler"] = previous["scheduler"]
-            # Preserved rather than re-derived: only the project file knows
-            # what is declared, and only `init` reads it.
-            if previous.get("nginx") is not None:
-                record["nginx"] = previous["nginx"]
+            # Preserved, not re-derived: `init` owns convergence towards the
+            # project file, the same way it does for PHP and the workers, and
+            # relinking must not quietly drop a limit an application needs.
+            if previous.get("client_max_body_size") is not None:
+                record["client_max_body_size"] = previous["client_max_body_size"]
+            # Recorded here, not only by `init`: ADR 0012 puts the declaration
+            # wherever a site enters the registry, because a fragment nobody
+            # has been told about is one nobody can review. Trust is untouched
+            # — `declared_fragment` keeps it only while the declared path is
+            # unchanged, so this can move a site to `pending` but never past it.
+            from .projectfile import declared_fragment
+            fragment = declared_fragment(canonical_root, previous.get("nginx"))
+            if fragment is not None:
+                record["nginx"] = fragment
             if previous.get("origin") == "parked" and Path(previous["root"]) == canonical_root:
                 record.update({
                     "origin": "parked",
@@ -238,6 +251,26 @@ class SiteManager:
             return {**record, "nginx": {"path": declaration["path"], "sha256": current}}
 
         return self._commit(name, mutate, reload=reload)
+
+    def set_client_max_body_size(
+        self, name: str, value: str | None, *, reload: bool = True
+    ) -> None:
+        """Apply a project's upload limit, or clear it when it stops asking.
+
+        Unlike a fragment this needs no review: it is one of Paddock's own
+        options, so it can name a size and nothing else. That is the whole
+        reason it exists as an option — a limit an application depends on has
+        to survive a clone, and a fragment would be withheld until trusted.
+        """
+        def mutate(record: dict) -> dict:
+            if value is None:
+                return {
+                    key: existing for key, existing in record.items()
+                    if key != "client_max_body_size"
+                }
+            return {**record, "client_max_body_size": value}
+
+        self._commit(name, mutate, reload=reload)
 
     def reproject(self, *, reload: bool = True) -> None:
         """Re-render from unchanged state.

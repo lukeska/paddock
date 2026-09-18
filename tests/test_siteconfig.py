@@ -150,10 +150,30 @@ class SiteConfigurationTests(unittest.TestCase):
         self.assertIn(str(user), self.rendered())
 
     def test_relinking_preserves_a_declaration(self) -> None:
+        # `link` re-derives the declaration from the project file now, so the
+        # file has to say what `init` recorded. Trust survives because the
+        # declared path has not changed.
+        (self.app / "paddock.yml").write_text(
+            "name: app\nnginx: .paddock/nginx.conf\n", encoding="utf-8"
+        )
         self.manager.declare_project_configuration("app", ".paddock/nginx.conf", reload=False)
         self.manager.trust_project_configuration("app", trusted=True, reload=False)
         self.manager.link(self.app, "app", reload=False)
         self.assertEqual(siteconfig.TRUSTED, self.status())
+
+    def test_relinking_after_the_project_stops_declaring_one_drops_it(self) -> None:
+        # The declaration describes the repository. Once the repository stops
+        # saying it ships a fragment, continuing to serve one would mean trust
+        # outliving the thing it was granted to.
+        (self.app / "paddock.yml").write_text(
+            "name: app\nnginx: .paddock/nginx.conf\n", encoding="utf-8"
+        )
+        self.manager.declare_project_configuration("app", ".paddock/nginx.conf", reload=False)
+        self.manager.trust_project_configuration("app", trusted=True, reload=False)
+        (self.app / "paddock.yml").write_text("name: app\n", encoding="utf-8")
+        self.manager.link(self.app, "app", reload=False)
+        self.assertEqual(siteconfig.NONE, self.status())
+        self.assertNotIn("nginx.conf", self.rendered())
 
     def test_pointing_at_a_different_file_drops_the_trust(self) -> None:
         self.manager.declare_project_configuration("app", ".paddock/nginx.conf", reload=False)

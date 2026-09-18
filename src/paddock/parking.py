@@ -221,6 +221,16 @@ class ParkingManager:
                 parked[site.name]["queue"] = old["queue"]
             if old is not None and old.get("scheduler") is not None:
                 parked[site.name]["scheduler"] = old["scheduler"]
+            # A parked record is rebuilt from scratch on every event, so an
+            # nginx declaration that is not carried across is destroyed —
+            # together with the trust decision recorded in it, which a user
+            # made deliberately and would have to make again without being
+            # told why. Carrying it also records a declaration this folder
+            # gained since the last pass, which is what ADR 0012 asks for.
+            from .projectfile import declared_fragment
+            fragment = declared_fragment(site.root, (old or {}).get("nginx"))
+            if fragment is not None:
+                parked[site.name]["nginx"] = fragment
             materialized.append(site)
         sites = {**explicit, **parked}
         if sites != registry["sites"]:

@@ -343,6 +343,14 @@ class WebProjector:
             ]
         )
 
+        # Overrides the http-level default for this site only. A named option
+        # rather than something a project fragment carries, because an upload
+        # limit is a requirement: a fragment is withheld until trusted, so on a
+        # fresh clone the form would fail with nothing explaining why.
+        body_size = site.get("client_max_body_size")
+        if body_size:
+            lines.extend([f"\tclient_max_body_size {body_size};", ""])
+
         reverb = site.get("reverb")
         if reverb:
             # ^~ outranks the regex PHP location, so an upgrade request is

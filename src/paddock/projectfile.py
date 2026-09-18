@@ -27,6 +27,7 @@ from .drivers import DRIVERS, DriverError, normalize_document_root
 from .queue_worker import QueueWorkerManager, detects_laravel
 from .reverb import ReverbManager, detects_reverb
 from .runtimes import normalize_minor
+from .schemas import BODY_SIZE
 from .scheduler_worker import SchedulerWorkerManager
 from .services import CATALOG
 from .sites import normalize_site_name
@@ -36,7 +37,9 @@ PROJECT_FILE = "paddock.yml"
 
 TOP_LEVEL = {
     "name", "php", "node", "secure", "services", "workers", "type", "root", "nginx", "env",
+    "client_max_body_size",
 }
+
 SERVICE_KEYS = {"version", "port"}
 WORKER_KEYS = {"autostart"}
 WORKERS = {"queue", "reverb", "scheduler"}
@@ -90,6 +93,10 @@ class ProjectFile:
     # it is arbitrary server configuration arriving with a clone, so it stays
     # inert until someone trusts it.
     nginx: str | None = None
+    # A requirement, not an embellishment: an upload form is broken without it.
+    # ADR 0012's amendment keeps requirements out of fragments, because a
+    # fragment is withheld until trusted and would fail silently on a clone.
+    client_max_body_size: str | None = None
     # ``None`` means no declaration. An empty tuple means the project
     # explicitly supplied ``env: {}``, which is valid and changes nothing.
     environment: tuple[tuple[str, str], ...] | None = None
@@ -165,6 +172,15 @@ def parse(raw: Any) -> ProjectFile:
         except DriverError as error:
             raise ProjectFileError(str(error)) from None
 
+    body_size = value.get("client_max_body_size")
+    if body_size is not None:
+        if isinstance(body_size, int) and not isinstance(body_size, bool):
+            body_size = str(body_size)
+        if not isinstance(body_size, str) or not BODY_SIZE.match(body_size):
+            raise ProjectFileError(
+                "client_max_body_size must be a size like 512m, 1g, or 2048"
+            )
+
     document_root = value.get("root")
     if document_root is not None:
         if not isinstance(document_root, str):
@@ -238,6 +254,7 @@ def parse(raw: Any) -> ProjectFile:
         name=name, php=php, node=node, secure=secure, services=tuple(declared),
         workers=tuple(declared_workers),
         driver=driver, document_root=document_root, nginx=fragment,
+        client_max_body_size=body_size,
         environment=environment,
     )
 
@@ -245,6 +262,36 @@ def parse(raw: Any) -> ProjectFile:
 def find(directory: Path) -> Path | None:
     candidate = directory / PROJECT_FILE
     return candidate if candidate.is_file() else None
+
+
+def declared_fragment(root: Path, recorded: dict | None) -> dict | None:
+    """The `nginx` record a site should carry, given what its project declares.
+
+    ADR 0012 records a declaration wherever Paddock takes a site into its
+    registry, because saying what a repository ships is a statement of fact and
+    not a grant of trust — it is what makes review possible at all. `link` and
+    parked reconciliation both call this, and both run where a project file may
+    be absent, half-written, or mid-clone, so it never raises and never
+    destroys a trust decision it could not verify:
+
+    - No project file: the repository declares nothing, and neither does the
+      record.
+    - A project file that cannot be read: nothing was observed, so whatever is
+      already recorded is carried through untouched. `init` reports the parse
+      error properly when someone runs it.
+    - A readable project file: its declaration wins. `siteconfig.declare` keeps
+      an existing trust decision when the declared path has not changed, and
+      drops it when it has, because trust was granted to contents.
+    """
+    path = find(root)
+    if path is None:
+        return None
+    try:
+        declaration = load(path).nginx
+    except (ProjectFileError, OSError):
+        return recorded
+    carried = siteconfig.declare({"nginx": recorded} if recorded else {}, declaration)
+    return carried.get("nginx")
 
 
 def load(path: Path) -> ProjectFile:
@@ -360,6 +407,7 @@ class Reconciler:
         elif declared.secure:
             steps.append(Step("unchanged", f"{site_name}.test already served over HTTPS"))
 
+        steps.extend(self._body_size(site_name, declared, current, dry_run=dry_run))
         steps.extend(self._nginx(site_name, declared, current, dry_run=dry_run))
         steps.extend(self._environment(root, declared, dry_run=dry_run))
         steps.extend(self._services(declared, dry_run=dry_run))
@@ -435,6 +483,26 @@ class Reconciler:
             noun = "variable" if count == 1 else "variables"
             return [Step("changed", f"write {count} environment {noun} to .env")]
         return [Step("unchanged", ".env already matches paddock.yml")]
+
+    def _body_size(self, site_name, declared, current, *, dry_run: bool) -> list[Step]:
+        """Apply the upload limit the project asks for, and nothing else.
+
+        Applied rather than reported, unlike a fragment: this names a size and
+        cannot name anything else, so there is nothing for a human to review.
+        """
+        declaration = declared.client_max_body_size
+        recorded = current.client_max_body_size if current else None
+        if declaration == recorded:
+            if declaration is not None:
+                return [Step("unchanged", f"uploads already limited to {declaration}")]
+            return []
+        if declaration is None:
+            steps = [Step("changed", "stop limiting upload size")]
+        else:
+            steps = [Step("changed", f"limit uploads to {declaration}")]
+        if not dry_run:
+            self.sites.set_client_max_body_size(site_name, declaration)
+        return steps
 
     def _nginx(self, site_name, declared, current, *, dry_run: bool) -> list[Step]:
         """Mirror the project's declaration, and never grant it trust.

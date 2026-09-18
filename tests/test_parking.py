@@ -66,6 +66,75 @@ class ParkingTests(unittest.TestCase):
         self.assertEqual(("alpha", "beta"), tuple(site.name for site in discovery.sites))
         self.assertEqual((), discovery.conflicts)
 
+    def test_reconcile_keeps_a_parked_site_s_nginx_trust(self) -> None:
+        # A parked record is rebuilt on every filesystem event. Before this,
+        # the nginx declaration was not carried across, so a reconcile silently
+        # destroyed a trust decision the user had made deliberately — the
+        # fragment stopped being served and nothing said why.
+        site = self._parked_project("lab")
+        self.manager.reconcile(self.projector, reload=False)
+        digest = "a" * 64
+        self.store.update("sites", lambda current: {**current, "sites": {
+            **current["sites"], "lab": {
+                **current["sites"]["lab"],
+                "nginx": {"path": ".paddock/nginx.conf", "sha256": digest},
+            },
+        }})
+        self.manager.reconcile(self.projector, reload=False)
+        self.assertEqual(
+            {"path": ".paddock/nginx.conf", "sha256": digest},
+            self.store.read("sites")["sites"]["lab"]["nginx"],
+        )
+
+    def test_reconcile_records_a_declaration_without_trusting_it(self) -> None:
+        self._parked_project("lab")
+        self.manager.reconcile(self.projector, reload=False)
+        self.assertEqual(
+            {"path": ".paddock/nginx.conf"},
+            self.store.read("sites")["sites"]["lab"]["nginx"],
+        )
+
+    def test_an_unreadable_project_file_leaves_the_declaration_alone(self) -> None:
+        # Reconcile runs on a filesystem event, so it sees folders mid-clone.
+        site = self._parked_project("lab")
+        self.manager.reconcile(self.projector, reload=False)
+        digest = "a" * 64
+        self.store.update("sites", lambda current: {**current, "sites": {
+            **current["sites"], "lab": {
+                **current["sites"]["lab"],
+                "nginx": {"path": ".paddock/nginx.conf", "sha256": digest},
+            },
+        }})
+        (site / "paddock.yml").write_text("name: lab\n  nginx: [[[\n", encoding="utf-8")
+        self.manager.reconcile(self.projector, reload=False)
+        self.assertEqual(
+            {"path": ".paddock/nginx.conf", "sha256": digest},
+            self.store.read("sites")["sites"]["lab"]["nginx"],
+        )
+
+    def test_a_project_that_stops_declaring_a_fragment_stops_being_read(self) -> None:
+        site = self._parked_project("lab")
+        self.manager.reconcile(self.projector, reload=False)
+        (site / "paddock.yml").write_text("name: lab\n", encoding="utf-8")
+        self.manager.reconcile(self.projector, reload=False)
+        self.assertIsNone(self.store.read("sites")["sites"]["lab"].get("nginx"))
+
+    def _parked_project(self, name: str) -> Path:
+        """A parked folder that declares a fragment and ships one."""
+        projects = self.home / "Paddock"
+        site = projects / name
+        (site / "public").mkdir(parents=True)
+        (site / ".paddock").mkdir()
+        (site / ".paddock" / "nginx.conf").write_text(
+            "add_header X-Lab on always;\n", encoding="utf-8"
+        )
+        (site / "paddock.yml").write_text(
+            f"name: {name}\nnginx: .paddock/nginx.conf\n", encoding="utf-8"
+        )
+        self.manager.add(projects)
+        self.store.write("settings", {"schema_version": 1, "default_php": "8.4"})
+        return site
+
     def test_explicit_link_wins_over_a_parked_site_name(self) -> None:
         projects = self.home / "Paddock"
         parked = projects / "shop"

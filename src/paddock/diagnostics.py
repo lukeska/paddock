@@ -44,9 +44,25 @@ def doctor(store: StateStore, runner: Runner = subprocess.run) -> list[Check]:
         executable = runtime.path.is_file() and runtime.path.stat().st_mode & 0o111 != 0
         checks.append(Check(f"php:{runtime.version}", executable, str(runtime.path)))
     try:
-        sites = SiteManager(store, WebProjector(store.paths, runner)).list()
+        manager = SiteManager(store, WebProjector(store.paths, runner))
+        sites = manager.list()
+        configurations = manager.configurations()
     except (StateError, ValueError):
-        sites = []
+        sites, configurations = [], {}
+    # A declared fragment nobody has reviewed is not a failure: the site serves
+    # correctly without it, and ADR 0012 keeps refusing out of the error path on
+    # purpose. So this passes, and only the detail says something is waiting —
+    # marking it failed would make `doctor` exit non-zero on a healthy machine.
+    # It is reported at all because a fragment that is present, valid, and
+    # silently unused is the state most likely to be mistaken for a bug.
+    for name, configuration in configurations.items():
+        if configuration.needs_review:
+            checks.append(Check(
+                f"site:{name}:nginx",
+                True,
+                f"{configuration.project_relative} ({configuration.status}); "
+                f"not served until reviewed: paddock config trust {name}",
+            ))
     for site in sites:
         # The document root, not `public`: which directory is served depends on
         # the project type now.

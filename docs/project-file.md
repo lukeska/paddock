@@ -11,6 +11,7 @@ secure: true          # optional; default false
 type: laravel         # optional; detected from the project when omitted
 root: public          # optional; the type's own default when omitted
 nginx: .paddock/nginx.conf   # optional; inert until trusted, see below
+client_max_body_size: 512m   # optional; upload limit for this site
 
 env:                  # optional; quoted strings written to the local .env
   APP_ENV: local
@@ -109,13 +110,33 @@ paddock config trust        # apply it, after reading it
 paddock config revoke       # stop applying it
 ```
 
-`paddock init` records the declaration, reports it with `!`, and exits 1 until
-it is trusted, the same as anything else it declines to impose. Trust is
-recorded as the file's SHA-256, so an edit or a pull that changes it withdraws
-trust automatically — nobody has to notice.
+`paddock link` and `paddock init` both record the declaration. `init` reports
+it with `!` and exits 1 until it is trusted, the same as anything else it
+declines to impose. Trust is recorded as the file's SHA-256, so an edit or a
+pull that changes it withdraws trust automatically — nobody has to notice.
 
 Trust is per machine. Cloning the same project elsewhere means reviewing it
 there.
+
+**Ship only what the site is correct without.** Because a fragment is withheld
+until someone reviews it, it is inert on every fresh clone — the rules travel,
+but they do not apply. That is fine for a header, a debug endpoint, or a
+redirect used while developing: absent, the site still serves and nothing
+misleads. It is the wrong home for anything the application *requires*, such as
+a rewrite it depends on or a limit that makes an upload form work, because the
+gate will withhold it and the resulting failure does not name its cause.
+
+A requirement belongs in a named option instead, which travels *and* applies
+because it can only name a value Paddock understands:
+
+```
+client_max_body_size: 512m   # 512m, 1g, or a plain byte count
+```
+
+That raises the upload limit for this site alone, overriding Paddock's default.
+Where a directive is common enough that projects reach for a fragment to get
+it, the answer is a new option rather than a wider escape hatch — so if you are
+about to ship one for something every project needs, please open an issue.
 
 Your own directives need no trust, because you wrote them:
 

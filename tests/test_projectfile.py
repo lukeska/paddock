@@ -33,6 +33,19 @@ class SchemaTests(unittest.TestCase):
         # "Link this directory, decide nothing else" is a reasonable ask.
         self.assertEqual(ProjectFile(), parse(None))
 
+    def test_an_upload_limit_takes_nginx_size_syntax_only(self) -> None:
+        for value in ("512m", "1g", "2048", "100K"):
+            self.assertEqual(value, parse({"client_max_body_size": value}).client_max_body_size)
+        # A bare number in YAML decodes to an int and still means bytes.
+        self.assertEqual("2048", parse({"client_max_body_size": 2048}).client_max_body_size)
+
+    def test_an_upload_limit_cannot_smuggle_a_directive(self) -> None:
+        # It is rendered into a server block unquoted, so anything but a size
+        # would be nginx configuration a project never had to have reviewed.
+        for value in ("1g; root /etc", "512mb", "0", "-1", "1.5g", "", "abc"):
+            with self.assertRaisesRegex(ProjectFileError, "client_max_body_size"):
+                parse({"client_max_body_size": value})
+
     def test_a_full_document_parses(self) -> None:
         declared = parse({
             "name": "my-app", "php": "8.5", "secure": True,
@@ -203,6 +216,27 @@ class ReconcilerTests(ReconcilerFixture, unittest.TestCase):
         self.reconciler.apply(self.root, declared)
         again = self.reconciler.apply(self.root, declared)
         self.assertEqual({"unchanged"}, set(self.outcomes(again)), [s.detail for s in again])
+
+    def test_an_upload_limit_is_applied_rather_than_left_for_review(self) -> None:
+        # A fragment would be withheld until trusted, so an upload form would
+        # break on a fresh clone with nothing explaining why. This names a size
+        # and can name nothing else, so there is nothing to review.
+        steps = self.reconciler.apply(
+            self.root, ProjectFile(php="8.5", client_max_body_size="512m")
+        )
+        self.assertIn("limit uploads to 512m", [step.detail for step in steps])
+        self.assertEqual("512m", self.sites.list()[0].client_max_body_size)
+
+    def test_applying_an_upload_limit_twice_changes_nothing(self) -> None:
+        declared = ProjectFile(php="8.5", client_max_body_size="512m")
+        self.reconciler.apply(self.root, declared)
+        again = self.reconciler.apply(self.root, declared)
+        self.assertEqual({"unchanged"}, set(self.outcomes(again)), [s.detail for s in again])
+
+    def test_dropping_the_declaration_clears_the_limit(self) -> None:
+        self.reconciler.apply(self.root, ProjectFile(php="8.5", client_max_body_size="512m"))
+        self.reconciler.apply(self.root, ProjectFile(php="8.5"))
+        self.assertIsNone(self.sites.list()[0].client_max_body_size)
 
     def test_the_site_name_defaults_to_the_directory(self) -> None:
         self.reconciler.apply(self.root, ProjectFile(php="8.5"))

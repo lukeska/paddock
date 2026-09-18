@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
+from paddock import siteconfig
 from paddock.web import WebError, WebProjector
 from paddock.paths import Paths
 from paddock.runtimes import RuntimeRegistry
@@ -73,6 +74,72 @@ class SiteTests(unittest.TestCase):
         self.assertIn("php/8.4/fpm.sock", rendered)
         self.assertEqual(self.fake.calls[0][1], "-t")
         self.assertEqual(self.store.read("sites")["sites"]["demo"]["root"], str(self.app))
+
+    def test_an_upload_limit_is_rendered_into_the_site_block(self) -> None:
+        self.manager.link(self.app, "demo", reload=False)
+        self.manager.set_client_max_body_size("demo", "512m", reload=False)
+        self.assertIn(
+            "client_max_body_size 512m;", site_configuration(self.projector, "demo")
+        )
+
+    def test_clearing_an_upload_limit_removes_the_directive(self) -> None:
+        self.manager.link(self.app, "demo", reload=False)
+        self.manager.set_client_max_body_size("demo", "512m", reload=False)
+        self.manager.set_client_max_body_size("demo", None, reload=False)
+        self.assertNotIn(
+            "client_max_body_size", site_configuration(self.projector, "demo")
+        )
+
+    def test_relinking_keeps_an_upload_limit(self) -> None:
+        # `init` owns convergence towards the project file; relinking must not
+        # quietly drop a limit the application depends on.
+        self.manager.link(self.app, "demo", reload=False)
+        self.manager.set_client_max_body_size("demo", "512m", reload=False)
+        self.manager.link(self.app, "demo", reload=False)
+        self.assertEqual("512m", self.manager.list()[0].client_max_body_size)
+
+    def test_link_records_what_the_project_declares_without_trusting_it(self) -> None:
+        # ADR 0012: recording a declaration is a statement of fact about the
+        # repository, not a grant of trust. Before this, only `init` recorded
+        # one, so a linked project shipping a fragment sat at `none` and the
+        # review controls in every UI stayed hidden.
+        (self.app / ".paddock").mkdir()
+        (self.app / ".paddock" / "nginx.conf").write_text("add_header X-A b always;\n")
+        (self.app / "paddock.yml").write_text(
+            "name: demo\nnginx: .paddock/nginx.conf\n", encoding="utf-8"
+        )
+        self.manager.link(self.app, "demo", reload=False)
+        self.assertEqual(
+            {"path": ".paddock/nginx.conf"},
+            self.store.read("sites")["sites"]["demo"]["nginx"],
+        )
+        self.assertEqual(siteconfig.PENDING, self.manager.configuration("demo").status)
+
+    def test_relinking_keeps_trust_while_the_declared_path_is_unchanged(self) -> None:
+        (self.app / ".paddock").mkdir()
+        fragment = self.app / ".paddock" / "nginx.conf"
+        fragment.write_text("add_header X-A b always;\n")
+        (self.app / "paddock.yml").write_text(
+            "name: demo\nnginx: .paddock/nginx.conf\n", encoding="utf-8"
+        )
+        self.manager.link(self.app, "demo", reload=False)
+        self.manager.trust_project_configuration("demo", trusted=True, reload=False)
+        self.manager.link(self.app, "demo", reload=False)
+        self.assertEqual(siteconfig.TRUSTED, self.manager.configuration("demo").status)
+
+    def test_a_project_file_that_cannot_be_read_leaves_the_declaration_alone(self) -> None:
+        # link runs against a working tree that may be mid-clone or mid-edit.
+        # Refusing to read it must not revoke a decision the user made.
+        (self.app / ".paddock").mkdir()
+        (self.app / ".paddock" / "nginx.conf").write_text("add_header X-A b always;\n")
+        (self.app / "paddock.yml").write_text(
+            "name: demo\nnginx: .paddock/nginx.conf\n", encoding="utf-8"
+        )
+        self.manager.link(self.app, "demo", reload=False)
+        self.manager.trust_project_configuration("demo", trusted=True, reload=False)
+        (self.app / "paddock.yml").write_text("name: demo\n  nginx: [[[\n", encoding="utf-8")
+        self.manager.link(self.app, "demo", reload=False)
+        self.assertEqual(siteconfig.TRUSTED, self.manager.configuration("demo").status)
 
     def test_invalid_candidate_preserves_registry_and_projection(self) -> None:
         self.manager.link(self.app, "good", reload=False)
