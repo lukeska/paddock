@@ -23,7 +23,7 @@ from .php_runtime import RuntimeInstaller
 from .projectfile import PROJECT_FILE, ProjectFileError, Reconciler, find, load
 from .projects import write_node_selection, write_project_selection
 from .node_runtime import NodeInstaller, NodeManifest, NodeRegistry
-from .report import build as build_report, build_service_inventory
+from .report import build as build_report, build_service_inventory, php_units_for
 from .reverb import ReverbManager
 from .queue_worker import QueueWorkerManager
 from .scheduler_worker import SchedulerWorkerManager
@@ -630,7 +630,7 @@ def run(argv: list[str] | None = None) -> int:
             print(f"{'active' if check.ok else 'inactive'}\t{check.name}\t{check.detail}")
         return 0 if all(check.ok for check in checks) else 3
     if arguments.command in {"start", "stop", "restart"}:
-        Lifecycle().control(arguments.command)
+        Lifecycle().control(arguments.command, php_units_for(store))
     if arguments.command == "logs":
         return Lifecycle().logs(arguments.follow)
     if arguments.command in {"setup", "uninstall"}:

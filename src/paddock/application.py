@@ -1214,7 +1214,9 @@ class PaddockController:
             configured = self.instances.list()
             if active:
                 try:
-                    Lifecycle(self.runner).control("start")
+                    Lifecycle(self.runner).control(
+                        "start", report.php_units_for(self.store)
+                    )
                 except (LifecycleError, OSError, ValueError) as error:
                     failures.append(str(error))
             for service in configured:
@@ -1224,7 +1226,9 @@ class PaddockController:
                     failures.append(f"{service.label}: {error}")
             if not active:
                 try:
-                    Lifecycle(self.runner).control("stop")
+                    Lifecycle(self.runner).control(
+                        "stop", report.php_units_for(self.store)
+                    )
                 except (LifecycleError, OSError, ValueError) as error:
                     failures.append(str(error))
 

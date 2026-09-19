@@ -55,6 +55,14 @@ def php_unit(minor: str) -> str:
     return f"paddock-php@{minor}.service"
 
 
+def php_units_for(store: StateStore) -> list[str]:
+    """Every registered PHP-FPM unit, including currently stopped ones."""
+    try:
+        return [php_unit(runtime.version) for runtime in RuntimeRegistry(store).list()]
+    except (StateError, ValueError):
+        return []
+
+
 def units_for(store: StateStore) -> list[str]:
     """Every system unit the current installation should be running.
 
@@ -62,11 +70,7 @@ def units_for(store: StateStore) -> list[str]:
     a healthy stack while both masters were dead. The list is derived here once
     and shared, so the two commands cannot disagree again.
     """
-    try:
-        minors = [runtime.version for runtime in RuntimeRegistry(store).list()]
-    except (StateError, ValueError):
-        minors = []
-    return [*CORE_UNITS, *(php_unit(minor) for minor in minors)]
+    return [*CORE_UNITS, *php_units_for(store)]
 
 
 def active_states(units: list[str], runner: Runner, *, user: bool = False) -> dict[str, str]:

@@ -22,6 +22,12 @@ def load_helper():
 
 
 class PackageLifecycleTests(unittest.TestCase):
+    def test_target_wants_every_supported_php_minor(self):
+        helper = load_helper()
+        target = helper.target_unit()
+        for minor in ("8.0", "8.1", "8.2", "8.3", "8.4", "8.5"):
+            self.assertIn(f"paddock-php@{minor}.service", target)
+
     def test_dns_route_explicitly_integrates_with_systemd_resolved(self):
         source = (Path(__file__).parents[1] / "system/system-helper").read_text(
             encoding="utf-8"

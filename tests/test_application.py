@@ -123,14 +123,18 @@ class DashboardRunner:
             self.states[command[-1]] = "active"
         elif command[:3] == ["systemctl", "--user", "stop"]:
             self.states[command[-1]] = "inactive"
-        elif command == ["systemctl", "start", "paddock.target"]:
+        elif command[:3] == ["systemctl", "start", "paddock.target"]:
             for unit in list(self.states):
-                if not unit.startswith("paddock-service-"):
+                if not unit.startswith(("paddock-service-", "paddock-php@")):
                     self.states[unit] = "active"
-        elif command == ["systemctl", "stop", "paddock.target"]:
+            for unit in command[3:]:
+                self.states[unit] = "active"
+        elif command[:3] == ["systemctl", "stop", "paddock.target"]:
             for unit in list(self.states):
                 if not unit.startswith("paddock-service-"):
                     self.states[unit] = "inactive"
+            for unit in command[3:]:
+                self.states[unit] = "inactive"
         return subprocess.CompletedProcess(command, 0, "", "")
 
 
@@ -363,13 +367,19 @@ class DashboardTests(ApplicationFixture, unittest.TestCase):
     def test_start_all_controls_the_target_and_only_configured_services(self) -> None:
         self.install_php()
         runner = DashboardRunner(self.states("inactive"))
+        # Reproduce the real failure: a stopped FPM unit while the target
+        # itself remains active. Starting only the target would be a no-op.
+        runner.states["paddock.target"] = "active"
         controller = self.controller(runner)
         instance = controller.instances.create("redis", "Cache", 6379)
         runner.states[instance.unit] = "inactive"
         result = controller.set_dashboard_active(True)
         self.assertTrue(result.ok)
         self.assertTrue(result.snapshot.all_active)
-        self.assertIn(["systemctl", "start", "paddock.target"], runner.calls)
+        self.assertIn(
+            ["systemctl", "start", "paddock.target", "paddock-php@8.4.service"],
+            runner.calls,
+        )
         self.assertIn(
             ["systemctl", "--user", "start", instance.unit],
             runner.calls,
@@ -377,6 +387,7 @@ class DashboardTests(ApplicationFixture, unittest.TestCase):
         self.assertFalse(any("mysql" in part for call in runner.calls for part in call))
 
     def test_stop_all_stops_user_services_before_the_system_target(self) -> None:
+        self.install_php()
         runner = DashboardRunner(self.states("active"))
         controller = self.controller(runner)
         instance = controller.instances.create("redis", "Cache", 6379)
@@ -386,7 +397,9 @@ class DashboardTests(ApplicationFixture, unittest.TestCase):
         user_stop = runner.calls.index(
             ["systemctl", "--user", "stop", instance.unit]
         )
-        target_stop = runner.calls.index(["systemctl", "stop", "paddock.target"])
+        target_stop = runner.calls.index([
+            "systemctl", "stop", "paddock.target", "paddock-php@8.4.service",
+        ])
         self.assertLess(user_stop, target_stop)
         self.assertFalse(result.snapshot.all_active)
 

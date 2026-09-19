@@ -43,6 +43,29 @@ RUNTIME_ROOT = "paddock"
 # A test pins the template digest to this number so it cannot drift.
 UNIT_VERSION = 3
 
+# A missing runtime is harmless: the templated PHP unit has conditions for
+# both its executable and generated FPM configuration, and Wants= is a weak
+# dependency. Keeping every supported minor here makes an installed runtime
+# come back at boot without making fresh installations require the full matrix.
+SUPPORTED_PHP_MINORS = ("8.0", "8.1", "8.2", "8.3", "8.4", "8.5")
+
+
+def target_unit() -> str:
+    wants = [
+        "paddock-dns.service",
+        "paddock-dns-route.service",
+        "paddock-web.service",
+        *(f"paddock-php@{minor}.service" for minor in SUPPORTED_PHP_MINORS),
+    ]
+    return (
+        "[Unit]\n"
+        "Description=Paddock local development stack\n"
+        f"Wants={' '.join(wants)}\n"
+        "After=network-online.target\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+
 
 def php_unit(user: str, group: int, home: Path, data: Path, state: Path) -> str:
     """Render the templated PHP-FPM unit.
@@ -233,7 +256,7 @@ def install(user: str, data_value: str, state_value: str) -> None:
     retire_legacy_units()
 
     write("/etc/paddock/dnsmasq.conf", "port=53\nlisten-address=127.0.0.1\nbind-interfaces\nno-hosts\nno-resolv\ndomain-needed\nlocal=/test/\naddress=/.test/127.0.0.1\n")
-    write("/etc/systemd/system/paddock.target", """[Unit]\nDescription=Paddock local development stack\nWants=paddock-dns.service paddock-dns-route.service paddock-web.service paddock-php@8.4.service paddock-php@8.5.service\nAfter=network-online.target\n[Install]\nWantedBy=multi-user.target\n""")
+    write("/etc/systemd/system/paddock.target", target_unit())
     write("/etc/systemd/system/paddock-dns.service", """[Unit]\nDescription=Paddock .test DNS\nPartOf=paddock.target\n[Service]\nExecStart=/usr/bin/dnsmasq --no-daemon --conf-file=/etc/paddock/dnsmasq.conf\nRestart=on-failure\nNoNewPrivileges=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=yes\n""")
     write("/etc/systemd/system/paddock-dns-route.service", """[Unit]\nDescription=Paddock route-only DNS\nPartOf=paddock.target\nRequires=paddock-dns.service NetworkManager.service systemd-resolved.service\nAfter=paddock-dns.service NetworkManager.service systemd-resolved.service\n[Service]\nType=oneshot\nExecStart=/usr/bin/nmcli connection up paddock-dns\nExecStart=/usr/bin/resolvectl dns paddock0 127.0.0.1\nExecStart=/usr/bin/resolvectl domain paddock0 ~test\nExecStop=/usr/bin/resolvectl revert paddock0\nRemainAfterExit=yes\n""")
     write("/etc/systemd/system/paddock-web.service", web_unit(user, account.pw_gid, data, state))
