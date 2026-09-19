@@ -73,10 +73,13 @@ trust chain above.
 No GitHub secrets hold key material. No protected environment is created while
 no workflow needs write scope.
 
-The candidate workflow must never gain `contents: write`. If publication is
-ever automated it goes in a separate workflow, so the candidate builder keeps
-its read-only guarantee. A required-reviewer gate with a single maintainer is
-a deliberate pause, not independent review, and must be documented as such.
+The runtime-candidate workflow must never gain `contents: write`. Application
+publication is automated in a separate tag-triggered workflow, so the runtime
+builder keeps its read-only guarantee. Only the final application-release job
+receives `contents: write`, after tests, a clean package build, and a second
+clean-container installation have passed. A required-reviewer gate with a
+single maintainer is a deliberate pause, not independent review, and must be
+documented as such.
 
 ### Naming, retention, rollback, verification
 
@@ -114,7 +117,9 @@ Promotion is manual and ordered:
 
 ## Consequences
 
-- Publication requires the maintainer to be present. This is accepted.
+- Runtime promotion and signed distribution still require the maintainer to be
+  present. An application tag can publish an unsigned GitHub release
+  automatically; that release is not a substitute for pacman signature trust.
 - A compromise of the workstation compromises signing. The offline primary and
   stored revocation certificate bound the damage to subkey revocation and
   re-signing rather than identity loss.

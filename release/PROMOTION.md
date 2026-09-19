@@ -2,7 +2,10 @@
 
 Implements [ADR 0009](../docs/adr/0009-release-signing.md). Every step is
 manual and run by the maintainer on a trusted workstation. No signing key is
-stored in CI, and no workflow may create a release.
+stored in CI, and the runtime-candidate workflow may not create a release.
+Application releases use the separate tag workflow documented in
+[`release/README.md`](README.md); it has no signing key and cannot publish until
+its package passes a clean-container installation.
 
 Local builds (`./release/php/build.sh <minor>`) are for testing only. Only the
 attested CI build is ever published: a local archive carries no provenance a
@@ -108,6 +111,11 @@ Sign the AUR source archive the same way and keep the fingerprint listed in
 `validpgpkeys`. Sign the repository database only if a custom pacman
 repository is operated. Per ADR 0009, nothing else is signed: runtime archives
 and the index are covered by the package signature and Sigstore attestation.
+
+The tag-triggered application workflow also publishes an unsigned package for
+GitHub downloads. Do not present that checksum-only artifact as a signed pacman
+distribution. When signing is introduced, promote the workflow-built artifact
+after verifying it rather than silently substituting a local rebuild.
 
 ## 6. Record the release
 

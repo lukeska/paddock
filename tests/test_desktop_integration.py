@@ -37,6 +37,10 @@ class DesktopIntegrationTests(unittest.TestCase):
             self.assertTrue(icon.is_file())
             self.assertEqual("svg", ET.parse(icon).getroot().tag.rsplit("}", 1)[-1])
 
+    @unittest.skipUnless(
+        (ROOT / "packaging/arch/PKGBUILD").is_file(),
+        "the release source archive intentionally excludes PKGBUILD",
+    )
     def test_package_installs_the_tui_without_gtk(self) -> None:
         package = (ROOT / "packaging/arch/PKGBUILD").read_text(encoding="utf-8")
         self.assertIn('makedepends=(\'go\')', package)

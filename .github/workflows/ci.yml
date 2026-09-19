@@ -59,8 +59,10 @@ jobs:
           python -m py_compile system/system-helper
           python -m py_compile tests/fixtures/tui_backend.py
           python -m py_compile tests/lab/paddock-lab
+          python -m py_compile release/validate-application-release.py
           bash -n system/check-ports system/php-fpm-launcher system/wait-for-socket
           bash -n packaging/arch/build-local.sh packaging/arch/paddock.install
+          bash -n release/build-source.sh
           bash -n tests/acceptance/run.sh
           bash -n tests/package/clean-install.sh
           bash -n scripts/plugin-dev-install.sh scripts/install.sh scripts/uninstall.sh
@@ -105,9 +107,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p ci-package
-          package_path=$(runuser --user builder -- bash -c \
-            "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg --packagelist" \
-            | grep '/paddock-[0-9][^/]*\.pkg\.tar\.zst$')
+          package_path=$(find packaging/arch -maxdepth 1 -type f \
+            -name 'paddock-*-x86_64.pkg.tar.zst' ! -name '*-debug-*' \
+            -print -quit)
           test -n "$package_path"
           cp -- "$package_path" ci-package/
 

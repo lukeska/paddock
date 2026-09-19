@@ -1,0 +1,179 @@
+name: Application release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: application-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  source:
+    name: Validate and build source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Install runtime dependencies
+        run: python -m pip install --disable-pip-version-check pyyaml
+
+      - name: Validate release metadata
+        run: ./release/validate-application-release.py "$GITHUB_REF_NAME"
+
+      - name: Run Python and TUI tests
+        env:
+          PYTHONPATH: src
+        run: |
+          python -m unittest discover -s tests -v
+          python -m unittest discover -s tests/lab/tests -v
+          go test ./...
+          go vet ./...
+
+      - name: Build deterministic source archive
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          mkdir -p release-assets
+          ./release/build-source.sh "release-assets/paddock-$version.tar.gz" "$version"
+          expected=$(bash -c '. packaging/arch/PKGBUILD; printf "%s" "${sha256sums[0]}"')
+          actual=$(sha256sum "release-assets/paddock-$version.tar.gz" | awk '{print $1}')
+          test "$actual" = "$expected"
+
+      - name: Upload source archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: application-source
+          path: release-assets/paddock-*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    name: Build Arch package
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container: archlinux:base-devel
+    steps:
+      - name: Install checkout dependencies
+        run: pacman -Syu --needed --noconfirm git
+
+      - name: Check out tagged source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Download source archive
+        uses: actions/download-artifact@3e5f45b2cf3c8e75b540449e92b4886f43607fa02 # v8.0.1
+        with:
+          name: application-source
+          path: packaging/arch
+
+      - name: Install package dependencies
+        shell: bash
+        run: |
+          depends=()
+          makedepends=()
+          . packaging/arch/PKGBUILD
+          pacman -S --needed --noconfirm "${depends[@]}" "${makedepends[@]}"
+
+      - name: Build package as an unprivileged user
+        run: |
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser --user builder -- bash -lc \
+            "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg --cleanbuild --clean --force"
+
+      - name: Stage release package
+        shell: bash
+        run: |
+          mkdir -p release-package
+          package_path=$(runuser --user builder -- bash -lc \
+            "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg --packagelist" \
+            | grep '/paddock-[0-9][^/]*\.pkg\.tar\.zst$')
+          test -n "$package_path"
+          cp -- "$package_path" release-package/
+          cp -- packaging/arch/PKGBUILD release-package/PKGBUILD
+
+      - name: Upload release package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: application-package
+          path: release-package/
+          if-no-files-found: error
+          retention-days: 7
+
+  clean-install:
+    name: Verify clean Arch install
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container: archlinux:base
+    steps:
+      - name: Install checkout dependency
+        run: pacman -Syu --needed --noconfirm git
+
+      - name: Check out acceptance script
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Download release package
+        uses: actions/download-artifact@3e5f45b2cf3c8e75b540449e92b4886f43607fa02 # v8.0.1
+        with:
+          name: application-package
+          path: release-package
+
+      - name: Install and verify package
+        run: ./tests/package/clean-install.sh release-package/paddock-*.pkg.tar.zst
+
+  publish:
+    name: Publish GitHub release
+    needs: [source, package, clean-install]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download source archive
+        uses: actions/download-artifact@3e5f45b2cf3c8e75b540449e92b4886f43607fa02 # v8.0.1
+        with:
+          name: application-source
+          path: release-assets
+
+      - name: Download release package
+        uses: actions/download-artifact@3e5f45b2cf3c8e75b540449e92b4886f43607fa02 # v8.0.1
+        with:
+          name: application-package
+          path: release-assets
+
+      - name: Generate release checksums
+        working-directory: release-assets
+        run: sha256sum PKGBUILD paddock-*.tar.gz paddock-*.pkg.tar.zst > SHA256SUMS
+
+      - name: Publish immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "Paddock $version" \
+            --generate-notes \
+            release-assets/PKGBUILD \
+            release-assets/SHA256SUMS \
+            release-assets/paddock-*.tar.gz \
+            release-assets/paddock-*.pkg.tar.zst

@@ -4,6 +4,7 @@ __pycache__/
 packaging/arch/pkg/
 packaging/arch/src/
 packaging/arch/*.tar.gz
+packaging/arch/PKGBUILD.local.*
 experiments/phase-0/install/package/pkg/
 experiments/phase-0/install/package/src/
 release/dist/

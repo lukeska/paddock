@@ -1,6 +1,7 @@
 # Packaging and development release status
 
-Current at revision `paddock 0.1.0-25`.
+The release recipe is `paddock 0.1.0-1`; local development builds deliberately
+use the stable revision `paddock 0.1.0-25`.
 
 ## What the package owns
 
@@ -60,7 +61,9 @@ CI-built archives pass the promotion process and enter the packaged index.
 
 ## Remaining publication gates
 
-The package is intentionally unsigned and is not a supported public release.
+The application-release workflow publishes a checksum-pinned but unsigned
+GitHub package from `v<semver>` tags. It is not yet a signed pacman
+distribution.
 
 1. Generate the release key offline per ADR 0009 and publish its fingerprint.
    No key exists yet.

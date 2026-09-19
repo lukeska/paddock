@@ -7,22 +7,17 @@ fi
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repository=$(cd -- "$script_dir/../.." && pwd)
 version=$(awk -F'"' '/^version = / { print $2; exit }' "$repository/pyproject.toml")
-release_version=${version%%.*}.${version#*.}
-release_version=${release_version%.dev*}
-archive="$script_dir/paddock-$release_version.tar.gz"
-staging=$(mktemp -d)
-trap 'rm -rf -- "$staging"' EXIT
-mkdir -p "$staging/paddock-$release_version"
-tar --exclude=.git --exclude=plans --exclude='*/__pycache__' --exclude='*.py[cod]' \
-  --exclude='*.pkg.tar.*' --exclude='packaging/arch/paddock-*.tar.gz' \
-  --exclude='src/paddock/ui' \
-  --exclude=packaging/arch/src --exclude=packaging/arch/pkg \
-  --exclude=release/work --exclude=release/dist --exclude=log \
-  -C "$repository" -cf - . | tar -C "$staging/paddock-$release_version" -xf -
-tar -C "$staging" -czf "$archive" "paddock-$release_version"
+archive="$script_dir/paddock-$version.tar.gz"
+recipe=$(mktemp "$script_dir/PKGBUILD.local.XXXXXX")
+trap 'rm -f -- "$recipe"' EXIT
+"$repository/release/build-source.sh" "$archive" "$version" >/dev/null
 sha256=$(sha256sum "$archive" | awk '{print $1}')
-sed -i "s/^sha256sums=.*/sha256sums=('$sha256')/" "$script_dir/PKGBUILD"
+sed \
+  -e 's/^pkgrel=.*/pkgrel=25/' \
+  -e 's#^source=.*#source=("$pkgname-$pkgver.tar.gz")#' \
+  -e "s/^sha256sums=.*/sha256sums=('$sha256')/" \
+  "$script_dir/PKGBUILD" > "$recipe"
 (
   cd "$script_dir"
-  makepkg --cleanbuild --clean --force
+  makepkg --cleanbuild --clean --force -p "$recipe"
 )
