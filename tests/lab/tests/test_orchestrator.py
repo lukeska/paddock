@@ -61,6 +61,8 @@ class LabOrchestratorTests(unittest.TestCase):
     def test_sync_preserves_runtime_state(self):
         self.lab.sync(False)
         destination = self.park / "paddock-lab"
+        for relative in lab_module.RUNTIME_DIRECTORIES:
+            self.assertTrue((destination / relative).is_dir())
         for relative in (".env", "vendor/keep", "node_modules/keep", "storage/logs/keep"):
             path = destination / relative
             path.parent.mkdir(parents=True, exist_ok=True)

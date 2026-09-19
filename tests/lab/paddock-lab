@@ -37,6 +37,10 @@ PRESERVED_PARTS = {
     ".env", ".paddock.json", "vendor", "node_modules", "storage", "bootstrap/cache", "public/build",
     "database/database.sqlite",
 }
+RUNTIME_DIRECTORIES = (
+    "storage/app", "storage/framework/cache", "storage/framework/sessions",
+    "storage/framework/views", "storage/logs", "bootstrap/cache",
+)
 
 
 class LabError(RuntimeError):
@@ -187,6 +191,8 @@ class Lab:
                     if _sha256(target) != old_hash and not force:
                         raise LabError(f"managed file was edited: {target}")
                     target.unlink()
+            for directory in RUNTIME_DIRECTORIES:
+                self._safe_directory(destination, directory).mkdir(parents=True, exist_ok=True)
             marker.write_text(json.dumps({
                 "schema_version": SCHEMA_VERSION,
                 "installation_id": installation_id,
@@ -202,10 +208,7 @@ class Lab:
         env = destination / ".env"
         if not env.exists():
             shutil.copy2(destination / ".env.example", env)
-        for directory in (
-            "storage/app", "storage/framework/cache", "storage/framework/sessions",
-            "storage/framework/views", "storage/logs", "bootstrap/cache",
-        ):
+        for directory in RUNTIME_DIRECTORIES:
             (destination / directory).mkdir(parents=True, exist_ok=True)
         self.run("php", "use", project["php"], cwd=destination)
         self.run("node", "use", project["node"], cwd=destination)
@@ -409,6 +412,18 @@ class Lab:
             cursor = cursor.parent
         if target.exists() and not target.is_file():
             raise LabError(f"refusing non-file managed target: {target}")
+        return target
+
+    @staticmethod
+    def _safe_directory(project: Path, relative: str) -> Path:
+        target = project / relative
+        cursor = target
+        while cursor != project:
+            if cursor.is_symlink():
+                raise LabError(f"refusing managed path through a symlink: {cursor}")
+            cursor = cursor.parent
+        if target.exists() and not target.is_dir():
+            raise LabError(f"refusing non-directory runtime target: {target}")
         return target
 
 
