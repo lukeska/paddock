@@ -351,10 +351,19 @@ func TestServicesTabRendersCatalogAndOpensDetails(t *testing.T) {
 		t.Fatal("enter did not open the selected service")
 	}
 	detail := ansi.Strip(m.renderServiceDetail())
-	for _, expected := range []string{"Status", "Configuration", "Connection", "Manage", "Danger zone", "REDIS_HOST=127.0.0.1"} {
+	for _, expected := range []string{
+		"Status", "Configuration", "Connection", "Manage", "Danger zone",
+		"REDIS_HOST=127.0.0.1", "REDIS_PORT=6379", "[ Copy config ]",
+	} {
 		if !strings.Contains(detail, expected) {
 			t.Fatalf("service detail missing %q: %q", expected, detail)
 		}
+	}
+	if strings.Contains(detail, "Environment") {
+		t.Fatalf("redundant Environment label is still present: %q", detail)
+	}
+	if strings.Contains(detail, "REDIS_HOST=127.0.0.1  REDIS_PORT=6379") {
+		t.Fatalf("connection settings were flattened onto one line: %q", detail)
 	}
 }
 
@@ -421,8 +430,11 @@ func TestServiceConnectionCanBeCopiedWithoutFlatteningIt(t *testing.T) {
 
 	m.snapshot.Services.Instances[0].Connection = nil
 	_, command = m.copyServiceConnection(m.snapshot.Services.Instances[0])
-	if command != nil || serviceConnectionLabel(nil) != "Not available" {
+	if command != nil {
 		t.Fatal("empty connection settings should not offer copying")
+	}
+	if detail := ansi.Strip(m.renderServiceDetail()); !strings.Contains(detail, "Not available") || strings.Contains(detail, "[ Copy config ]") {
+		t.Fatalf("empty connection block rendered incorrectly: %q", detail)
 	}
 }
 

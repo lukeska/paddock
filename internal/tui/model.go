@@ -2235,7 +2235,7 @@ func (m Model) serviceActions() []detailAction {
 		{"service-port", "Configuration", "Addresses", strings.Join(service.Addresses, "  ")},
 		{"service-image", "Configuration", "Image", service.Image},
 		{"service-volume", "Configuration", "Data volume", service.Volume},
-		{"service-env", "Connection", "Environment", serviceConnectionLabel(service.Connection)},
+		{"service-env", "Connection", "Copy config", ""},
 		{"service-logs", "Manage", "Logs", "Open"},
 		{"service-edit", "Manage", "Settings", "Edit"},
 		{"service-remove", "Danger zone", "Remove service", "Delete data…"},
@@ -2247,13 +2247,6 @@ func (m Model) serviceActions() []detailAction {
 		)...)
 	}
 	return actions
-}
-
-func serviceConnectionLabel(connection []string) string {
-	if len(connection) == 0 {
-		return "Not available"
-	}
-	return strings.Join(connection, "  ") + " · Copy"
 }
 
 func (m Model) renderServiceDetail() string {
@@ -2276,14 +2269,31 @@ func (m Model) renderServiceDetail() string {
 	groups := map[string][]string{}
 	lineWidth := max(30, m.width-12)
 	for index, action := range actions {
+		if action.id == "service-env" {
+			if len(service.Connection) == 0 {
+				groups[action.section] = append(
+					groups[action.section], "  "+m.styles.muted.Render("Not available"),
+				)
+				continue
+			}
+			for _, variable := range service.Connection {
+				groups[action.section] = append(
+					groups[action.section], "  "+m.styles.log.Render(variable),
+				)
+			}
+			button := "[ Copy config ]"
+			line := "  " + m.styles.worker.Render(button)
+			if index == m.serviceAction {
+				line = m.styles.selected.Width(lineWidth).Render("› " + button)
+			}
+			groups[action.section] = append(groups[action.section], "", line)
+			continue
+		}
 		labelWidth := min(20, max(12, lineWidth/4))
 		valueWidth := max(6, lineWidth-labelWidth-4)
 		value := action.value
 		if action.id == "service-active" {
 			value = stateGlyph(service.State) + " " + value
-		}
-		if action.id == "service-env" && len(service.Connection) > 0 && index != m.serviceAction {
-			value = m.styles.accent.Underline(true).Render(value)
 		}
 		line := "  " + siteCell(action.label, labelWidth) + "  " + siteCell(value, valueWidth)
 		if index == m.serviceAction {
