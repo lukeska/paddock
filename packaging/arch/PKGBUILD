@@ -10,7 +10,7 @@ depends=('python' 'python-yaml' 'python-gobject' 'gtk4' 'libadwaita' 'nginx' 'dn
 makedepends=('go')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz")
-sha256sums=('df86a9e026dda2393456f2dd1e63a540d61c275a402730e33101c4d7a4a30887')
+sha256sums=('1eb2a2af01eb7adb376bec3d275cde852fec944a0fa26d4d9de997894877a5fb')
 
 prepare() {
   cd "$srcdir/$pkgname-$pkgver"
