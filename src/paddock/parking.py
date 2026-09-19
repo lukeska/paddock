@@ -221,6 +221,10 @@ class ParkingManager:
                 parked[site.name]["queue"] = old["queue"]
             if old is not None and old.get("scheduler") is not None:
                 parked[site.name]["scheduler"] = old["scheduler"]
+            if old is not None and old.get("client_max_body_size") is not None:
+                parked[site.name]["client_max_body_size"] = old[
+                    "client_max_body_size"
+                ]
             # A parked record is rebuilt from scratch on every event, so an
             # nginx declaration that is not carried across is destroyed —
             # together with the trust decision recorded in it, which a user

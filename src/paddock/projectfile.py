@@ -176,7 +176,7 @@ def parse(raw: Any) -> ProjectFile:
     if body_size is not None:
         if isinstance(body_size, int) and not isinstance(body_size, bool):
             body_size = str(body_size)
-        if not isinstance(body_size, str) or not BODY_SIZE.match(body_size):
+        if not isinstance(body_size, str) or not BODY_SIZE.fullmatch(body_size):
             raise ProjectFileError(
                 "client_max_body_size must be a size like 512m, 1g, or 2048"
             )

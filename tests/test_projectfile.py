@@ -42,7 +42,9 @@ class SchemaTests(unittest.TestCase):
     def test_an_upload_limit_cannot_smuggle_a_directive(self) -> None:
         # It is rendered into a server block unquoted, so anything but a size
         # would be nginx configuration a project never had to have reviewed.
-        for value in ("1g; root /etc", "512mb", "0", "-1", "1.5g", "", "abc"):
+        for value in (
+            "1g; root /etc", "512mb", "0", "-1", "1.5g", "", "abc", "512m\n",
+        ):
             with self.assertRaisesRegex(ProjectFileError, "client_max_body_size"):
                 parse({"client_max_body_size": value})
 

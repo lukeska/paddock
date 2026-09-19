@@ -94,6 +94,22 @@ class ParkingTests(unittest.TestCase):
             self.store.read("sites")["sites"]["lab"]["nginx"],
         )
 
+    def test_reconcile_preserves_a_parked_site_s_upload_limit(self) -> None:
+        self._parked_project("lab")
+        self.manager.reconcile(self.projector, reload=False)
+        self.store.update("sites", lambda current: {**current, "sites": {
+            **current["sites"], "lab": {
+                **current["sites"]["lab"], "client_max_body_size": "512m",
+            },
+        }})
+
+        self.manager.reconcile(self.projector, reload=False)
+
+        self.assertEqual(
+            "512m",
+            self.store.read("sites")["sites"]["lab"]["client_max_body_size"],
+        )
+
     def test_an_unreadable_project_file_leaves_the_declaration_alone(self) -> None:
         # Reconcile runs on a filesystem event, so it sees folders mid-clone.
         site = self._parked_project("lab")

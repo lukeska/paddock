@@ -252,7 +252,7 @@ def validate_sites(raw: Any) -> dict[str, Any]:
         # as well as at the project-file boundary: a value that reached the
         # registry by another route must not be able to carry a `;`.
         if body_size is not None and (
-            not isinstance(body_size, str) or not BODY_SIZE.match(body_size)
+            not isinstance(body_size, str) or not BODY_SIZE.fullmatch(body_size)
         ):
             raise SchemaError(
                 f"site {name}.client_max_body_size must be a size like 512m or 1g"
