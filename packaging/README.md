@@ -1,6 +1,6 @@
 # Packaging and development release status
 
-Current at revision `paddock 0.1.0-24`.
+Current at revision `paddock 0.1.0-25`.
 
 ## What the package owns
 
