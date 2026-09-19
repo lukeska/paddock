@@ -2,7 +2,7 @@
 
 The TUI is deliberately a small Go client.  All knowledge of Paddock state,
 systemd units, and worker reconciliation stays in the Python application
-controller so the GTK, CLI, and terminal clients cannot drift apart.
+controller so the CLI and terminal client cannot drift apart.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import IO, Any
 from .application import PaddockController
 from .paths import Paths
 from .state import StateStore
-from .ui.theme import ThemeError, load_palette
+from .omarchy_theme import ThemeError, load_palette
 
 
 # 6 adds parking-folder discovery and management.

@@ -23,8 +23,6 @@ Panel {
 
   property var anchorItem: null
   property var hostWidget: null
-  // The development installer changes this only in its installed copy.
-  property string manageCommand: "paddock-ui"
   // The bar tracks the widget in its slot, not this nested panel, so the
   // popout coordinator has to be given that identity.
   readonly property var barIdentity: hostWidget || root
@@ -325,7 +323,7 @@ Panel {
 
           PanelSeparator { width: parent.width; visible: root.available }
 
-          // ---- Footer: native management plus terminal diagnostics.
+          // ---- Footer: terminal management and diagnostics.
           Row {
             width: parent.width
             spacing: Style.space(8)
@@ -334,16 +332,8 @@ Panel {
               text: "manage"
               fontSize: Style.font.caption
               foreground: Color.accent
-              tooltipText: "Open the Paddock application"
-              onClicked: {
-                var launcher = root.quoted(root.manageCommand)
-                var fallback = "command -v " + launcher + " >/dev/null 2>&1 "
-                  + "&& exec " + launcher
-                  + " || notify-send 'Paddock UI unavailable' "
-                  + "'Install or update the Paddock package.'"
-                root.shellRun("sh -lc " + root.quoted(fallback))
-                root.close()
-              }
+              tooltipText: "Open the Paddock terminal interface"
+              onClicked: { root.inTerminal("paddock tui"); root.close() }
             }
 
             Button {

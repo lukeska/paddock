@@ -1,12 +1,11 @@
 # Terminal UI
 
 `paddock tui` opens a full-screen Bubble Tea client that uses the same Python
-application controller as the GTK app. It does not duplicate state or invoke
+application controller as the CLI. It does not duplicate state or invoke
 Paddock's human-readable CLI output. A private, versioned NDJSON bridge keeps
 the UI process isolated from systemd and Paddock's state files.
 
-Colors come from Omarchy's active, normalized `colors.toml`, using the same
-validated palette adapter as Paddock's GTK app. The next periodic refresh
+Colors come from Omarchy's active, normalized `colors.toml`. The next periodic refresh
 applies a newly selected Omarchy theme without restarting the TUI. If that
 palette is unavailable, Paddock falls back to the terminal's detected light or
 dark appearance.
@@ -16,7 +15,7 @@ service instances. Each dashboard section uses a responsive bordered fieldset
 with its section name embedded in the top border. Sites presents a table with
 name, PHP, Node, HTTP/HTTPS lock state, and an Open link. A selected row opens
 an actionable detail view with the same configuration, launch, and worker
-controls as the desktop UI. Services presents every independent supporting
+controls available through Paddock. Services presents every independent supporting
 service instance with its type, pinned version, loopback port, and live state.
 A service detail view exposes connection variables, container and volume
 information, lifecycle controls, logs, settings, and removal.

@@ -6,8 +6,8 @@ Current at revision `paddock 0.1.0-25`.
 
 `makepkg` builds it, and `check()` runs the whole unit suite, so a
 package that builds is a package whose tests passed. It installs the Python
-package, `/usr/bin/paddock`, `/usr/bin/paddock-ui`, its desktop entry, icons and
-AppStream metadata, the fixed root helpers under `/usr/lib/paddock`, the
+package, `/usr/bin/paddock`, `/usr/bin/paddock-tui`, its TUI desktop entry,
+icons and AppStream metadata, the fixed root helpers under `/usr/lib/paddock`, the
 artifact index, and the state-schema and project-file references under
 `/usr/share/doc/paddock`.
 
@@ -21,10 +21,10 @@ unprivileged user from outside the checkout. This catches missing package files,
 undeclared dependencies, accidental source-tree imports, and install hooks that
 mutate user or system integration before `paddock setup`.
 
-Runtime dependencies include `python`, `python-yaml`, `python-gobject`, `gtk4`,
-`libadwaita`, `nginx`, `dnsmasq`, `mkcert`, `nss`, `p11-kit`, `networkmanager`,
-`polkit`, `podman`, and `curl`. `python-yaml` reads `paddock.yml`; PyGObject provides
-the native GTK interface. Note that every hard dependency must exist
+Runtime dependencies include `python`, `python-yaml`, `nginx`, `dnsmasq`,
+`mkcert`, `nss`, `p11-kit`, `networkmanager`, `polkit`, `podman`, `curl`, and
+`wl-clipboard`. `python-yaml` reads `paddock.yml`; the terminal UI is a static
+Go binary. Note that every hard dependency must exist
 wherever the package is **built**, not only where it runs — `makepkg` resolves
 runtime dependencies before building, which broke both CI and the local build
 when `podman` was added.

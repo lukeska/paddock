@@ -10,8 +10,8 @@
   <summary>Manage a local Laravel development environment</summary>
   <description>
     <p>
-      Paddock provides a native interface for local Laravel sites, PHP runtimes,
-      and supporting services on Omarchy.
+      Paddock provides an Omarchy-themed terminal interface for local Laravel
+      sites, PHP runtimes, and supporting services.
     </p>
     <p>
       It follows the active Omarchy color scheme and keeps development services
@@ -20,7 +20,8 @@
   </description>
   <launchable type="desktop-id">dev.paddock.Paddock.desktop</launchable>
   <provides>
-    <binary>paddock-ui</binary>
+    <binary>paddock</binary>
+    <binary>paddock-tui</binary>
   </provides>
   <categories>
     <category>Development</category>

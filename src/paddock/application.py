@@ -962,7 +962,7 @@ class PaddockController:
             return LogResult(False, "logs_failed", (), str(error))
 
     def redis_snapshot(self) -> RedisSnapshot:
-        """Return one non-raising Redis view for the CLI or native app.
+        """Return one non-raising Redis view for the CLI or TUI.
 
         A broken service record is represented as unavailable instead of
         crashing the UI.  Once configured, systemd's states are kept verbatim
@@ -1305,7 +1305,7 @@ class PaddockController:
         """Apply Redis configuration as one recoverable operation.
 
         State and the projected unit are restored together when projection or
-        activation fails.  The separate operation lock serializes GUI, CLI,
+        activation fails.  The separate operation lock serializes TUI, CLI,
         and project-init clients across processes, while each state write keeps
         its existing record lock and atomic replacement guarantees.
         """

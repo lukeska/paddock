@@ -12,15 +12,15 @@ APP_ID = "dev.paddock.Paddock"
 
 
 class DesktopIntegrationTests(unittest.TestCase):
-    def test_desktop_entry_launches_the_native_app(self) -> None:
+    def test_desktop_entry_launches_the_tui_in_a_terminal(self) -> None:
         parser = configparser.ConfigParser(interpolation=None)
         parser.optionxform = str
         parser.read(RESOURCES / f"{APP_ID}.desktop", encoding="utf-8")
         entry = parser["Desktop Entry"]
         self.assertEqual("Application", entry["Type"])
-        self.assertEqual("paddock-ui", entry["Exec"])
+        self.assertEqual("paddock tui", entry["Exec"])
         self.assertEqual(APP_ID, entry["Icon"])
-        self.assertEqual("false", entry["Terminal"])
+        self.assertEqual("true", entry["Terminal"])
         self.assertIn("Development;", entry["Categories"])
 
     def test_appstream_and_desktop_ids_match(self) -> None:
@@ -37,10 +37,11 @@ class DesktopIntegrationTests(unittest.TestCase):
             self.assertTrue(icon.is_file())
             self.assertEqual("svg", ET.parse(icon).getroot().tag.rsplit("}", 1)[-1])
 
-    def test_package_installs_all_desktop_resources(self) -> None:
+    def test_package_installs_the_tui_without_gtk(self) -> None:
         package = (ROOT / "packaging/arch/PKGBUILD").read_text(encoding="utf-8")
         self.assertIn('makedepends=(\'go\')', package)
         self.assertIn('paddock-tui "$pkgdir/usr/bin/paddock-tui"', package)
+        self.assertIn('-type d -empty -delete', package)
         self.assertIn('go test ./...', package)
         self.assertIn("resources/composer.json", package)
         self.assertIn('shims/php', package)
@@ -49,21 +50,26 @@ class DesktopIntegrationTests(unittest.TestCase):
         self.assertIn('shims/npx', package)
         self.assertIn('node-artifacts.json', package)
         self.assertIn('shims/composer', package)
+        self.assertNotIn("paddock-ui", package)
+        for dependency in ("python-gobject", "gtk4", "libadwaita"):
+            self.assertNotIn(dependency, package)
         for suffix in (".desktop", ".metainfo.xml", ".svg", "-symbolic.svg"):
             self.assertIn(f"{APP_ID}{suffix}", package)
 
-    def test_plugin_launches_ui_with_an_unavailable_fallback(self) -> None:
+    def test_plugin_launches_the_tui_in_an_omarchy_terminal(self) -> None:
         panel = (ROOT / "plugin/Panel.qml").read_text(encoding="utf-8")
-        self.assertIn('property string manageCommand: "paddock-ui"', panel)
-        self.assertIn("root.manageCommand", panel)
-        self.assertIn("Paddock UI unavailable", panel)
+        self.assertIn('root.inTerminal("paddock tui")', panel)
+        self.assertNotIn("paddock-ui", panel)
 
-    def test_plugin_dev_installer_overrides_only_its_installed_copy(self) -> None:
+    def test_plugin_dev_installer_has_no_gui_override(self) -> None:
         installer = (ROOT / "scripts/plugin-dev-install.sh").read_text(
             encoding="utf-8"
         )
-        self.assertIn("scripts/paddock-ui-dev", installer)
-        self.assertIn('manageCommand: \\"paddock-ui\\"', installer)
+        self.assertNotIn("paddock-ui", installer)
+
+    def test_python_gui_package_is_removed(self) -> None:
+        self.assertEqual([], list((ROOT / "src/paddock/ui").glob("*.py")))
+        self.assertFalse((ROOT / "packaging/arch/paddock-ui").exists())
 
 
 if __name__ == "__main__":

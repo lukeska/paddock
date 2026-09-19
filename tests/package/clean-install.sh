@@ -28,7 +28,6 @@ pacman -Qkk paddock
 
 required=(
   /usr/bin/paddock
-  /usr/bin/paddock-ui
   /usr/bin/paddock-tui
   /usr/lib/paddock/system-helper
   /usr/lib/paddock/php-fpm-launcher
@@ -52,6 +51,10 @@ for path in "${required[@]}"; do
     exit 1
   }
 done
+
+test ! -e /usr/bin/paddock-ui
+site_packages=$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')
+test ! -e "$site_packages/paddock/ui"
 
 # Run as a normal desktop user, from outside the checkout, with clean XDG
 # directories. This ensures Python resolves the installed module rather than
@@ -86,7 +89,7 @@ test ! -e /home/paddock-ci/.config/omarchy
 test ! -e /etc/systemd/system/paddock.target
 
 bash -n \
-  /usr/bin/paddock /usr/bin/paddock-ui \
+  /usr/bin/paddock \
   /usr/lib/paddock/php-fpm-launcher \
   /usr/lib/paddock/check-ports /usr/lib/paddock/wait-for-socket \
   /usr/lib/paddock/shims/php /usr/lib/paddock/shims/composer \

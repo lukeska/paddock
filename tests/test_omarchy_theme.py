@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from paddock.ui.theme import ThemeError, contrast_foreground, load_palette, palette_css
+from paddock.omarchy_theme import ThemeError, load_palette
 
 
 DARK = """\
@@ -55,7 +55,7 @@ class PaletteTests(ThemeFixture):
         with self.assertRaises(ThemeError):
             load_palette(self.path)
 
-    def test_non_hex_color_is_rejected_before_it_can_reach_css(self) -> None:
+    def test_non_hex_color_is_rejected(self) -> None:
         self.write('mode = "dark"\naccent = "red; } button { opacity: 0"\n')
         with self.assertRaises(ThemeError):
             load_palette(self.path)
@@ -69,33 +69,5 @@ class PaletteTests(ThemeFixture):
             load_palette(self.path)
 
 
-class CssTests(ThemeFixture):
-    def setUp(self) -> None:
-        super().setUp()
-        self.write(DARK)
-        self.css = palette_css(load_palette(self.path))
-
-    def test_semantic_application_variables_are_mapped(self) -> None:
-        for declaration in (
-            "--accent-bg-color: #faa968",
-            "--window-bg-color: #05182e",
-            "--view-bg-color: #020c17",
-            "--card-bg-color: #0a2540",
-            "--success-bg-color: #028391",
-            "--warning-bg-color: #faa968",
-            "--error-bg-color: #f85525",
-        ):
-            self.assertIn(declaration, self.css)
-
-    def test_css_contains_only_one_known_root_block(self) -> None:
-        self.assertEqual(1, self.css.count(":root {"))
-        self.assertEqual(1, self.css.count("}"))
-
-    def test_contrast_foreground_handles_bright_and_dark_accents(self) -> None:
-        self.assertEqual("#000000", contrast_foreground("#ffffff"))
-        self.assertEqual("#ffffff", contrast_foreground("#000000"))
-
-
 if __name__ == "__main__":
     unittest.main()
-

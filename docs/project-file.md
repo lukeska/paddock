@@ -192,7 +192,7 @@ blocked, and `paddock init` exits non-zero instead of silently ignoring it.
 Removing a worker from `paddock.yml` does not stop or delete an already
 configured worker. This is deliberately conservative: declarations converge
 what they contain without treating an omitted entry as permission to stop a
-developer's local process. Use the worker controls in the GUI/TUI or
+developer's local process. Use the worker controls in the TUI or
 `paddock worker stop TYPE` explicitly.
 
 ## Reverb workers

@@ -2,11 +2,10 @@
 Type=Application
 Name=Paddock
 GenericName=Laravel Development Environment
-Comment=Manage local Laravel sites, PHP runtimes, and services
-Exec=paddock-ui
+Comment=Manage local Laravel sites, PHP runtimes, and services in the terminal
+Exec=paddock tui
 Icon=dev.paddock.Paddock
-Terminal=false
+Terminal=true
 Categories=Development;WebDevelopment;
 Keywords=Laravel;PHP;Redis;Development;
-StartupNotify=true
-StartupWMClass=dev.paddock.Paddock
+StartupNotify=false

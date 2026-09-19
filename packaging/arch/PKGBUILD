@@ -5,12 +5,12 @@ pkgdesc='Local Laravel development environment for Omarchy'
 arch=('x86_64' 'aarch64')
 url='https://github.com/lukeska/paddock'
 license=('MIT')
-depends=('python' 'python-yaml' 'python-gobject' 'gtk4' 'libadwaita' 'nginx' 'dnsmasq' 'mkcert'
+depends=('python' 'python-yaml' 'nginx' 'dnsmasq' 'mkcert'
          'nss' 'p11-kit' 'networkmanager' 'polkit' 'podman' 'curl' 'wl-clipboard')
 makedepends=('go')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz")
-sha256sums=('1eb2a2af01eb7adb376bec3d275cde852fec944a0fa26d4d9de997894877a5fb')
+sha256sums=('0168a78a10c417e7195b22fb1900bbe57e0b67a62a64c444151f2512a9f8f6f2')
 
 prepare() {
   cd "$srcdir/$pkgname-$pkgver"
@@ -36,8 +36,8 @@ package() {
   install -d "$pkgdir$site_packages"
   cp -r --no-preserve=ownership src/paddock "$pkgdir$site_packages/paddock"
   find "$pkgdir$site_packages/paddock" -type d -name __pycache__ -prune -exec rm -rf -- {} +
+  find "$pkgdir$site_packages/paddock" -depth -type d -empty -delete
   install -Dm755 packaging/arch/paddock "$pkgdir/usr/bin/paddock"
-  install -Dm755 packaging/arch/paddock-ui "$pkgdir/usr/bin/paddock-ui"
   install -Dm755 paddock-tui "$pkgdir/usr/bin/paddock-tui"
   install -Dm755 packaging/arch/php "$pkgdir/usr/lib/paddock/shims/php"
   install -Dm755 packaging/arch/composer "$pkgdir/usr/lib/paddock/shims/composer"

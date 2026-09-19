@@ -57,8 +57,8 @@ there. `init` reports an unreviewed fragment with `!`, the marker it already
 uses for something a project asked for that Paddock declined to impose, and
 exits non-zero.
 
-Trust is `paddock config trust <site>`, or the equivalent control in the GTK
-and terminal UIs. Two reasons for a separate act rather than a prompt during
+Trust is `paddock config trust <site>`, or the equivalent control in the TUI.
+Two reasons for a separate act rather than a prompt during
 `init`:
 
 - `init` is designed to be scriptable and to distinguish "converged" from
@@ -189,5 +189,5 @@ what makes review possible; withholding trust remains a separate act.
 - `link` and parked discovery record a declaration when a project file is
   present. Neither grants trust, so a newly linked project reports `pending`
   and `init` keeps reporting it with `!`.
-- A site at `pending` is visible in the CLI, TUI, and GTK surfaces. `none` and
+- A site at `pending` is visible in the CLI and TUI surfaces. `none` and
   `pending` are different states and are not presented alike.

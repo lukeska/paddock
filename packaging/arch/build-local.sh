@@ -15,6 +15,7 @@ trap 'rm -rf -- "$staging"' EXIT
 mkdir -p "$staging/paddock-$release_version"
 tar --exclude=.git --exclude=plans --exclude='*/__pycache__' --exclude='*.py[cod]' \
   --exclude='*.pkg.tar.*' --exclude='packaging/arch/paddock-*.tar.gz' \
+  --exclude='src/paddock/ui' \
   --exclude=packaging/arch/src --exclude=packaging/arch/pkg \
   --exclude=release/work --exclude=release/dist --exclude=log \
   -C "$repository" -cf - . | tar -C "$staging/paddock-$release_version" -xf -

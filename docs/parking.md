@@ -27,4 +27,4 @@ instead of raising.
 
 Paddock generates user-level systemd path units for registered folders. Creating,
 renaming, or removing an immediate child triggers a reconciliation and web
-server reload even when the native application is closed.
+server reload even when the TUI is closed.
