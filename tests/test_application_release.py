@@ -58,6 +58,26 @@ class ApplicationReleaseTests(unittest.TestCase):
             self.assertTrue(all(name.startswith(prefix) for name in names))
             self.assertNotIn(f"{prefix}packaging/arch/PKGBUILD", names)
 
+    @unittest.skipUnless((ROOT / ".git").exists(), "requires Git release inputs")
+    def test_a_published_version_is_not_reused_by_a_later_commit(self) -> None:
+        tag = f"refs/tags/v{VERSION}^{{commit}}"
+        tagged = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", tag],
+            cwd=ROOT, text=True, capture_output=True, check=False,
+        )
+        if tagged.returncode != 0:
+            return
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT, text=True, capture_output=True, check=True,
+        ).stdout.strip()
+        self.assertEqual(
+            tagged.stdout.strip(),
+            head,
+            f"v{VERSION} already names a different commit; bump the project "
+            "version before changing release inputs",
+        )
+
     def test_tag_release_waits_for_tests_package_and_clean_install(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn('tags:\n      - "v*"', workflow)
