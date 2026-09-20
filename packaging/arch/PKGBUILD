@@ -1,5 +1,5 @@
 pkgname=paddock
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc='Local Laravel development environment for Omarchy'
 arch=('x86_64' 'aarch64')
@@ -10,7 +10,7 @@ depends=('python' 'python-yaml' 'nginx' 'dnsmasq' 'mkcert'
 makedepends=('go')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
-sha256sums=('abb6c21ac91a7cd7a6a73c2ec83de191a91278bfa712990d3991e3431eab006f')
+sha256sums=('b97268621ec886f634cc5cf3fa67148106630341ddb7a1c42a176e7fd1c81e63')
 
 prepare() {
   cd "$srcdir/$pkgname-$pkgver"

@@ -22,19 +22,19 @@ Local development builds are separate:
 
 ```bash
 ./packaging/arch/build-local.sh
-sudo pacman -U packaging/arch/paddock-0.1.0-25-x86_64.pkg.tar.zst
+sudo pacman -U packaging/arch/paddock-0.1.1-25-x86_64.pkg.tar.zst
 ```
 
 The local builder creates a temporary recipe at revision 25 and never rewrites
 the release `PKGBUILD`.
 
-## Publishing 0.1.0
+## Publishing 0.1.1
 
 Only after `main` is green and the release source checksum is current:
 
 ```bash
-git tag -a v0.1.0 -m "Paddock 0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.1 -m "Paddock 0.1.1"
+git push origin v0.1.1
 ```
 
 Never move a published tag. A failed workflow publishes nothing; fix the
