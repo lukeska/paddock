@@ -11,6 +11,8 @@ import unittest
 
 ROOT = Path(__file__).parents[1]
 PKGBUILD = ROOT / "packaging/arch/PKGBUILD"
+AUR_PKGBUILD = ROOT / "packaging/aur/PKGBUILD"
+AUR_SRCINFO = ROOT / "packaging/aur/.SRCINFO"
 WORKFLOW = ROOT / ".github/workflows/application-release.yml"
 VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
 
@@ -96,6 +98,21 @@ class ApplicationReleaseTests(unittest.TestCase):
         package = PKGBUILD.read_text(encoding="utf-8")
         self.assertIn("pkgrel=1", package)
         self.assertIn("/releases/download/v$pkgver/", package)
+
+    def test_aur_recipe_verifies_the_latest_signed_source(self) -> None:
+        package = AUR_PKGBUILD.read_text(encoding="utf-8")
+        source_info = AUR_SRCINFO.read_text(encoding="utf-8")
+        fingerprint = "AB3611DC044DE36844055E9AC1A41BDC59DCEA60"
+
+        self.assertIn("pkgver=0.1.3", package)
+        self.assertIn("paddock-0.1.3.tar.gz.sig", source_info)
+        self.assertIn(f"validpgpkeys = {fingerprint}", source_info)
+        self.assertIn(f"validpgpkeys=('{fingerprint}')", package)
+        self.assertIn("sha256sums = SKIP", source_info)
+        self.assertEqual(
+            (ROOT / "packaging/arch/paddock.install").read_bytes(),
+            (ROOT / "packaging/aur/paddock.install").read_bytes(),
+        )
 
 
 if __name__ == "__main__":

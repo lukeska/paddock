@@ -29,22 +29,6 @@ acceptance testing. Runtime builds carry GitHub/Sigstore provenance, tagged
 application releases are built and clean-installed by CI, and the release
 source archive and Arch package carry detached OpenPGP signatures.
 
-## Release signing identity
-
-Paddock releases are signed by:
-
-```text
-Paddock Release Signing <20092363+lukeska@users.noreply.github.com>
-AB36 11DC 044D E368 4405  5E9A C1A4 1BDC 59DC EA60
-```
-
-Always verify the complete fingerprint through this repository before trusting
-an imported key. A release is signed only when detached `.sig` assets are
-present for both its source archive and Arch package.
-
-The public key is committed at
-[`docs/paddock-release-public.asc`](docs/paddock-release-public.asc).
-
 ## Architecture
 
 - An Arch package owns the CLI and fixed privileged helpers.

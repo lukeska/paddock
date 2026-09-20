@@ -6,6 +6,10 @@ packaging/arch/pkg/
 packaging/arch/src/
 packaging/arch/*.tar.gz
 packaging/arch/PKGBUILD.local.*
+packaging/aur/pkg/
+packaging/aur/src/
+packaging/aur/*.tar.gz
+packaging/aur/*.tar.gz.sig
 experiments/phase-0/install/package/pkg/
 experiments/phase-0/install/package/src/
 release/dist/
