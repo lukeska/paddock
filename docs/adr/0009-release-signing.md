@@ -138,9 +138,11 @@ scheme, so a `file://` URL from a local build previously passed every check.
 This enforces both the "published runtimes are the attested CI build" rule and
 the immutable-tag retention rule.
 
-## Open items
+## Implementation status
 
-The signing key does not exist yet. Before the first signed release the
-maintainer generates it offline, stores the revocation certificate separately,
-and publishes the fingerprint in the README, replacing the placeholder. No key
-has been created as part of this decision.
+The offline primary identity and expiring signing subkey were created on
+2026-09-20. The full primary fingerprint is
+`AB3611DC044DE36844055E9AC1A41BDC59DCEA60` and is published in the README.
+The daily signing keyring contains only the expiring signing subkey; its
+primary secret key is a stub. Release `v0.1.2` is the first release whose
+source archive and Arch package have verified detached signature assets.

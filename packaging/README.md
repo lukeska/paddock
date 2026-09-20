@@ -61,18 +61,19 @@ in the packaged index.
 
 ## Remaining publication gates
 
-The application-release workflow publishes a checksum-pinned but unsigned
-GitHub package from `v<semver>` tags. It is not yet a signed pacman
-distribution.
+The application-release workflow publishes a checksum-pinned GitHub package
+from `v<semver>` tags. The maintainer then signs the exact workflow-built
+package and source archive following `release/PROMOTION.md`. Release `v0.1.2`
+is the first release carrying both detached signatures. The published primary
+fingerprint is `AB3611DC044DE36844055E9AC1A41BDC59DCEA60`.
 
-1. Generate the release key offline per ADR 0009 and publish its fingerprint.
-   No key exists yet.
-2. Sign the package and source archive, following `release/PROMOTION.md`.
-3. Decide AUR versus a Paddock repository, and how the optional plugin is
+1. Decide AUR versus a Paddock repository, and how the optional plugin is
    distributed — three options are recorded in the private plan notes, and the
    constraint is that `omarchy plugin add` clones a repository *root* while the
    plugin lives in a subdirectory here.
-4. Test a clean Omarchy install from public URLs, then update, rollback,
+2. Add the signed source and `validpgpkeys` contract to the AUR recipe once AUR
+   publication is available.
+3. Test a clean Omarchy install from public URLs, then update, rollback,
    uninstall, and reinstall.
 
 CI builds GitHub-attested PHP release candidates without publishing them. The

@@ -100,22 +100,33 @@ architecture, a URL naming a different archive than it pins, and a moving tag.
 
 Commit the index change on its own, citing the attestation run ID.
 
-## 5. Build and sign the package
+## 5. Sign the application release
 
 ```bash
-./packaging/arch/build-local.sh
-gpg --detach-sign --armor packaging/arch/paddock-<version>-<rel>-x86_64.pkg.tar.zst
+./release/sign-application-release.sh v<version> <PRIMARY-FINGERPRINT>
 ```
 
-Sign the AUR source archive the same way and keep the fingerprint listed in
-`validpgpkeys`. Sign the repository database only if a custom pacman
-repository is operated. Per ADR 0009, nothing else is signed: runtime archives
-and the index are covered by the package signature and Sigstore attestation.
+This downloads the already-tested source archive and Arch package from the
+GitHub release, verifies every entry in `SHA256SUMS`, refuses to replace an
+existing release signature, signs both distribution subjects, and verifies
+the resulting signatures locally. It deliberately does not rebuild anything.
+Review the two `.sig` files and then publish them explicitly:
 
-The tag-triggered application workflow also publishes an unsigned package for
-GitHub downloads. Do not present that checksum-only artifact as a signed pacman
-distribution. When signing is introduced, promote the workflow-built artifact
-after verifying it rather than silently substituting a local rebuild.
+```bash
+./release/sign-application-release.sh --publish \
+  v<version> <PRIMARY-FINGERPRINT> /path/to/a/fresh/directory
+```
+
+The publish form performs the same download, checksum, signature, and local
+verification gates before uploading. It never uses `--clobber`; a release that
+already has a `.sig` asset must be investigated instead of silently replaced.
+
+The source signature is the one an AUR recipe will list beside the source
+archive, with the full primary fingerprint in `validpgpkeys`. The package
+signature is the one pacman verifies. Sign a repository database only if a
+custom pacman repository is operated. Per ADR 0009, nothing else is signed:
+runtime archives and the index are covered by the package signature and
+Sigstore attestation.
 
 ## 6. Record the release
 

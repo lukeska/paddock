@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 *.pkg.tar.*
+release/signing/
 packaging/arch/pkg/
 packaging/arch/src/
 packaging/arch/*.tar.gz

@@ -65,6 +65,7 @@ jobs:
           bash -n system/check-ports system/php-fpm-launcher system/wait-for-socket
           bash -n packaging/arch/build-local.sh packaging/arch/paddock.install
           bash -n release/build-source.sh
+          bash -n release/sign-application-release.sh
           bash -n tests/acceptance/run.sh
           bash -n tests/package/clean-install.sh
           bash -n scripts/plugin-dev-install.sh scripts/install.sh scripts/uninstall.sh

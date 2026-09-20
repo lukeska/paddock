@@ -12,7 +12,9 @@ The workflow then:
 4. builds `paddock-<version>-1-x86_64.pkg.tar.zst` in a clean Arch container;
 5. installs and checks that package in a second clean Arch container; and
 6. publishes the source archive, package, `PKGBUILD`, and `SHA256SUMS` as a
-   GitHub Release.
+   GitHub Release; and
+7. leaves signing to the offline-key promotion step in
+   [`PROMOTION.md`](PROMOTION.md), which signs those exact workflow artifacts.
 
 `packaging/arch/PKGBUILD` deliberately points at the immutable release asset.
 The source archive excludes that one recipe, avoiding a circular checksum. The
@@ -28,20 +30,20 @@ sudo pacman -U packaging/arch/paddock-0.1.2-25-x86_64.pkg.tar.zst
 The local builder creates a temporary recipe at revision 25 and never rewrites
 the release `PKGBUILD`.
 
-## Publishing 0.1.2
+## Publishing an application release
 
 Only after `main` is green and the release source checksum is current:
 
 ```bash
-git tag -a v0.1.2 -m "Paddock 0.1.2"
-git push origin v0.1.2
+git tag -a v<version> -m "Paddock <version>"
+git push origin v<version>
 ```
 
 Never move a published tag. A failed workflow publishes nothing; fix the
 release inputs, bump the version, and create a new tag rather than replacing an
 existing public release.
 
-The first automated release is unsigned. `SHA256SUMS` detects corruption but
-does not establish maintainer identity. Package signing remains the next
-distribution gate described by ADR 0009; no private signing key is stored in
+`SHA256SUMS` detects corruption but does not establish maintainer identity.
+The release becomes signed only after both detached signatures have been
+published by the manual promotion command. No private signing key is stored in
 GitHub.
