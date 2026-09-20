@@ -2,18 +2,46 @@
   "schema_version": 1,
   "artifacts": [
     {
-      "php": "8.4.23",
-      "minor": "8.4",
+      "php": "8.0.30",
+      "minor": "8.0",
       "architecture": "x86_64",
-      "url": "https://github.com/lukeska/paddock/releases/download/php-2026.08.18/paddock-php-8.4.23-linux-x86_64.tar.gz",
-      "sha256": "663a6f5650c131d937df96f14b4066bdefbf66d6fd1d1114498367123369cafe"
+      "url": "https://github.com/lukeska/paddock/releases/download/php-2026.09.20/paddock-php-8.0.30-linux-x86_64.tar.gz",
+      "sha256": "fa3124dfc686f8a8abfd4ed8dde2aef8e93b416eda803911ca70cbfca3452c8d"
     },
     {
-      "php": "8.5.8",
+      "php": "8.1.34",
+      "minor": "8.1",
+      "architecture": "x86_64",
+      "url": "https://github.com/lukeska/paddock/releases/download/php-2026.09.20/paddock-php-8.1.34-linux-x86_64.tar.gz",
+      "sha256": "32f60d97b07e05533830e10ea5bfe3030937e1c5863ab062b022df799fcad652"
+    },
+    {
+      "php": "8.2.33",
+      "minor": "8.2",
+      "architecture": "x86_64",
+      "url": "https://github.com/lukeska/paddock/releases/download/php-2026.09.20/paddock-php-8.2.33-linux-x86_64.tar.gz",
+      "sha256": "6e2e3da1551c7c97b5b9d57ad5393fcc20b47163dbae86262017de70f25e5598"
+    },
+    {
+      "php": "8.3.33",
+      "minor": "8.3",
+      "architecture": "x86_64",
+      "url": "https://github.com/lukeska/paddock/releases/download/php-2026.09.20/paddock-php-8.3.33-linux-x86_64.tar.gz",
+      "sha256": "2423cca7a79edf2d595f74314850d00ff77772d2236f22e8614c4ef4e9ffc26d"
+    },
+    {
+      "php": "8.4.25",
+      "minor": "8.4",
+      "architecture": "x86_64",
+      "url": "https://github.com/lukeska/paddock/releases/download/php-2026.09.20/paddock-php-8.4.25-linux-x86_64.tar.gz",
+      "sha256": "482fd1dd57e40a0ec250c50ff84dfc3b345922e21d8eaec298522e6cc6d65336"
+    },
+    {
+      "php": "8.5.10",
       "minor": "8.5",
       "architecture": "x86_64",
-      "url": "https://github.com/lukeska/paddock/releases/download/php-2026.08.18/paddock-php-8.5.8-linux-x86_64.tar.gz",
-      "sha256": "bf91cdf608466b68adc513808888b9ffd9ae40b8565369bbd43df547c9d592f6"
+      "url": "https://github.com/lukeska/paddock/releases/download/php-2026.09.20/paddock-php-8.5.10-linux-x86_64.tar.gz",
+      "sha256": "69dac8899eb0773ec0c7bb8704da73aa3de390a38fe52b11b814659ad9ec4fae"
     }
   ]
 }

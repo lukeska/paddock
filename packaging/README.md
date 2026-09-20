@@ -41,8 +41,8 @@ when `podman` was added.
   configuration, runtimes, logs, cache, and the private CA survive. Reinstall
   plus setup restored a healthy stack without recreating user state.
 - The installed package downloads published PHP runtimes from the public GitHub
-  prerelease; the currently published PHP 8.4 and 8.5 runtimes both survive a
-  reboot with zero restarts.
+  prerelease. PHP 8.4 and 8.5 have additionally survived a live reboot test
+  with zero restarts.
 - Redis, MySQL and PostgreSQL run as rootless containers in user units and
   return after a reboot.
 - The optional Omarchy plugin passes `omarchy plugin validate`.
@@ -52,12 +52,12 @@ when `podman` was added.
 
 ## Published runtime prerelease
 
-The packaged artifact index points at the `php-2026.08.18` GitHub prerelease.
-Paddock-owned PHP 8.4 and 8.5 x86_64 archives, checksums, file-level SPDX
-inventories, ABI records, and unsigned provenance are public and have passed a
-fresh production-installer download test. The release build matrix additionally
-covers PHP 8.0 through 8.3; those versions become installable only after their
-CI-built archives pass the promotion process and enter the packaged index.
+The packaged artifact index points at the `php-2026.09.20` GitHub prerelease.
+Paddock-owned PHP 8.0 through 8.5 x86_64 archives, checksums, file-level SPDX
+inventories, ABI records, provenance, and build logs are public. Every archive
+was built and probed on a GitHub-hosted runner, attested to commit `cf472ed`,
+downloaded again through its public release URL, and checked against the hash
+in the packaged index.
 
 ## Remaining publication gates
 
@@ -76,7 +76,8 @@ distribution.
    uninstall, and reinstall.
 
 CI builds GitHub-attested PHP release candidates without publishing them. The
-`runtime=all` dispatch remains unvalidated after its `GITHUB_TOKEN` fix.
+individual dispatch path has been validated for every supported PHP minor;
+promotion remains a separate manual step.
 
 Public StaticPHP artifacts are not an acceptable shortcut: the tested artifacts
 omit `intl` and lack Paddock's provenance chain.
