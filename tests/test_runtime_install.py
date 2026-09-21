@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import grp
 import io
 import json
+import os
 from pathlib import Path
+import pwd
 import subprocess
 import tarfile
 import tempfile
@@ -105,8 +108,11 @@ class RuntimeInstallTests(unittest.TestCase):
         record = self.store.read("runtimes")["runtimes"]["8.4"]
         self.assertEqual(record["sha256"], self.digest)
         config = self.store.paths.state / "fpm" / "php-8.4.conf"
-        self.assertIn("clear_env = yes", config.read_text(encoding="utf-8"))
-        self.assertIn("fpm.sock", config.read_text(encoding="utf-8"))
+        rendered = config.read_text(encoding="utf-8")
+        self.assertIn("clear_env = yes", rendered)
+        self.assertIn("fpm.sock", rendered)
+        self.assertIn(f"user = {pwd.getpwuid(os.getuid()).pw_name}", rendered)
+        self.assertIn(f"group = {grp.getgrgid(os.getgid()).gr_name}", rendered)
         self.assertIn(
             f"listen = {self.store.paths.runtime / 'php' / '8.4' / 'fpm.sock'}",
             config.read_text(encoding="utf-8"),

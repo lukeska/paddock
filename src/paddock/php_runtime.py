@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import grp
 import os
 from pathlib import Path
+import pwd
 import shutil
 import subprocess
 import tarfile
@@ -213,12 +215,16 @@ class RuntimeInstaller:
         log = self.paths.state / "logs" / "php" / minor
         config = self.paths.state / "fpm" / f"php-{minor}.conf"
         log.mkdir(parents=True, exist_ok=True, mode=0o700)
+        user = pwd.getpwuid(os.getuid()).pw_name
+        group = grp.getgrgid(os.getgid()).gr_name
         value = (
             "[global]\n"
             f"pid = {run / 'php-fpm.pid'}\n"
             f"error_log = {log / 'php-fpm.log'}\n"
             "daemonize = no\n\n"
             "[paddock]\n"
+            f"user = {user}\n"
+            f"group = {group}\n"
             f"listen = {run / 'fpm.sock'}\n"
             "listen.mode = 0600\n"
             "pm = dynamic\n"

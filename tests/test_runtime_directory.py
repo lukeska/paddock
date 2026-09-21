@@ -12,7 +12,10 @@ existing.
 from __future__ import annotations
 
 import hashlib
+import grp
+import os
 from pathlib import Path
+import pwd
 import socket
 import subprocess
 import tempfile
@@ -184,6 +187,8 @@ class AbsentRuntimeRootTests(unittest.TestCase):
         installer._write_fpm_config("8.4", runtime)
 
         written = (self.paths.state / "fpm" / "php-8.4.conf").read_text(encoding="utf-8")
+        self.assertIn(f"user = {pwd.getpwuid(os.getuid()).pw_name}", written)
+        self.assertIn(f"group = {grp.getgrgid(os.getgid()).gr_name}", written)
         self.assertIn(f"listen = {self.runtime_root / 'php' / '8.4' / 'fpm.sock'}", written)
         self.assertIn(f"pid = {self.runtime_root / 'php' / '8.4' / 'php-fpm.pid'}", written)
         self.assertFalse(self.runtime_root.exists())
