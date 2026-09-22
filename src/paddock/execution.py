@@ -37,6 +37,30 @@ def plan_php(
 ) -> ExecutionPlan:
     cwd = directory.expanduser().resolve(strict=True)
     selection = select_php(cwd, store)
+    return _plan_php_selection(cwd, arguments, store, selection)
+
+
+def plan_default_php(
+    directory: Path, arguments: Sequence[str], store: StateStore
+) -> ExecutionPlan:
+    """Run a global development tool with Paddock's configured default PHP."""
+    cwd = directory.expanduser().resolve(strict=True)
+    version = store.read("settings")["default_php"]
+    if version is None:
+        raise ExecutionError(
+            "no default PHP runtime is configured; run paddock php install VERSION"
+        )
+    return _plan_php_selection(
+        cwd, arguments, store, Selection(version, "configured default")
+    )
+
+
+def _plan_php_selection(
+    cwd: Path,
+    arguments: Sequence[str],
+    store: StateStore,
+    selection: Selection,
+) -> ExecutionPlan:
     runtime = RuntimeRegistry(store).resolve(selection.version)
     root = runtime.path.parent.parent
     runtime_environment = (
@@ -67,6 +91,25 @@ def plan_composer(
     )
 
 
+def plan_default_composer(
+    directory: Path,
+    arguments: Sequence[str],
+    store: StateStore,
+) -> ExecutionPlan:
+    composer = store.paths.data / "composer" / "composer.phar"
+    if not composer.is_file():
+        raise ExecutionError(f"Composer is not installed: {composer}")
+    composer = composer.resolve()
+    php = plan_default_php(directory, (), store)
+    return ExecutionPlan(
+        php.executable,
+        (*php.arguments[:2], str(composer), *arguments),
+        php.cwd,
+        php.selection,
+        php.environment,
+    )
+
+
 def plan_node(
     directory: Path,
     command: str,
@@ -82,3 +125,28 @@ def plan_node(
         )
     environment = (("PATH", f"{runtime.path.parent}:{os.environ.get('PATH', '')}"),)
     return ExecutionPlan(binary, tuple(arguments), directory.resolve(strict=True), selection, environment)
+
+
+def plan_default_node(
+    directory: Path,
+    command: str,
+    arguments: Sequence[str],
+    store: StateStore,
+) -> ExecutionPlan:
+    version = store.read("settings").get("default_node")
+    if version is None:
+        raise ExecutionError(
+            "no default Node.js runtime is configured; run paddock node install VERSION"
+        )
+    runtime = NodeRegistry(store).resolve(version)
+    binary = runtime.path if command == "node" else runtime.path.parent / command
+    if not binary.is_file():
+        raise ExecutionError(f"{command} is not installed with Node {version}")
+    environment = (("PATH", f"{runtime.path.parent}:{os.environ.get('PATH', '')}"),)
+    return ExecutionPlan(
+        binary,
+        tuple(arguments),
+        directory.expanduser().resolve(strict=True),
+        Selection(version, "configured default"),
+        environment,
+    )

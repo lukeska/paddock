@@ -68,6 +68,19 @@ class PurgeTests(unittest.TestCase):
             runner.calls,
         )
 
+    def test_purge_reports_a_laravel_installer_owned_by_paddock(self) -> None:
+        settings = self.paths.config / "settings.json"
+        settings.write_text(json.dumps({
+            "schema_version": 1,
+            "default_php": "8.5",
+            "laravel_installer_managed": True,
+        }), encoding="utf-8")
+        plan = PurgePlan.discover(self.paths)
+        self.assertTrue(plan.remove_laravel_installer)
+        self.assertIn(
+            "remove globally installed Laravel Installer", plan.preview(False)
+        )
+
     def test_refuses_a_root_not_named_paddock(self) -> None:
         unsafe = Paths(Path("/tmp/config"), self.paths.data, self.paths.state,
                        self.paths.cache, self.paths.runtime, self.paths.home)

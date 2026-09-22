@@ -6,7 +6,14 @@ import shutil
 import sys
 
 from .atomic import atomic_write
-from .execution import plan_composer, plan_node, plan_php
+from .execution import (
+    plan_composer,
+    plan_default_composer,
+    plan_default_node,
+    plan_default_php,
+    plan_node,
+    plan_php,
+)
 from .paths import Paths
 from .projects import ProjectError, select_node, select_php
 from .state import StateError, StateStore
@@ -62,13 +69,31 @@ def run_shim(command: str, arguments: list[str] | None = None) -> None:
             _fallback(command, forwarded)
             return
         raise
-    if selection.source == "configured default":
+    laravel_child = os.environ.get("PADDOCK_LARAVEL") == "1"
+    composer_global = command == "composer" and forwarded[:1] == ["global"]
+    if selection.source == "configured default" and not (
+        laravel_child or composer_global
+    ):
         _fallback(command, forwarded)
         return
-    if command == "php": plan = plan_php(Path.cwd(), forwarded, store)
+    if command == "php" and laravel_child:
+        plan = plan_default_php(Path.cwd(), forwarded, store)
+    elif command == "php": plan = plan_php(Path.cwd(), forwarded, store)
+    elif command == "composer" and (laravel_child or composer_global):
+        plan = plan_default_composer(Path.cwd(), forwarded, store)
     elif command == "composer": plan = plan_composer(Path.cwd(), forwarded, store)
+    elif laravel_child:
+        plan = plan_default_node(Path.cwd(), command, forwarded, store)
     else: plan = plan_node(Path.cwd(), command, forwarded, store)
     plan.execute()
+
+
+def run_laravel(arguments: list[str] | None = None) -> None:
+    from .laravel_installer import plan_laravel
+
+    forwarded = sys.argv[1:] if arguments is None else arguments
+    store = StateStore(Paths.from_environment())
+    plan_laravel(Path.cwd(), forwarded, store).execute()
 
 
 def _fallback(command: str, arguments: list[str]) -> None:

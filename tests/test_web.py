@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
@@ -86,6 +87,33 @@ class ProjectionInvariantTests(unittest.TestCase):
         for line in self.whole(secured=2, plain=2).splitlines():
             if line.strip().startswith("listen "):
                 self.assertIn("127.0.0.1:", line, line)
+
+    def test_validation_uses_high_ports_without_changing_candidate(self) -> None:
+        observed: dict[str, object] = {}
+
+        def inspect(command, **kwargs):
+            configuration = Path(command[command.index("-c") + 1])
+            prefix = Path(command[command.index("-p") + 1])
+            observed["configuration"] = configuration.read_text(encoding="utf-8")
+            observed["sites"] = "\n".join(
+                path.read_text(encoding="utf-8")
+                for path in sorted((prefix / "sites").glob("*.conf"))
+            )
+            observed["prefix"] = prefix
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        projector = WebProjector(self.paths, inspect)
+        candidate = projector.render({})
+        projector.validate(candidate)
+
+        tested = str(observed["configuration"]) + str(observed["sites"])
+        self.assertNotIn("listen 127.0.0.1:80 ", tested)
+        self.assertNotIn("listen 127.0.0.1:443 ", tested)
+        self.assertIn(
+            "listen 127.0.0.1:80 default_server;",
+            (candidate.directory / "sites/000-default.conf").read_text(encoding="utf-8"),
+        )
+        self.assertFalse(Path(observed["prefix"]).exists())
 
 
 if __name__ == "__main__":

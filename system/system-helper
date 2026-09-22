@@ -291,7 +291,11 @@ def install(user: str, data_value: str, state_value: str) -> None:
     run(["nmcli", "connection", "add", "type", "dummy", "ifname", "paddock0", "con-name", "paddock-dns", "ipv4.method", "manual", "ipv4.addresses", "192.0.2.10/32", "ipv4.dns", "127.0.0.1", "ipv4.dns-search", "~test", "ipv4.never-default", "yes", "ipv6.method", "disabled", "connection.autoconnect", "yes"])
     nss = home / ".pki/nssdb"
     nss.mkdir(parents=True, exist_ok=True)
-    shutil.chown(nss.parent, user=user)
+    # This helper runs as root. On a fresh desktop neither directory exists,
+    # so mkdir would otherwise leave nssdb root-owned and certutil (correctly
+    # run as the desktop user) reports SEC_ERROR_BAD_DATABASE.
+    shutil.chown(nss.parent, user=user, group=account.pw_gid)
+    shutil.chown(nss, user=user, group=account.pw_gid)
     if not (nss / "cert9.db").exists():
         run(["certutil", "-N", "--empty-password", "-d", f"sql:{nss}"], user=user)
     run(["trust", "anchor", str(SYSTEM_CA)])

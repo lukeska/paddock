@@ -1,5 +1,5 @@
 pkgname=paddock
-pkgver=0.1.4
+pkgver=0.1.5
 pkgrel=1
 pkgdesc='Local Laravel development environment for Omarchy'
 arch=('x86_64' 'aarch64')
@@ -10,7 +10,7 @@ depends=('python' 'python-yaml' 'nginx' 'dnsmasq' 'mkcert'
 makedepends=('go')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
-sha256sums=('3b4d3625ec723e6e97020d31a3f416275429a6aa11b9ddf1305c3e4667e1926e')
+sha256sums=('908babf07b0c5fc4e08f1f4e6dac0e40faad44cd3ec9353d9f7b4af0894847a2')
 
 prepare() {
   cd "$srcdir/$pkgname-$pkgver"
@@ -41,6 +41,7 @@ package() {
   install -Dm755 paddock-tui "$pkgdir/usr/bin/paddock-tui"
   install -Dm755 packaging/arch/php "$pkgdir/usr/lib/paddock/shims/php"
   install -Dm755 packaging/arch/composer "$pkgdir/usr/lib/paddock/shims/composer"
+  install -Dm755 packaging/arch/laravel "$pkgdir/usr/lib/paddock/shims/laravel"
   install -Dm755 packaging/arch/node "$pkgdir/usr/lib/paddock/shims/node"
   install -Dm755 packaging/arch/npm "$pkgdir/usr/lib/paddock/shims/npm"
   install -Dm755 packaging/arch/npx "$pkgdir/usr/lib/paddock/shims/npx"

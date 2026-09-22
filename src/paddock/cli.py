@@ -9,6 +9,7 @@ import sys
 
 from . import __version__
 from .execution import plan_composer, plan_php
+from .laravel_installer import plan_laravel
 from . import siteconfig
 from .atomic import atomic_write
 from .diagnostics import doctor, service_status
@@ -67,6 +68,7 @@ OVERVIEW: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("php use VERSION", "Select the PHP version for this project"),
         ("php -- ARGS", "Run PHP with the version selected here"),
         ("composer -- ARGS", "Run Composer with the version selected here"),
+        ("laravel -- ARGS", "Run the global Laravel Installer"),
         ("node list", "List installed Node.js runtimes"),
         ("node install VERSION", "Install a checksum-pinned Node.js runtime"),
         ("node use VERSION", "Select Node.js for this project"),
@@ -188,6 +190,12 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
         epilog="`--` is required: paddock composer -- install",
     )
     composer.add_argument("arguments", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
+    laravel = command(
+        "laravel",
+        "Run the global Laravel Installer with Paddock's default PHP.",
+        epilog="`--` is optional: paddock laravel new my-app",
+    )
+    laravel.add_argument("arguments", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
     node = command("node", "Manage or run project-selected Node.js.")
     node.add_argument("arguments", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
     link = command(
@@ -441,6 +449,8 @@ def run(argv: list[str] | None = None) -> int:
         plan_node(Path.cwd(), "node", forwarded, store).execute()
     if arguments.command == "composer":
         plan_composer(Path.cwd(), forwarded, store).execute()
+    if arguments.command == "laravel":
+        plan_laravel(Path.cwd(), forwarded, store).execute()
     manager = SiteManager(store, WebProjector(store.paths))
     if arguments.command == "worker":
         records = store.read("sites")["sites"]
@@ -659,6 +669,7 @@ def run(argv: list[str] | None = None) -> int:
             integration.install()
             installed_php = integration.install_initial_php()
             installed_composer = integration.install_composer()
+            installed_laravel = integration.install_laravel_installer()
             installed_node = integration.install_initial_node()
             shell_changed = integration.install_shell_integration()
             print("Paddock system integration installed")
@@ -666,14 +677,18 @@ def run(argv: list[str] | None = None) -> int:
                 print(f"Installed PHP {installed_php} as the default runtime")
             if installed_composer is not None:
                 print(f"Installed Composer {installed_composer}")
+            if installed_laravel is not None:
+                print(f"Installed Laravel Installer {installed_laravel}")
             if installed_node is not None:
                 print(f"Installed Node {installed_node} as the default runtime")
             if shell_changed:
                 print(
-                    "Enabled project-aware php, composer, node, npm, and npx commands; "
+                    "Enabled project-aware php, composer, laravel, node, npm, and npx commands; "
                     "open a new terminal"
                 )
         else:
+            if purge is not None and purge.remove_laravel_installer:
+                integration.remove_managed_laravel_installer()
             integration.uninstall()
             if purge is None:
                 print("Paddock system integration removed; user data was preserved")

@@ -195,14 +195,24 @@ class ParkingManager:
             # runs on a filesystem event, so resolution must not raise for a
             # folder that is mid-clone: `document_root` always answers,
             # falling back to the driver's last candidate.
-            if old is not None and old.get("type"):
-                driver = drivers.resolve(old["type"])
-                relative = drivers.document_root(
-                    site.root, driver, old.get("document_root")
-                )
-            else:
-                driver = drivers.detect(site.root)
-                relative = drivers.document_root(site.root, driver)
+            detected = drivers.detect(site.root)
+            old_type = old.get("type") if old is not None else None
+            # A filesystem watcher commonly sees `laravel new` immediately
+            # after mkdir, before Composer has written artisan/composer.json.
+            # That provisional static classification must be allowed to mature
+            # on the next event. Once a framework was detected, preserve it
+            # through transient mid-update states where marker files disappear.
+            driver = (
+                drivers.resolve(old_type)
+                if old_type and old_type != "static"
+                else detected
+            )
+            previous_root = (
+                old.get("document_root")
+                if old is not None and old_type == driver.name
+                else None
+            )
+            relative = drivers.document_root(site.root, driver, previous_root)
             parked[site.name] = {
                 "name": site.name,
                 "root": str(site.root),

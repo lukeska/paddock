@@ -35,6 +35,7 @@ required=(
   /usr/lib/paddock/wait-for-socket
   /usr/lib/paddock/shims/php
   /usr/lib/paddock/shims/composer
+  /usr/lib/paddock/shims/laravel
   /usr/lib/paddock/shims/node
   /usr/lib/paddock/shims/npm
   /usr/lib/paddock/shims/npx
@@ -93,6 +94,7 @@ bash -n \
   /usr/lib/paddock/php-fpm-launcher \
   /usr/lib/paddock/check-ports /usr/lib/paddock/wait-for-socket \
   /usr/lib/paddock/shims/php /usr/lib/paddock/shims/composer \
+  /usr/lib/paddock/shims/laravel \
   /usr/lib/paddock/shims/node /usr/lib/paddock/shims/npm \
   /usr/lib/paddock/shims/npx
 

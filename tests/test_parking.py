@@ -196,6 +196,23 @@ class ParkingTests(unittest.TestCase):
         self.assertEqual(("shop",), tuple(item.name for item in result.sites))
         self.assertIn("server_name shop.test;", promoted(self.projector))
 
+    def test_a_mid_creation_static_site_matures_into_laravel(self) -> None:
+        projects = self.home / "Paddock"
+        site = projects / "new-app"
+        site.mkdir(parents=True)
+        self.manager.add(projects)
+        self.store.update("settings", lambda value: {**value, "default_php": "8.5"})
+
+        self.manager.reconcile(self.projector, reload=False)
+        self.assertEqual("static", self.store.read("sites")["sites"]["new-app"]["type"])
+
+        (site / "public").mkdir()
+        (site / "artisan").write_text("#!/usr/bin/env php\n", encoding="utf-8")
+        self.manager.reconcile(self.projector, reload=False)
+        record = self.store.read("sites")["sites"]["new-app"]
+        self.assertEqual("laravel", record["type"])
+        self.assertEqual("public", record["document_root"])
+
     def test_reconcile_preserves_parked_overrides_and_prunes_removed_folders(self) -> None:
         projects = self.home / "Paddock"
         site = projects / "shop"
