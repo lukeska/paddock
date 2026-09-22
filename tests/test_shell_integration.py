@@ -59,6 +59,25 @@ class ShimDispatchTests(unittest.TestCase):
             run_shim("php", ["-v"])
         plan.execute.assert_called_once_with()
 
+    def test_composer_global_uses_paddock_default_outside_projects(self) -> None:
+        selection = type("Selection", (), {"source": "configured default"})()
+        plan = unittest.mock.Mock()
+        with patch("paddock.shell.select_php", return_value=selection), patch(
+            "paddock.shell.plan_default_composer", return_value=plan
+        ), patch("paddock.shell._fallback") as fallback:
+            run_shim("composer", ["global", "update", "laravel/installer"])
+        plan.execute.assert_called_once_with()
+        fallback.assert_not_called()
+
+    def test_laravel_child_uses_default_node_even_when_project_requests_another(self) -> None:
+        selection = type("Selection", (), {"source": "package.json engines.node"})()
+        plan = unittest.mock.Mock()
+        with patch.dict(os.environ, {"PADDOCK_LARAVEL": "1"}), patch(
+            "paddock.shell.select_node", return_value=selection
+        ), patch("paddock.shell.plan_default_node", return_value=plan):
+            run_shim("npm", ["install"])
+        plan.execute.assert_called_once_with()
+
     def test_a_broken_project_selection_is_not_hidden_by_system_php(self) -> None:
         from paddock.projects import ProjectError
 

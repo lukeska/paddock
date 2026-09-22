@@ -23,6 +23,7 @@ class PurgePlan:
     units: tuple[Path, ...]
     containers: tuple[str, ...]
     volumes: tuple[str, ...]
+    remove_laravel_installer: bool
 
     @classmethod
     def discover(cls, paths: Paths) -> "PurgePlan":
@@ -52,7 +53,14 @@ class PurgePlan:
                 containers.add(f"paddock-{instance_id}")
             if isinstance(record.get("volume"), str):
                 volumes.add(record["volume"])
-        return cls(roots, units, tuple(sorted(containers)), tuple(sorted(volumes)))
+        settings = _json(paths.config / "settings.json")
+        return cls(
+            roots,
+            units,
+            tuple(sorted(containers)),
+            tuple(sorted(volumes)),
+            settings.get("laravel_installer_managed") is True,
+        )
 
     def preview(self, delete_service_data: bool) -> tuple[str, ...]:
         lines = [*(f"delete path: {path}" for path in self.paths)]
@@ -61,6 +69,8 @@ class PurgePlan:
         if self.volumes:
             action = "delete service volume" if delete_service_data else "preserve service volume"
             lines.extend(f"{action}: {name}" for name in self.volumes)
+        if self.remove_laravel_installer:
+            lines.append("remove globally installed Laravel Installer")
         lines.append("preserve all project source directories")
         return tuple(lines)
 

@@ -13,6 +13,10 @@ from .artifacts import (
     normalized_architecture,
 )
 from .composer import install_composer
+from .laravel_installer import (
+    install_laravel_installer,
+    remove_managed_laravel_installer,
+)
 from .config_watcher import ConfigWatcher
 from .php_runtime import RuntimeInstaller
 from .parking import ParkingManager
@@ -44,7 +48,8 @@ INSTALL_CHANGES = (
     "running after logout",
     "install the latest published PHP runtime on first setup",
     "install a pinned, checksum-verified Composer release",
-    "enable project-aware php and composer commands in new terminals",
+    "install Laravel Installer globally when it is not already present",
+    "enable project-aware php, composer, and laravel commands in new terminals",
     "install the latest supported Node.js LTS runtime on first setup",
     "automatically validate and apply saved nginx configuration fragments",
 )
@@ -155,6 +160,12 @@ class Integration:
         if catalog is None:
             raise IntegrationError("no Composer artifact catalog is available")
         return install_composer(self.store.paths.data, catalog)
+
+    def install_laravel_installer(self) -> str | None:
+        return install_laravel_installer(self.store, self.runner)
+
+    def remove_managed_laravel_installer(self) -> bool:
+        return remove_managed_laravel_installer(self.store, self.runner)
 
     def install_initial_node(self) -> str | None:
         settings = self.store.read("settings")

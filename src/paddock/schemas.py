@@ -30,6 +30,7 @@ def default_settings() -> dict[str, Any]:
         "initial_php_setup_complete": False,
         "default_node": None,
         "initial_node_setup_complete": False,
+        "laravel_installer_managed": False,
     }
 
 
@@ -82,6 +83,7 @@ def validate_settings(raw: Any) -> dict[str, Any]:
         "schema_version", "default_php", "service_labels",
         "initial_php_setup_complete",
         "default_node", "initial_node_setup_complete",
+        "laravel_installer_managed",
     }
     missing = {"schema_version", "default_php"} - set(value)
     if missing:
@@ -98,10 +100,13 @@ def validate_settings(raw: Any) -> dict[str, Any]:
     if default_node is not None and (not isinstance(default_node, str) or not default_node.isdigit()):
         raise SchemaError("settings.default_node must be null or a Node major version")
     initial_node_setup_complete = value.get("initial_node_setup_complete", False)
+    laravel_installer_managed = value.get("laravel_installer_managed", False)
     if not isinstance(initial_node_setup_complete, bool):
         raise SchemaError("settings.initial_node_setup_complete must be a boolean")
     if not isinstance(initial_php_setup_complete, bool):
         raise SchemaError("settings.initial_php_setup_complete must be a boolean")
+    if not isinstance(laravel_installer_managed, bool):
+        raise SchemaError("settings.laravel_installer_managed must be a boolean")
     for name, label in labels.items():
         if not isinstance(name, str) or not name:
             raise SchemaError("settings.service_labels keys must be non-empty strings")
@@ -117,6 +122,7 @@ def validate_settings(raw: Any) -> dict[str, Any]:
         "initial_php_setup_complete": initial_php_setup_complete,
         "default_node": default_node,
         "initial_node_setup_complete": initial_node_setup_complete,
+        "laravel_installer_managed": laravel_installer_managed,
     }
 
 

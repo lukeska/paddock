@@ -22,6 +22,13 @@ def load_helper():
 
 
 class PackageLifecycleTests(unittest.TestCase):
+    def test_fresh_nss_database_is_owned_by_desktop_user(self):
+        source = (Path(__file__).parents[1] / "system/system-helper").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("shutil.chown(nss.parent, user=user, group=account.pw_gid)", source)
+        self.assertIn("shutil.chown(nss, user=user, group=account.pw_gid)", source)
+
     def test_target_wants_every_supported_php_minor(self):
         helper = load_helper()
         target = helper.target_unit()

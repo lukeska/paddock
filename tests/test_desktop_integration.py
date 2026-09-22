@@ -54,6 +54,7 @@ class DesktopIntegrationTests(unittest.TestCase):
         self.assertIn('shims/npx', package)
         self.assertIn('node-artifacts.json', package)
         self.assertIn('shims/composer', package)
+        self.assertIn('shims/laravel', package)
         self.assertNotIn("paddock-ui", package)
         for dependency in ("python-gobject", "gtk4", "libadwaita"):
             self.assertNotIn(dependency, package)

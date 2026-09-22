@@ -104,6 +104,7 @@ The site name defaults to the linked site containing the current directory.
 | `paddock php catalog PATH` | Install a local PHP artifact catalog as the user-level catalog override. |
 | `paddock php -- ARGS` | Run PHP with the version selected for the current directory. Example: `paddock php -- -v`. |
 | `paddock composer -- ARGS` | Run Composer with the selected PHP. Example: `paddock composer -- install`. |
+| `paddock laravel ARGS` | Run the globally installed Laravel Installer with Paddock's default PHP. Example: `paddock laravel new my-app`. |
 
 PHP selection uses the nearest `.paddock.json` while walking up from the
 current directory, then falls back to the containing linked site and finally
@@ -120,7 +121,10 @@ the configured default runtime.
 | `paddock node -- ARGS` | Run Node.js with the version selected for the current directory. Example: `paddock node -- --version`. |
 
 After `paddock setup`, new terminal sessions also expose project-aware `php`,
-`composer`, `node`, `npm`, and `npx` shims directly.
+`composer`, `laravel`, `node`, `npm`, and `npx` shims directly. Setup installs
+Laravel Installer into Composer's normal global environment only when it is
+not already present, so its built-in updater and
+`composer global update laravel/installer` continue to work.
 
 ### Supporting services
 
@@ -182,9 +186,9 @@ controls are available for detected Laravel projects.
 
 | Command | Description |
 | --- | --- |
-| `paddock setup [--yes]` | Install Paddock's systemd, DNS, nginx, certificate, runtime, Composer, Node.js, and shell integration. `--yes` skips the confirmation prompt. |
+| `paddock setup [--yes]` | Install Paddock's systemd, DNS, nginx, certificate, runtime, Composer, Laravel Installer, Node.js, and shell integration. `--yes` skips the confirmation prompt. |
 | `paddock uninstall [--yes]` | Remove system integration while preserving projects, configuration, runtimes, logs, cache, certificates, and service data. |
-| `paddock uninstall --purge [--yes]` | Also delete Paddock-owned user configuration, runtimes, Composer, logs, cache, and the private CA. Project source directories and service volumes remain. |
+| `paddock uninstall --purge [--yes]` | Also delete Paddock-owned user configuration, runtimes, Composer, a Laravel Installer originally installed by Paddock, logs, cache, and the private CA. Project source directories and service volumes remain. |
 | `paddock uninstall --purge --delete-service-data [--yes]` | Also permanently delete the recorded supporting-service data volumes. |
 
 `setup` and the system-integration portion of `uninstall` require privilege

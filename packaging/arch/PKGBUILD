@@ -41,6 +41,7 @@ package() {
   install -Dm755 paddock-tui "$pkgdir/usr/bin/paddock-tui"
   install -Dm755 packaging/arch/php "$pkgdir/usr/lib/paddock/shims/php"
   install -Dm755 packaging/arch/composer "$pkgdir/usr/lib/paddock/shims/composer"
+  install -Dm755 packaging/arch/laravel "$pkgdir/usr/lib/paddock/shims/laravel"
   install -Dm755 packaging/arch/node "$pkgdir/usr/lib/paddock/shims/node"
   install -Dm755 packaging/arch/npm "$pkgdir/usr/lib/paddock/shims/npm"
   install -Dm755 packaging/arch/npx "$pkgdir/usr/lib/paddock/shims/npx"

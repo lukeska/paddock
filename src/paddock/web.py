@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 from typing import Any, Callable, Mapping
 
 from . import drivers, siteconfig
@@ -51,6 +52,8 @@ FASTCGI_PARAMS = "/etc/nginx/fastcgi_params"
 GENERATIONS_KEPT = 3
 
 ADDRESS = "127.0.0.1"
+VALIDATION_HTTP_PORT = 18080
+VALIDATION_HTTPS_PORT = 18443
 
 
 @dataclass(frozen=True)
@@ -440,10 +443,43 @@ class WebProjector:
                 destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 destination.write_text(content, encoding="utf-8")
                 destination.chmod(0o600)
-            self._test(directory / "nginx.conf", directory)
+            self._test_unprivileged(directory)
         except Exception:
             shutil.rmtree(directory, ignore_errors=True)
             raise
+
+    def _test_unprivileged(self, source: Path) -> None:
+        """Validate an exact tree without requiring permission for ports 80/443.
+
+        Arch's nginx opens listening sockets during ``nginx -t``. Setup runs as
+        the desktop user before the system unit (and its NET_BIND_SERVICE
+        capability) exists, so testing the production listeners directly makes
+        every clean install fail. A short-lived copy keeps every directive the
+        same except the two loopback ports. The candidate itself is never
+        rewritten; the systemd unit validates the exact promoted tree again
+        before starting or reloading it.
+        """
+        http_port, https_port = VALIDATION_HTTP_PORT, VALIDATION_HTTPS_PORT
+        validation = Path(tempfile.mkdtemp(prefix=".validate-", dir=self.root))
+        try:
+            for source_file in source.rglob("*"):
+                relative = source_file.relative_to(source)
+                destination = validation / relative
+                if source_file.is_dir():
+                    destination.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                content = source_file.read_text(encoding="utf-8")
+                content = content.replace(
+                    f"listen {ADDRESS}:80", f"listen {ADDRESS}:{http_port}"
+                ).replace(
+                    f"listen {ADDRESS}:443", f"listen {ADDRESS}:{https_port}"
+                )
+                destination.write_text(content, encoding="utf-8")
+                destination.chmod(0o600)
+            self._test(validation / "nginx.conf", validation)
+        finally:
+            shutil.rmtree(validation, ignore_errors=True)
 
     def _test(self, configuration: Path, prefix: Path) -> None:
         result = self.runner(
@@ -509,7 +545,7 @@ class WebProjector:
         """Validate whatever is currently promoted, for `paddock doctor`."""
         if not self.path.is_file():
             raise WebError(f"not generated: {self.path}")
-        self._test(self.path, self.current)
+        self._test_unprivileged(self.current)
 
     # ------------------------------------------------------------------ layout
 

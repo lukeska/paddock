@@ -107,6 +107,9 @@ class StateTests(unittest.TestCase):
         self.assertFalse(
             self.store.read("settings")["initial_php_setup_complete"]
         )
+        self.assertFalse(
+            self.store.read("settings")["laravel_installer_managed"]
+        )
 
 
 if __name__ == "__main__":
