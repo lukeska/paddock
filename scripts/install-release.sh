@@ -52,6 +52,6 @@ curl --fail --silent --show-error --location --proto '=https' \
 
 (cd "$work_dir" && sha256sum --check package.sha256)
 
-sudo pacman -U --needed -- "$work_dir/$package_name"
-paddock setup --yes
-paddock doctor
+sudo pacman -U --needed --noconfirm -- "$work_dir/$package_name" </dev/null
+paddock setup --yes </dev/null
+paddock doctor </dev/null

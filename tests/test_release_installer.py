@@ -46,6 +46,7 @@ cp "$TEST_RELEASE_DIR/${url##*/}" "$output"
             "sudo",
             """#!/usr/bin/env bash
 printf 'sudo %s\\n' "$*" >> "$TEST_CALLS"
+cat >/dev/null
 """,
         )
         self.executable("pacman", "#!/usr/bin/env bash\nexit 0\n")
@@ -53,6 +54,7 @@ printf 'sudo %s\\n' "$*" >> "$TEST_CALLS"
             "paddock",
             """#!/usr/bin/env bash
 printf 'paddock %s\\n' "$*" >> "$TEST_CALLS"
+cat >/dev/null
 """,
         )
         self.executable(
@@ -81,9 +83,10 @@ printf '%s\\n' "$TEST_ARCH"
             TEST_ARCH=architecture,
         )
         return subprocess.run(
-            ["bash", str(INSTALLER)],
+            ["bash"],
             cwd=self.root,
             env=environment,
+            input=INSTALLER.read_text(encoding="utf-8"),
             text=True,
             capture_output=True,
             check=False,
@@ -95,7 +98,7 @@ printf '%s\\n' "$TEST_ARCH"
         self.assertIn(f"{PACKAGE}: OK", result.stdout)
         calls = self.calls.read_text(encoding="utf-8").splitlines()
         self.assertEqual(3, len(calls))
-        self.assertTrue(calls[0].startswith("sudo pacman -U --needed -- /"))
+        self.assertTrue(calls[0].startswith("sudo pacman -U --needed --noconfirm -- /"))
         self.assertTrue(calls[0].endswith(f"/{PACKAGE}"))
         self.assertEqual(["paddock setup --yes", "paddock doctor"], calls[1:])
 

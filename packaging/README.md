@@ -1,7 +1,7 @@
 # Packaging and development release status
 
-The release recipe is `paddock 0.1.6-1`; local development builds deliberately
-use the stable revision `paddock 0.1.6-25`.
+The release recipe is `paddock 0.1.7-1`; local development builds deliberately
+use the stable revision `paddock 0.1.7-25`.
 
 ## What the package owns
 
