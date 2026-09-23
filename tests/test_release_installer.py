@@ -48,6 +48,7 @@ cp "$TEST_RELEASE_DIR/${url##*/}" "$output"
 printf 'sudo %s\\n' "$*" >> "$TEST_CALLS"
 """,
         )
+        self.executable("pacman", "#!/usr/bin/env bash\nexit 0\n")
         self.executable(
             "paddock",
             """#!/usr/bin/env bash
