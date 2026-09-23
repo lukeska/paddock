@@ -88,6 +88,8 @@ class ApplicationReleaseTests(unittest.TestCase):
         self.assertIn("needs: [source, package, clean-install]", workflow)
         self.assertIn("--verify-tag", workflow)
         self.assertIn("contents: write", workflow)
+        self.assertIn("name: application-installer", workflow)
+        self.assertIn("release-assets/install.sh", workflow)
 
     @unittest.skipUnless(PKGBUILD.is_file(), "requires a repository checkout")
     def test_local_build_uses_a_temporary_revision_25_recipe(self) -> None:
