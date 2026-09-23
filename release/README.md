@@ -11,7 +11,7 @@ The workflow then:
 3. verifies that archive against the SHA-256 pinned in the release `PKGBUILD`;
 4. builds `paddock-<version>-1-x86_64.pkg.tar.zst` in a clean Arch container;
 5. installs and checks that package in a second clean Arch container; and
-6. publishes the source archive, package, `PKGBUILD`, and `SHA256SUMS` as a
+6. publishes the source archive, package, installer, `PKGBUILD`, and `SHA256SUMS` as a
    GitHub Release; and
 7. leaves signing to the offline-key promotion step in
    [`PROMOTION.md`](PROMOTION.md), which signs those exact workflow artifacts.
@@ -24,7 +24,7 @@ Local development builds are separate:
 
 ```bash
 ./packaging/arch/build-local.sh
-sudo pacman -U packaging/arch/paddock-0.1.5-25-x86_64.pkg.tar.zst
+sudo pacman -U packaging/arch/paddock-0.1.6-25-x86_64.pkg.tar.zst
 ```
 
 The local builder creates a temporary recipe at revision 25 and never rewrites

@@ -68,7 +68,7 @@ jobs:
           bash -n release/sign-application-release.sh
           bash -n tests/acceptance/run.sh
           bash -n tests/package/clean-install.sh
-          bash -n scripts/plugin-dev-install.sh scripts/install.sh scripts/uninstall.sh
+          bash -n scripts/plugin-dev-install.sh scripts/install.sh scripts/install-release.sh scripts/uninstall.sh
           bash -n release/php/build.sh
 
   arch-package:

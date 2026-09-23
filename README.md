@@ -7,6 +7,16 @@ Paddock is a native local Laravel development environment for
 domains, HTTPS, nginx routing, and project-specific PHP selection through one
 CLI, with optional supporting services and an Omarchy status widget.
 
+Install the latest release on Omarchy as your desktop user:
+
+```bash
+curl -fsSL https://github.com/lukeska/paddock/releases/latest/download/install.sh | bash
+```
+
+The installer checks the package against the release checksum, installs it with
+Pacman, runs `paddock setup`, and checks the resulting installation. It asks for
+your sudo password when Pacman or setup needs it.
+
 ```bash
 paddock help
 paddock link
