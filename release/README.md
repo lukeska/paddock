@@ -6,7 +6,7 @@ recipe all name the same version before it can publish anything.
 
 The workflow then:
 
-1. runs the complete Python, lab-orchestration, and Go TUI test suites;
+1. runs the complete Python and Go TUI test suites;
 2. creates the deterministic `paddock-<version>.tar.gz` source archive;
 3. verifies that archive against the SHA-256 pinned in the release `PKGBUILD`;
 4. builds `paddock-<version>-1-x86_64.pkg.tar.zst` in a clean Arch container;
@@ -24,7 +24,7 @@ Local development builds are separate:
 
 ```bash
 ./packaging/arch/build-local.sh
-sudo pacman -U packaging/arch/paddock-0.1.7-25-x86_64.pkg.tar.zst
+sudo pacman -U packaging/arch/paddock-0.1.8-25-x86_64.pkg.tar.zst
 ```
 
 The local builder creates a temporary recipe at revision 25 and never rewrites

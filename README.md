@@ -228,7 +228,13 @@ provisions the Go version declared in `go.mod` and runs both suites explicitly.
 
 For hands-on compatibility checks across Laravel 9/13, PHP 8.0–8.5, Node
 22/24, workers, and every supporting service, use the
-[in-repository compatibility lab](tests/lab/README.md).
+[Paddock projects lab](https://github.com/lukeska/paddock-projects-lab):
+
+```bash
+git clone https://github.com/lukeska/paddock-projects-lab.git
+cd paddock-projects-lab
+./paddock-lab install
+```
 
 Build the local Arch package:
 
