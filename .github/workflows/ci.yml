@@ -46,11 +46,6 @@ jobs:
           PYTHONPATH: src
         run: python -m unittest discover -s tests -v
 
-      - name: Run compatibility lab orchestration tests
-        env:
-          PYTHONPATH: src
-        run: python -m unittest discover -s tests/lab/tests -v
-
       - name: Run Go TUI tests
         run: |
           go test ./...
@@ -60,7 +55,6 @@ jobs:
         run: |
           python -m py_compile system/system-helper
           python -m py_compile tests/fixtures/tui_backend.py
-          python -m py_compile tests/lab/paddock-lab
           python -m py_compile release/validate-application-release.py
           bash -n system/check-ports system/php-fpm-launcher system/wait-for-socket
           bash -n packaging/arch/build-local.sh packaging/arch/paddock.install

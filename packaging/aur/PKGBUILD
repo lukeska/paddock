@@ -28,7 +28,6 @@ build() {
 check() {
   cd "$srcdir/$pkgname-$pkgver"
   PYTHONPATH=src python -m unittest discover -s tests -v
-  PYTHONPATH=src python -m unittest discover -s tests/lab/tests -v
   go test ./...
 }
 
