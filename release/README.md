@@ -24,7 +24,7 @@ Local development builds are separate:
 
 ```bash
 ./packaging/arch/build-local.sh
-sudo pacman -U packaging/arch/paddock-0.1.6-25-x86_64.pkg.tar.zst
+sudo pacman -U packaging/arch/paddock-0.1.7-25-x86_64.pkg.tar.zst
 ```
 
 The local builder creates a temporary recipe at revision 25 and never rewrites
