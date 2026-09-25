@@ -17,9 +17,12 @@ from paddock.state import StateStore
 class Runner:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
+        self.bus_error = False
 
     def __call__(self, command, **kwargs):
         self.calls.append(command)
+        if self.bus_error and command[:2] == ["systemctl", "--user"]:
+            return subprocess.CompletedProcess(command, 1, "", "Failed to connect to user scope bus via local transport")
         if "is-active" in command:
             return subprocess.CompletedProcess(command, 0, "inactive\n", "")
         if "is-enabled" in command:
@@ -85,6 +88,13 @@ class QueueWorkerTests(unittest.TestCase):
         (self.root / "artisan").unlink()
         with self.assertRaisesRegex(QueueWorkerError, "not a detected Laravel"):
             self.manager.configure("demo")
+
+    def test_unreachable_user_bus_has_actionable_state_and_error(self) -> None:
+        self.manager.configure("demo")
+        self.runner.bus_error = True
+        self.assertEqual("unavailable", self.manager.state("demo"))
+        with self.assertRaisesRegex(QueueWorkerError, "XDG_RUNTIME_DIR"):
+            self.manager.control("start", "demo")
 
 
 if __name__ == "__main__":

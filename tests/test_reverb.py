@@ -20,9 +20,12 @@ class Runner:
         self.calls: list[list[str]] = []
         self.active = "inactive"
         self.enabled = False
+        self.bus_error = False
 
     def __call__(self, command, **kwargs):
         self.calls.append(command)
+        if self.bus_error and command[:2] == ["systemctl", "--user"]:
+            return subprocess.CompletedProcess(command, 1, "", "Failed to connect to bus: No medium found")
         if "is-active" in command:
             return subprocess.CompletedProcess(command, 0, self.active + "\n", "")
         if "is-enabled" in command:
@@ -112,6 +115,14 @@ class ReverbTests(unittest.TestCase):
         worker = self.manager.control("start", "demo")
         self.assertIn(["systemctl", "--user", "start", worker.unit], self.runner.calls)
         self.assertEqual(("ready", "connected"), self.manager.logs("demo"))
+
+    def test_unreachable_user_bus_has_actionable_state_and_error(self) -> None:
+        self.install_reverb()
+        self.manager.configure("demo")
+        self.runner.bus_error = True
+        self.assertEqual("unavailable", self.manager.state("demo"))
+        with self.assertRaisesRegex(ReverbError, "XDG_RUNTIME_DIR"):
+            self.manager.control("start", "demo")
 
     def test_unavailable_project_is_refused(self) -> None:
         with self.assertRaisesRegex(ReverbError, "does not have laravel/reverb"):

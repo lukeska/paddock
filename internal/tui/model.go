@@ -1371,6 +1371,9 @@ func workerState(configured bool, state string) string {
 	if !configured {
 		return "Available · Start"
 	}
+	if state == "unavailable" {
+		return "User systemd unavailable"
+	}
 	if state == "active" {
 		return "Active · Stop"
 	}
@@ -2564,6 +2567,9 @@ func (m Model) workerSummary(site backend.Site) string {
 func workerLabel(name string, available bool, state string, autostart bool) string {
 	if !available {
 		return title(name) + ": n/a"
+	}
+	if state == "unavailable" {
+		return title(name) + ": user systemd unavailable"
 	}
 	boot := ""
 	if autostart {

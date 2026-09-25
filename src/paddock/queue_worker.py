@@ -10,6 +10,7 @@ from typing import Callable
 from .atomic import atomic_write, exclusive_lock
 from .runtimes import RuntimeRegistry
 from .state import StateStore
+from .user_systemd import bus_unreachable, systemctl_error
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -109,6 +110,8 @@ class QueueWorkerManager:
             ["systemctl", "--user", "is-active", worker.unit],
             text=True, capture_output=True, check=False,
         )
+        if bus_unreachable(result.stderr or ""):
+            return "unavailable"
         return (result.stdout or "").strip() or "unknown"
 
     def enabled(self, site: str) -> bool:
@@ -208,8 +211,7 @@ class QueueWorkerManager:
         )
         if result.returncode:
             raise self.error_type(
-                result.stderr.strip() or result.stdout.strip()
-                or f"cannot {action} {self.key}"
+                systemctl_error(result.stderr or "", result.stdout or "", f"cannot {action} {self.key}")
             )
 
     def _reload(self) -> None:

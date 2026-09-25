@@ -13,6 +13,15 @@ import (
 	"github.com/lukeska/paddock/internal/backend"
 )
 
+func TestUnavailableWorkerStateNamesUserSystemd(t *testing.T) {
+	if got := workerState(true, "unavailable"); got != "User systemd unavailable" {
+		t.Fatalf("worker state = %q", got)
+	}
+	if got := workerLabel("queue", true, "unavailable", false); got != "Queue: user systemd unavailable" {
+		t.Fatalf("worker label = %q", got)
+	}
+}
+
 type fakeAPI struct {
 	snapshot backend.Snapshot
 	calls    []string

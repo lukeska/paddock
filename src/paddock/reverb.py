@@ -11,6 +11,7 @@ from typing import Callable
 from .atomic import atomic_write, exclusive_lock
 from .runtimes import RuntimeRegistry
 from .state import StateStore
+from .user_systemd import bus_unreachable, systemctl_error
 from .web import WebProjector
 
 
@@ -168,6 +169,8 @@ class ReverbManager:
             ["systemctl", "--user", "is-active", worker.unit],
             text=True, capture_output=True, check=False,
         )
+        if bus_unreachable(result.stderr or ""):
+            return "unavailable"
         return (result.stdout or "").strip() or "unknown"
 
     def enabled(self, site: str) -> bool:
@@ -268,7 +271,7 @@ class ReverbManager:
         )
         if result.returncode:
             raise ReverbError(
-                result.stderr.strip() or result.stdout.strip() or f"cannot {action} Reverb"
+                systemctl_error(result.stderr or "", result.stdout or "", f"cannot {action} Reverb")
             )
 
     def _reload(self) -> None:
