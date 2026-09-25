@@ -1,8 +1,9 @@
 # Runtime catalog v1: publication contract
 
-This is the format for independently refreshed runtime metadata. It is not
-enabled in Paddock yet; Unit 2 of [the implementation plan](runtime-updates-plan.md)
-adds signature verification and fetching, and Unit 6 adds promotion tooling.
+This is the format for independently refreshed runtime metadata. Unit 2 of
+[the implementation plan](runtime-updates-plan.md) adds local signature
+verification and fetching; Unit 6 adds promotion tooling and activates the
+public distribution surface.
 
 ## Distribution
 
@@ -77,8 +78,13 @@ archive checksum.
 
 The bundled package catalogs remain bootstrap and offline fallback. A local
 catalog override is explicitly user-owned and takes precedence; remote
-refresh never overwrites it. The precise cache/state locations and fallback
-status behavior are specified in Unit 2.
+refresh never overwrites it. Verified bytes and detached signatures are
+cached under `$XDG_CACHE_HOME/paddock/runtime-catalogs/`, keyed by SHA-256.
+The highest accepted revision, digest, and check time live under
+`$XDG_STATE_HOME/paddock/runtime-catalogs/`, surviving cache deletion. A
+missing or corrupt cache produces a warning and uses the bundled catalog;
+it does not reset the accepted revision. `paddock runtimes status` reports
+the effective source and warning. Both catalogs refresh independently.
 
 ## Rotation, revocation, and recovery
 

@@ -126,9 +126,17 @@ the configured default runtime.
 | --- | --- |
 | `paddock node list` | List installed Node.js runtimes and their paths. |
 | `paddock node install VERSION` | Install a checksum-verified Node.js runtime by major version. |
+| `paddock node catalog PATH` | Install a local Node.js artifact catalog as the user-level override. |
 | `paddock node remove VERSION` | Remove an installed Node.js runtime. |
 | `paddock node use VERSION` | Select Node.js for the current project in `.paddock.json`. |
 | `paddock node -- ARGS` | Run Node.js with the version selected for the current directory. Example: `paddock node -- --version`. |
+
+`paddock runtimes status` shows the effective PHP and Node catalog sources.
+`paddock runtimes refresh` verifies and caches independently signed catalogs,
+reporting PHP and Node failures separately. The remote catalog endpoints are
+not published yet, so refresh will fail until catalog promotion is enabled;
+the bundled catalogs continue to work offline. See the
+[runtime catalog contract](docs/runtime-catalog-v1.md).
 
 After `paddock setup`, new terminal sessions also expose project-aware `php`,
 `composer`, `laravel`, `node`, `npm`, and `npx` shims directly. Setup installs

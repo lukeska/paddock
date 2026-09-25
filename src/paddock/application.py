@@ -27,11 +27,12 @@ from .artifacts import (
     artifact_manifest_paths,
     normalized_architecture,
 )
+from .catalog_store import CatalogStore, CatalogStoreError
 from .atomic import atomic_write, exclusive_lock
 from .config_watcher import ConfigWatcher
 from .parking import ParkingManager
 from .php_runtime import RuntimeInstaller
-from .node_runtime import NodeInstaller, NodeManifest, NodeRegistry
+from .node_runtime import NodeInstaller, NodeManifest, NodeRegistry, NodeRuntimeError
 from .lifecycle import Lifecycle, LifecycleError
 from . import report
 from .runtimes import RuntimeRegistry
@@ -419,10 +420,40 @@ class PaddockController:
         self.artifact_paths = artifact_paths or artifact_manifest_paths(
             store.paths.config
         )
+        self._custom_artifact_paths = artifact_paths is not None
         self.node_artifact_paths = node_artifact_paths or (
             Path("/usr/share/paddock/node-artifacts.json"),
             Path(__file__).resolve().parents[2] / "resources/node-artifacts.json",
         )
+        self._custom_node_artifact_paths = node_artifact_paths is not None
+
+    def _php_catalog(self) -> ArtifactManifest | None:
+        if not self._custom_artifact_paths:
+            try:
+                return CatalogStore(self.store.paths).effective("php").manifest
+            except CatalogStoreError:
+                return None
+        for path in self.artifact_paths:
+            if path.is_file():
+                try:
+                    return ArtifactManifest.load(path)
+                except ManifestError:
+                    continue
+        return None
+
+    def _node_catalog(self) -> NodeManifest | None:
+        if not self._custom_node_artifact_paths:
+            try:
+                return CatalogStore(self.store.paths).effective("node").manifest
+            except CatalogStoreError:
+                return None
+        for path in self.node_artifact_paths:
+            if path.is_file():
+                try:
+                    return NodeManifest.load(path)
+                except NodeRuntimeError:
+                    continue
+        return None
 
     @property
     def operation_lock(self) -> Path:
@@ -648,19 +679,13 @@ class PaddockController:
         """Combine published runtimes for this CPU with locally installed ones."""
         architecture = normalized_architecture()
         published: dict[str, str] = {}
-        for path in self.artifact_paths:
-            if not path.is_file():
-                continue
-            try:
-                manifest = ArtifactManifest.load(path)
-            except ManifestError:
-                continue
+        manifest = self._php_catalog()
+        if manifest is not None:
             for artifact in manifest.artifacts:
                 if artifact.architecture == architecture:
                     current = published.get(artifact.minor)
                     if current is None or _semantic_version(artifact.php) > _semantic_version(current):
                         published[artifact.minor] = artifact.php
-            break
 
         try:
             installed = {
@@ -686,15 +711,7 @@ class PaddockController:
     def install_php(self, minor: str) -> PhpInstallResult:
         """Install one published runtime and return a fresh presentation model."""
         try:
-            manifest = None
-            for path in self.artifact_paths:
-                if not path.is_file():
-                    continue
-                try:
-                    manifest = ArtifactManifest.load(path)
-                except ManifestError:
-                    continue
-                break
+            manifest = self._php_catalog()
             if manifest is None:
                 raise FileNotFoundError(
                     f"no PHP runtime catalog is available for {minor}"
@@ -715,15 +732,12 @@ class PaddockController:
     def node_versions_snapshot(self) -> NodeVersionsSnapshot:
         architecture = normalized_architecture()
         published: dict[str, str] = {}
-        for path in self.node_artifact_paths:
-            if not path.is_file(): continue
-            try: manifest = NodeManifest.load(path)
-            except RuntimeError: continue
+        manifest = self._node_catalog()
+        if manifest is not None:
             for artifact in manifest.artifacts:
                 if artifact.architecture == architecture:
                     current = published.get(artifact.major)
                     if current is None or _semantic_version(artifact.node) > _semantic_version(current): published[artifact.major] = artifact.node
-            break
         try: installed = {runtime.version: runtime for runtime in NodeRegistry(self.store).list()}
         except (OSError, StateError, ValueError): installed = {}
         versions = tuple(NodeVersionView(
@@ -734,9 +748,9 @@ class PaddockController:
 
     def install_node(self, major: str) -> NodeInstallResult:
         try:
-            catalog = next((path for path in self.node_artifact_paths if path.is_file()), None)
-            if catalog is None: raise FileNotFoundError(f"no Node runtime catalog is available for {major}")
-            destination = NodeInstaller(self.store).install(major, NodeManifest.load(catalog))
+            manifest = self._node_catalog()
+            if manifest is None: raise FileNotFoundError(f"no Node runtime catalog is available for {major}")
+            destination = NodeInstaller(self.store).install(major, manifest)
         except (OSError, RuntimeError, ValueError, StateError) as error:
             return NodeInstallResult(False, f"Node {major} could not be installed", str(error), self.node_versions_snapshot())
         return NodeInstallResult(True, f"Installed Node {major}", str(destination), self.node_versions_snapshot())

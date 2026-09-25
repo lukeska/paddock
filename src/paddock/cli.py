@@ -18,7 +18,8 @@ from .lifecycle import Lifecycle
 from .integration import INSTALL_CHANGES, REMOVE_CHANGES, Integration
 from .paths import Paths
 from .parking import ParkingManager
-from .artifacts import ArtifactManifest, artifact_manifest_paths
+from .artifacts import ArtifactManifest
+from .catalog_store import CatalogStore
 from .atomic import atomic_write
 from .php_runtime import RuntimeInstaller
 from .projectfile import PROJECT_FILE, ProjectFileError, Reconciler, find, load
@@ -71,8 +72,11 @@ OVERVIEW: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("laravel -- ARGS", "Run the global Laravel Installer"),
         ("node list", "List installed Node.js runtimes"),
         ("node install VERSION", "Install a checksum-pinned Node.js runtime"),
+        ("node catalog PATH", "Use a local Node.js artifact catalog"),
         ("node use VERSION", "Select Node.js for this project"),
         ("node -- ARGS", "Run Node.js with the version selected here"),
+        ("runtimes refresh", "Refresh signed PHP and Node runtime catalogs"),
+        ("runtimes status", "Show effective runtime catalog sources"),
     )),
     ("Supporting services", (
         ("services", "List configured services and their state"),
@@ -198,6 +202,8 @@ def build() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
     laravel.add_argument("arguments", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
     node = command("node", "Manage or run project-selected Node.js.")
     node.add_argument("arguments", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
+    runtimes = command("runtimes", "Refresh or inspect signed PHP and Node catalogs.")
+    runtimes.add_argument("arguments", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
     link = command(
         "link",
         "Serve the current directory at NAME.test over HTTP.",
@@ -386,6 +392,26 @@ def run(argv: list[str] | None = None) -> int:
     explicit_execution = forwarded[:1] == ["--"]
     if explicit_execution:
         forwarded = forwarded[1:]
+    if arguments.command == "runtimes":
+        catalog_store = CatalogStore(store.paths)
+        if forwarded == ["status"]:
+            for kind in ("php", "node"):
+                status = catalog_store.status(kind)
+                print(f"{kind}\t{status['source']}\trevision={status['revision'] or '-'}\tchecked={status['checked_at'] or '-'}")
+                if status["warning"]:
+                    print(f"  warning: {status['warning']}")
+            return 0
+        if forwarded == ["refresh"]:
+            failed = False
+            for kind in ("php", "node"):
+                try:
+                    result = catalog_store.refresh(kind)
+                    print(f"{kind}: accepted revision {result.revision} ({result.checked_at})")
+                except (OSError, RuntimeError, ValueError) as error:
+                    print(f"{kind}: refresh failed: {error}", file=sys.stderr)
+                    failed = True
+            return 1 if failed else 0
+        raise ValueError("Usage: paddock runtimes {refresh|status}")
     if arguments.command == "php":
         registry = RuntimeRegistry(store)
         if not explicit_execution and forwarded == ["list"]:
@@ -402,12 +428,8 @@ def run(argv: list[str] | None = None) -> int:
         if not explicit_execution and forwarded[:1] == ["install"]:
             if len(forwarded) != 2:
                 raise ValueError("Usage: paddock php install VERSION")
-            manifest_path = next(
-                (path for path in artifact_manifest_paths(store.paths.config) if path.is_file()),
-                artifact_manifest_paths(store.paths.config)[0],
-            )
             destination = RuntimeInstaller(store).install(
-                forwarded[1], ArtifactManifest.load(manifest_path)
+                forwarded[1], CatalogStore(store.paths).effective("php").manifest
             )
             print(f"Installed PHP {forwarded[1]} at {destination}")
             return 0
@@ -438,10 +460,15 @@ def run(argv: list[str] | None = None) -> int:
             print(f"Node {forwarded[1]} selected in {path.parent}"); return 0
         if not explicit_execution and forwarded[:1] == ["install"]:
             if len(forwarded) != 2: raise ValueError("Usage: paddock node install VERSION")
-            catalog = Path("/usr/share/paddock/node-artifacts.json")
-            if not catalog.is_file(): catalog = Path(__file__).resolve().parents[2] / "resources/node-artifacts.json"
-            destination = NodeInstaller(store).install(forwarded[1], NodeManifest.load(catalog))
+            destination = NodeInstaller(store).install(forwarded[1], CatalogStore(store.paths).effective("node").manifest)
             print(f"Installed Node {forwarded[1]} at {destination}"); return 0
+        if not explicit_execution and forwarded[:1] == ["catalog"]:
+            if len(forwarded) != 2: raise ValueError("Usage: paddock node catalog PATH")
+            source = Path(forwarded[1]).expanduser().resolve()
+            NodeManifest.load(source)
+            destination = store.paths.config / "node-artifacts.json"
+            atomic_write(destination, source.read_bytes())
+            print(f"Using Node artifact catalog {destination}"); return 0
         if not explicit_execution and forwarded[:1] == ["remove"]:
             if len(forwarded) != 2: raise ValueError("Usage: paddock node remove VERSION")
             NodeInstaller(store).remove(forwarded[1]); print(f"Removed Node {forwarded[1]}"); return 0

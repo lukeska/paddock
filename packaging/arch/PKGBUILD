@@ -6,11 +6,11 @@ arch=('x86_64' 'aarch64')
 url='https://github.com/lukeska/paddock'
 license=('MIT')
 depends=('python' 'python-yaml' 'nginx' 'dnsmasq' 'mkcert'
-         'nss' 'p11-kit' 'networkmanager' 'polkit' 'podman' 'curl' 'wl-clipboard')
+         'nss' 'p11-kit' 'networkmanager' 'polkit' 'podman' 'curl' 'wl-clipboard' 'gnupg')
 makedepends=('go')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
-sha256sums=('76ee1f83ec0cc6d3d88fa0d8015285774681a1a1a1883c5b22ffd63cb661cd7f')
+sha256sums=('3735014ac83469366b7bf40ac5ff070376759fbaff22f8dec3c8cb04c02e5e4a')
 
 prepare() {
   cd "$srcdir/$pkgname-$pkgver"
@@ -59,6 +59,7 @@ package() {
   install -Dm644 resources/artifacts.json "$pkgdir/usr/share/paddock/artifacts.json"
   install -Dm644 resources/composer.json "$pkgdir/usr/share/paddock/composer.json"
   install -Dm644 resources/node-artifacts.json "$pkgdir/usr/share/paddock/node-artifacts.json"
+  install -Dm644 docs/paddock-release-public.asc "$pkgdir/usr/share/paddock/release-public.asc"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 docs/state-schema-v1.md "$pkgdir/usr/share/doc/$pkgname/state-schema-v1.md"
   install -Dm644 docs/project-file.md "$pkgdir/usr/share/doc/$pkgname/project-file.md"

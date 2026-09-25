@@ -12,6 +12,7 @@ from .artifacts import (
     artifact_manifest_paths,
     normalized_architecture,
 )
+from .catalog_store import CatalogStore, CatalogStoreError
 from .composer import install_composer
 from .laravel_installer import (
     install_laravel_installer,
@@ -79,6 +80,7 @@ class Integration:
         self.artifact_paths = artifact_paths or artifact_manifest_paths(
             store.paths.config
         )
+        self._custom_artifact_paths = artifact_paths is not None
         self.composer_paths = composer_paths or (
             Path("/usr/share/paddock/composer.json"),
             Path(__file__).resolve().parents[2] / "resources" / "composer.json",
@@ -87,6 +89,7 @@ class Integration:
             Path("/usr/share/paddock/node-artifacts.json"),
             Path(__file__).resolve().parents[2] / "resources/node-artifacts.json",
         )
+        self._custom_node_paths = node_paths is not None
 
     # Written by releases that served sites with Caddy. Removed after the
     # nginx tree is promoted, never before: a failed projection must leave a
@@ -124,14 +127,20 @@ class Integration:
         if settings["initial_php_setup_complete"]:
             return None
         manifest = None
-        for path in self.artifact_paths:
-            if not path.is_file():
-                continue
+        if not self._custom_artifact_paths:
             try:
-                manifest = ArtifactManifest.load(path)
-            except ManifestError:
-                continue
-            break
+                manifest = CatalogStore(self.store.paths).effective("php").manifest
+            except CatalogStoreError:
+                pass
+        else:
+            for path in self.artifact_paths:
+                if not path.is_file():
+                    continue
+                try:
+                    manifest = ArtifactManifest.load(path)
+                except ManifestError:
+                    continue
+                break
         if manifest is None:
             raise IntegrationError("no valid PHP runtime catalog is available")
         architecture = normalized_architecture()
@@ -170,9 +179,15 @@ class Integration:
     def install_initial_node(self) -> str | None:
         settings = self.store.read("settings")
         if settings["initial_node_setup_complete"]: return None
-        catalog = next((path for path in self.node_paths if path.is_file()), None)
-        if catalog is None: raise IntegrationError("no Node runtime catalog is available")
-        manifest = NodeManifest.load(catalog)
+        if self._custom_node_paths:
+            catalog = next((path for path in self.node_paths if path.is_file()), None)
+            if catalog is None: raise IntegrationError("no Node runtime catalog is available")
+            manifest = NodeManifest.load(catalog)
+        else:
+            try:
+                manifest = CatalogStore(self.store.paths).effective("node").manifest
+            except CatalogStoreError as error:
+                raise IntegrationError("no Node runtime catalog is available") from error
         latest = max(manifest.artifacts, key=lambda item: tuple(map(int, item.node.split("."))))
         NodeInstaller(self.store).install(latest.major, manifest)
         self.store.update("settings", lambda value: {**value, "default_node": value.get("default_node") or latest.major, "initial_node_setup_complete": True})
