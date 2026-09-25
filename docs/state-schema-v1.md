@@ -29,7 +29,12 @@ reviewed, and contributes nothing to what is served. The digest is compared
 against the file on every projection, so an edit or a pull withdraws trust
 without any further record. See [ADR 0012](adr/0012-per-site-web-configuration.md). A PHP runtime record
 contains its minor version, while a Node runtime record contains its major;
-both contain an absolute activation path and artifact SHA-256 digest. A service record
+both contain an absolute activation path and artifact SHA-256 digest. New
+records also carry a nullable exact `release` patch version. Older records
+without it are migrated once: Paddock probes only binaries whose paths match
+its managed release directory and recorded hash prefix. A mismatch or an
+external/custom binary becomes `release: null`, displayed as an unknown patch
+rather than borrowing the catalog's patch number. A service record
 contains its lowercase name, registry-qualified container image, published
 loopback port, and data volume name.
 

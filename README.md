@@ -107,7 +107,7 @@ The site name defaults to the linked site containing the current directory.
 
 | Command | Description |
 | --- | --- |
-| `paddock php list` | List installed PHP runtimes and their paths. |
+| `paddock php list` | List installed PHP minors, exact patches (when known), and paths. |
 | `paddock php install VERSION` | Install the published runtime for a PHP minor, such as `8.5`. |
 | `paddock php remove VERSION` | Remove an installed PHP runtime. |
 | `paddock php use VERSION` | Select PHP for the current project in `.paddock.json`. |
@@ -124,7 +124,7 @@ the configured default runtime.
 
 | Command | Description |
 | --- | --- |
-| `paddock node list` | List installed Node.js runtimes and their paths. |
+| `paddock node list` | List installed Node.js majors, exact patches (when known), and paths. |
 | `paddock node install VERSION` | Install a checksum-verified Node.js runtime by major version. |
 | `paddock node catalog PATH` | Install a local Node.js artifact catalog as the user-level override. |
 | `paddock node remove VERSION` | Remove an installed Node.js runtime. |

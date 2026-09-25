@@ -135,7 +135,9 @@ def validate_runtimes(raw: Any) -> dict[str, Any]:
         if not isinstance(version, str) or not version:
             raise SchemaError("runtime versions must be non-empty strings")
         record = _object(record_raw, f"runtime {version}")
-        _exact_keys(record, {"path", "version", "sha256"}, f"runtime {version}")
+        required = {"path", "version", "sha256"}
+        if required - set(record) or set(record) - (required | {"release"}):
+            _exact_keys(record, required | ({"release"} if "release" in record else set()), f"runtime {version}")
         if record["version"] != version:
             raise SchemaError(f"runtime {version} has a mismatched version field")
         for field in ("path", "sha256"):
@@ -143,6 +145,13 @@ def validate_runtimes(raw: Any) -> dict[str, Any]:
                 raise SchemaError(f"runtime {version}.{field} must be a non-empty string")
         if not Path(record["path"]).is_absolute():
             raise SchemaError(f"runtime {version}.path must be absolute")
+        release = record.get("release")
+        if release is not None:
+            if not isinstance(release, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release):
+                raise SchemaError(f"runtime {version}.release must be a patch version or null")
+            expected = ".".join(release.split(".")[:2]) if "." in version else release.split(".")[0]
+            if expected != version:
+                raise SchemaError(f"runtime {version}.release does not match its minor or major")
     return value
 
 

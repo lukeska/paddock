@@ -416,7 +416,7 @@ def run(argv: list[str] | None = None) -> int:
         registry = RuntimeRegistry(store)
         if not explicit_execution and forwarded == ["list"]:
             for runtime in registry.list():
-                print(f"{runtime.version}\t{runtime.path}")
+                print(f"{runtime.version}\t{runtime.release or 'unknown'}\t{runtime.path}")
             return 0
         if not explicit_execution and forwarded[:1] == ["use"]:
             if len(forwarded) != 2:
@@ -452,7 +452,7 @@ def run(argv: list[str] | None = None) -> int:
     if arguments.command == "node":
         registry = NodeRegistry(store)
         if not explicit_execution and forwarded == ["list"]:
-            for runtime in registry.list(): print(f"{runtime.version}\t{runtime.path}")
+            for runtime in registry.list(): print(f"{runtime.version}\t{runtime.release or 'unknown'}\t{runtime.path}")
             return 0
         if not explicit_execution and forwarded[:1] == ["use"]:
             if len(forwarded) != 2: raise ValueError("Usage: paddock node use VERSION")

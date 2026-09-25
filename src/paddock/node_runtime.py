@@ -15,6 +15,7 @@ from urllib.request import urlopen
 
 from .atomic import exclusive_lock
 from .state import StateStore
+from .runtime_inventory import installed_patch
 
 
 class NodeRuntimeError(RuntimeError):
@@ -82,6 +83,7 @@ class NodeRuntime:
     version: str
     path: Path
     sha256: str
+    release: str | None = None
 
 
 class NodeRegistry:
@@ -90,8 +92,24 @@ class NodeRegistry:
 
     def list(self) -> list[NodeRuntime]:
         records = self.store.read("node_runtimes")["runtimes"]
+        missing = {version: record for version, record in records.items() if "release" not in record}
+        if missing:
+            releases = self.store.paths.data / "node-runtimes/releases"
+            recovered = {
+                version: installed_patch(Path(record["path"]), record["sha256"], releases, "node", version)
+                for version, record in missing.items()
+            }
+            records = self.store.update("node_runtimes", lambda value: {
+                **value,
+                "runtimes": {
+                    version: ({**record, "release": recovered[version]}
+                              if version in recovered and "release" not in record
+                              and record == missing[version] else record)
+                    for version, record in value["runtimes"].items()
+                },
+            })["runtimes"]
         return [
-            NodeRuntime(version, Path(record["path"]), record["sha256"])
+            NodeRuntime(version, Path(record["path"]), record["sha256"], record.get("release"))
             for version, record in sorted(records.items(), key=lambda item: int(item[0]))
         ]
 
@@ -102,7 +120,7 @@ class NodeRegistry:
                 return runtime
         raise NodeRuntimeError(f"Node {version} is not installed. Run: paddock node install {version}")
 
-    def register(self, major: str, path: Path, sha256: str) -> None:
+    def register(self, major: str, path: Path, sha256: str, release: str | None = None) -> None:
         version = normalize_major(major)
         self.store.update(
             "node_runtimes",
@@ -114,6 +132,7 @@ class NodeRegistry:
                         "version": version,
                         "path": str(path.resolve()),
                         "sha256": sha256,
+                        "release": release,
                     },
                 },
             },
@@ -172,7 +191,7 @@ class NodeInstaller:
             temporary_link.unlink(missing_ok=True)
             temporary_link.symlink_to(release)
             os.replace(temporary_link, active / artifact.major)
-            self.registry.register(artifact.major, release / "bin/node", artifact.sha256)
+            self.registry.register(artifact.major, release / "bin/node", artifact.sha256, artifact.node)
             return release
 
     def remove(self, major: str) -> None:

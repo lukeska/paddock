@@ -450,7 +450,10 @@ class PhpVersionsSnapshotTests(ApplicationFixture, unittest.TestCase):
             self.store, StateRunner(), artifact_paths=(manifest,)
         ).php_versions_snapshot()
 
-        self.assertEqual(["8.5.8", "8.4.23"], [item.release for item in snapshot.versions])
+        self.assertEqual(["8.5.8", "8.4"], [item.release for item in snapshot.versions])
+        self.assertIsNone(snapshot.versions[1].installed_release)
+        self.assertEqual("8.4.23", snapshot.versions[1].available_release)
+        self.assertFalse(snapshot.versions[1].update_available)
         self.assertFalse(snapshot.versions[0].installed)
         self.assertTrue(snapshot.versions[0].available)
         self.assertTrue(snapshot.versions[1].installed)

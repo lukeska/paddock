@@ -65,7 +65,7 @@ class RuntimeInstaller:
             self._write_fpm_config(artifact.minor, destination)
             self._control_service("restart", artifact.minor)
             self.registry.register(
-                artifact.minor, destination / "bin" / "php", artifact.sha256
+                artifact.minor, destination / "bin" / "php", artifact.sha256, artifact.php
             )
             return destination
 

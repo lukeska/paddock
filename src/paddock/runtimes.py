@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from .state import StateStore
+from .runtime_inventory import installed_patch
 
 
 PHP_MINOR = re.compile(r"^[0-9]+\.[0-9]+$")
@@ -21,6 +22,7 @@ class Runtime:
     version: str
     path: Path
     sha256: str
+    release: str | None = None
 
 
 class RuntimeRegistry:
@@ -29,12 +31,29 @@ class RuntimeRegistry:
 
     def list(self) -> list[Runtime]:
         records = self.store.read("runtimes")["runtimes"]
+        missing = {version: record for version, record in records.items() if "release" not in record}
+        if missing:
+            releases = self.store.paths.data / "runtimes/releases"
+            recovered = {
+                version: installed_patch(Path(record["path"]), record["sha256"], releases, "php", version)
+                for version, record in missing.items()
+            }
+            records = self.store.update("runtimes", lambda value: {
+                **value,
+                "runtimes": {
+                    version: ({**record, "release": recovered[version]}
+                              if version in recovered and "release" not in record
+                              and record == missing[version] else record)
+                    for version, record in value["runtimes"].items()
+                },
+            })["runtimes"]
         return [
-            Runtime(version, Path(record["path"]), record["sha256"])
+            Runtime(version, Path(record["path"]), record["sha256"], record.get("release"))
             for version, record in sorted(records.items(), key=lambda item: _version_key(item[0]))
         ]
 
-    def register(self, version: str, executable: Path, sha256: str | None = None) -> Runtime:
+    def register(self, version: str, executable: Path, sha256: str | None = None,
+                 release: str | None = None) -> Runtime:
         version = normalize_minor(version)
         path = executable.expanduser().resolve(strict=True)
         if not path.is_file() or not os.access(path, os.X_OK):
@@ -49,11 +68,12 @@ class RuntimeRegistry:
                 "path": str(path),
                 "version": version,
                 "sha256": digest,
+                "release": release,
             }
             return {"schema_version": value["schema_version"], "runtimes": records}
 
         self.store.update("runtimes", add)
-        return Runtime(version, path, digest)
+        return Runtime(version, path, digest, release)
 
     def remove(self, version: str) -> None:
         version = normalize_minor(version)

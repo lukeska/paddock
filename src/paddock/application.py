@@ -12,6 +12,7 @@ state.  Transactional apply and lifecycle results build on this contract.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import errno
 import json
 from pathlib import Path
@@ -27,7 +28,7 @@ from .artifacts import (
     artifact_manifest_paths,
     normalized_architecture,
 )
-from .catalog_store import CatalogStore, CatalogStoreError
+from .catalog_store import CatalogSelection, CatalogStore, CatalogStoreError
 from .atomic import atomic_write, exclusive_lock
 from .config_watcher import ConfigWatcher
 from .parking import ParkingManager
@@ -69,6 +70,16 @@ IMAGE_REFERENCE = re.compile(
 
 def _semantic_version(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in version.split("."))
+
+
+def _catalog_stale(selection: CatalogSelection | None) -> bool:
+    if selection is None or selection.source != "refreshed" or selection.checked_at is None:
+        return False
+    try:
+        checked = datetime.fromisoformat(selection.checked_at)
+        return checked.tzinfo is None or datetime.now(timezone.utc) - checked > timedelta(hours=24)
+    except ValueError:
+        return True
 
 
 def service_image_version(image: str) -> str:
@@ -317,12 +328,20 @@ class PhpVersionView:
     installed: bool
     available: bool
     path: str | None
+    installed_release: str | None = None
+    available_release: str | None = None
+    update_available: bool = False
+    previous_release: str | None = None
 
 
 @dataclass(frozen=True)
 class PhpVersionsSnapshot:
     versions: tuple[PhpVersionView, ...]
     architecture: str
+    catalog_source: str = "unavailable"
+    catalog_checked_at: str | None = None
+    catalog_warning: str | None = None
+    catalog_stale: bool = False
 
 
 @dataclass(frozen=True)
@@ -341,12 +360,20 @@ class NodeVersionView:
     installed: bool
     available: bool
     path: str | None
+    installed_release: str | None = None
+    available_release: str | None = None
+    update_available: bool = False
+    previous_release: str | None = None
 
 
 @dataclass(frozen=True)
 class NodeVersionsSnapshot:
     versions: tuple[NodeVersionView, ...]
     architecture: str
+    catalog_source: str = "unavailable"
+    catalog_checked_at: str | None = None
+    catalog_warning: str | None = None
+    catalog_stale: bool = False
 
 
 @dataclass(frozen=True)
@@ -427,33 +454,41 @@ class PaddockController:
         )
         self._custom_node_artifact_paths = node_artifact_paths is not None
 
-    def _php_catalog(self) -> ArtifactManifest | None:
+    def _php_catalog_selection(self) -> CatalogSelection | None:
         if not self._custom_artifact_paths:
             try:
-                return CatalogStore(self.store.paths).effective("php").manifest
+                return CatalogStore(self.store.paths).effective("php")
             except CatalogStoreError:
                 return None
         for path in self.artifact_paths:
             if path.is_file():
                 try:
-                    return ArtifactManifest.load(path)
+                    return CatalogSelection(ArtifactManifest.load(path), "provided", None, None)
                 except ManifestError:
                     continue
         return None
 
-    def _node_catalog(self) -> NodeManifest | None:
+    def _php_catalog(self) -> ArtifactManifest | None:
+        selection = self._php_catalog_selection()
+        return selection.manifest if selection is not None else None
+
+    def _node_catalog_selection(self) -> CatalogSelection | None:
         if not self._custom_node_artifact_paths:
             try:
-                return CatalogStore(self.store.paths).effective("node").manifest
+                return CatalogStore(self.store.paths).effective("node")
             except CatalogStoreError:
                 return None
         for path in self.node_artifact_paths:
             if path.is_file():
                 try:
-                    return NodeManifest.load(path)
+                    return CatalogSelection(NodeManifest.load(path), "provided", None, None)
                 except NodeRuntimeError:
                     continue
         return None
+
+    def _node_catalog(self) -> NodeManifest | None:
+        selection = self._node_catalog_selection()
+        return selection.manifest if selection is not None else None
 
     @property
     def operation_lock(self) -> Path:
@@ -679,7 +714,8 @@ class PaddockController:
         """Combine published runtimes for this CPU with locally installed ones."""
         architecture = normalized_architecture()
         published: dict[str, str] = {}
-        manifest = self._php_catalog()
+        selection = self._php_catalog_selection()
+        manifest = selection.manifest if selection is not None else None
         if manifest is not None:
             for artifact in manifest.artifacts:
                 if artifact.architecture == architecture:
@@ -696,17 +732,26 @@ class PaddockController:
         versions = tuple(
             PhpVersionView(
                 minor=minor,
-                release=published.get(minor, minor),
+                release=(installed[minor].release or minor) if minor in installed else published.get(minor, minor),
                 architecture=architecture,
                 installed=minor in installed,
                 available=minor in published,
                 path=str(installed[minor].path) if minor in installed else None,
+                installed_release=installed[minor].release if minor in installed else None,
+                available_release=published.get(minor),
+                update_available=(minor in installed and installed[minor].release is not None
+                                  and minor in published
+                                  and _semantic_version(published[minor]) > _semantic_version(installed[minor].release)),
             )
             for minor in sorted(
                 set(published) | set(installed), key=_semantic_version, reverse=True
             )
         )
-        return PhpVersionsSnapshot(versions, architecture)
+        return PhpVersionsSnapshot(versions, architecture,
+                                   selection.source if selection else "unavailable",
+                                   selection.checked_at if selection else None,
+                                   selection.warning if selection else None,
+                                   _catalog_stale(selection))
 
     def install_php(self, minor: str) -> PhpInstallResult:
         """Install one published runtime and return a fresh presentation model."""
@@ -732,7 +777,8 @@ class PaddockController:
     def node_versions_snapshot(self) -> NodeVersionsSnapshot:
         architecture = normalized_architecture()
         published: dict[str, str] = {}
-        manifest = self._node_catalog()
+        selection = self._node_catalog_selection()
+        manifest = selection.manifest if selection is not None else None
         if manifest is not None:
             for artifact in manifest.artifacts:
                 if artifact.architecture == architecture:
@@ -741,10 +787,19 @@ class PaddockController:
         try: installed = {runtime.version: runtime for runtime in NodeRegistry(self.store).list()}
         except (OSError, StateError, ValueError): installed = {}
         versions = tuple(NodeVersionView(
-            major, published.get(major, major), architecture, major in installed,
+            major, (installed[major].release or major) if major in installed else published.get(major, major), architecture, major in installed,
             major in published, str(installed[major].path) if major in installed else None,
+            installed_release=installed[major].release if major in installed else None,
+            available_release=published.get(major),
+            update_available=(major in installed and installed[major].release is not None
+                              and major in published
+                              and _semantic_version(published[major]) > _semantic_version(installed[major].release)),
         ) for major in sorted(set(published) | set(installed), key=int, reverse=True))
-        return NodeVersionsSnapshot(versions, architecture)
+        return NodeVersionsSnapshot(versions, architecture,
+                                    selection.source if selection else "unavailable",
+                                    selection.checked_at if selection else None,
+                                    selection.warning if selection else None,
+                                    _catalog_stale(selection))
 
     def install_node(self, major: str) -> NodeInstallResult:
         try:

@@ -12,17 +12,25 @@ type Snapshot struct {
 }
 
 type PHPVersion struct {
-	Minor        string  `json:"minor"`
-	Release      string  `json:"release"`
-	Architecture string  `json:"architecture"`
-	Installed    bool    `json:"installed"`
-	Available    bool    `json:"available"`
-	Path         *string `json:"path"`
+	Minor            string  `json:"minor"`
+	Release          string  `json:"release"`
+	Architecture     string  `json:"architecture"`
+	Installed        bool    `json:"installed"`
+	Available        bool    `json:"available"`
+	Path             *string `json:"path"`
+	InstalledRelease *string `json:"installed_release"`
+	AvailableRelease *string `json:"available_release"`
+	UpdateAvailable  bool    `json:"update_available"`
+	PreviousRelease  *string `json:"previous_release"`
 }
 
 type PHPVersionsSnapshot struct {
-	Versions     []PHPVersion `json:"versions"`
-	Architecture string       `json:"architecture"`
+	Versions         []PHPVersion `json:"versions"`
+	Architecture     string       `json:"architecture"`
+	CatalogSource    string       `json:"catalog_source"`
+	CatalogCheckedAt *string      `json:"catalog_checked_at"`
+	CatalogWarning   *string      `json:"catalog_warning"`
+	CatalogStale     bool         `json:"catalog_stale"`
 }
 
 type PHPInstallResult struct {
@@ -33,17 +41,25 @@ type PHPInstallResult struct {
 }
 
 type NodeVersion struct {
-	Major        string  `json:"major"`
-	Release      string  `json:"release"`
-	Architecture string  `json:"architecture"`
-	Installed    bool    `json:"installed"`
-	Available    bool    `json:"available"`
-	Path         *string `json:"path"`
+	Major            string  `json:"major"`
+	Release          string  `json:"release"`
+	Architecture     string  `json:"architecture"`
+	Installed        bool    `json:"installed"`
+	Available        bool    `json:"available"`
+	Path             *string `json:"path"`
+	InstalledRelease *string `json:"installed_release"`
+	AvailableRelease *string `json:"available_release"`
+	UpdateAvailable  bool    `json:"update_available"`
+	PreviousRelease  *string `json:"previous_release"`
 }
 
 type NodeVersionsSnapshot struct {
-	Versions     []NodeVersion `json:"versions"`
-	Architecture string        `json:"architecture"`
+	Versions         []NodeVersion `json:"versions"`
+	Architecture     string        `json:"architecture"`
+	CatalogSource    string        `json:"catalog_source"`
+	CatalogCheckedAt *string       `json:"catalog_checked_at"`
+	CatalogWarning   *string       `json:"catalog_warning"`
+	CatalogStale     bool          `json:"catalog_stale"`
 }
 
 type NodeInstallResult struct {

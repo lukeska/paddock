@@ -107,6 +107,7 @@ class RuntimeInstallTests(unittest.TestCase):
         self.assertEqual(active.resolve(), destination)
         record = self.store.read("runtimes")["runtimes"]["8.4"]
         self.assertEqual(record["sha256"], self.digest)
+        self.assertEqual("8.4.23", record["release"])
         config = self.store.paths.state / "fpm" / "php-8.4.conf"
         rendered = config.read_text(encoding="utf-8")
         self.assertIn("clear_env = yes", rendered)

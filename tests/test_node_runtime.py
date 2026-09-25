@@ -75,5 +75,5 @@ class NodeInstallerTests(NodeFixture):
         }]}), encoding="utf-8")
         destination = NodeInstaller(self.store).install("24", NodeManifest.load(manifest_path))
         self.assertEqual(destination / "bin/node", NodeRegistry(self.store).resolve("24").path)
+        self.assertEqual("24.20.0", NodeRegistry(self.store).resolve("24").release)
         self.assertEqual(destination, (self.paths.data / "node-runtimes/active/24").resolve())
-
