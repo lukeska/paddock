@@ -42,6 +42,10 @@ class ArtifactManifest:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             raise ManifestError(f"cannot read artifact manifest {path}: {error}") from error
+        return cls.from_document(raw)
+
+    @classmethod
+    def from_document(cls, raw: Any) -> "ArtifactManifest":
         if not isinstance(raw, dict) or set(raw) != {"schema_version", "artifacts"}:
             raise ManifestError("artifact manifest must contain schema_version and artifacts")
         if raw["schema_version"] != 1 or not isinstance(raw["artifacts"], list):

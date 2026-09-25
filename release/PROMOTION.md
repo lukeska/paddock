@@ -124,9 +124,38 @@ already has a `.sig` asset must be investigated instead of silently replaced.
 The source signature is the one an AUR recipe will list beside the source
 archive, with the full primary fingerprint in `validpgpkeys`. The package
 signature is the one pacman verifies. Sign a repository database only if a
-custom pacman repository is operated. Per ADR 0009, nothing else is signed:
-runtime archives and the index are covered by the package signature and
-Sigstore attestation.
+custom pacman repository is operated. The *packaged* runtime index needs no
+separate signature; independently refreshed catalogs have a separate manual
+promotion process described below.
+
+## Future independent runtime-catalog promotion
+
+The [catalog v1 contract](../docs/runtime-catalog-v1.md) selects a dedicated
+`gh-pages` branch and signed, revisioned PHP and Node catalogs. This section
+is a publication contract, **not yet an executable procedure**: catalog
+refresh stays disabled until Unit 6 of the
+[implementation plan](../docs/runtime-updates-plan.md) adds the promotion
+tool and VM acceptance checks.
+
+For each runtime kind, the maintainer must:
+
+1. Start from the highest published revision, increment it, and build one
+   canonical catalog file. Never reuse a revision for changed bytes.
+2. Verify every candidate's source, archive checksum, architecture, patch
+   version, immutable URL, and build provenance. Re-download public artifact
+   URLs and check their pinned hashes. Do not promote a local PHP build.
+3. Sign the exact catalog bytes locally with the Paddock release signing
+   subkey; verify the detached signature using an isolated keyring and the
+   pinned primary fingerprint. No private key or signing operation runs in CI.
+4. Publish immutable archived catalog and signature copies first. Refuse to
+   replace any existing archive. Then update the stable Pages discovery pair
+   on `gh-pages`. Confirm the served bytes match the just-signed files; allow
+   for Pages deployment lag and never consider a branch push sufficient.
+5. Keep every runtime archive referenced by any published catalog revision.
+   If a signed catalog is wrong, publish a higher corrective revision rather
+   than editing the archive or moving a runtime tag. For signing-key
+   compromise, revoke and ship a package with a new trust anchor before
+   resuming remote refresh.
 
 ## 6. Record the release
 
@@ -136,9 +165,11 @@ referenced by any shipped index, plus the two most recent.
 
 ## Rollback
 
-Reinstall the retained previous package with `pacman -U`. Because the index
-ships inside the package, this rolls the runtime index back coherently; there
-is no separate index rollback.
+Reinstall the retained previous package with `pacman -U`. Its bundled index
+rolls back with the package. After independent catalog refresh is enabled,
+the user's highest accepted remote catalog revision remains in durable state;
+package rollback cannot silently downgrade it. Runtime binary rollback will
+be an explicit command implemented in Unit 4.
 
 ## Never
 

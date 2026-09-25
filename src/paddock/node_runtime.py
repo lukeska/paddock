@@ -47,7 +47,13 @@ class NodeManifest:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             raise NodeRuntimeError(f"cannot read Node artifact catalog {path}: {error}") from error
+        return cls.from_document(raw)
+
+    @classmethod
+    def from_document(cls, raw: object) -> "NodeManifest":
         if not isinstance(raw, dict) or set(raw) != {"schema_version", "artifacts"} or raw["schema_version"] != 1:
+            raise NodeRuntimeError("invalid Node artifact catalog")
+        if not isinstance(raw["artifacts"], list):
             raise NodeRuntimeError("invalid Node artifact catalog")
         found = []
         for item in raw["artifacts"]:

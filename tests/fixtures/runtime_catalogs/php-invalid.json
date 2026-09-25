@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "revision": 3,
+  "artifacts": [
+    {
+      "php": "8.4.25",
+      "minor": "8.4",
+      "architecture": "x86_64",
+      "url": "http://example.test/paddock-php-8.4.25-linux-x86_64.tar.gz",
+      "sha256": "482fd1dd57e40a0ec250c50ff84dfc3b345922e21d8eaec298522e6cc6d65336"
+    }
+  ]
+}

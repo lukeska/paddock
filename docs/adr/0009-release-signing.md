@@ -7,7 +7,8 @@
 
 Paddock ships an Arch package containing the CLI, root helpers, and the
 artifact index. The index is installed to `/usr/share/paddock/artifacts.json`
-and is never fetched at runtime; `RuntimeInstaller` downloads the URL it names
+and, at the time of this decision, was never fetched at runtime;
+`RuntimeInstaller` downloads the URL it names
 and activates the archive only after the pinned SHA-256 matches. Runtime trust
 therefore already chains from the package:
 
@@ -60,13 +61,38 @@ Sign exactly what pacman verifies:
 - the repository database, if and only if a custom pacman repository is
   operated.
 
-Do not separately sign runtime archives, `resources/artifacts.json`, SBOMs,
+Do not separately sign runtime archives, the *packaged* index, SBOMs,
 provenance, compatibility records, or build logs. Runtime archives are
 hash-pinned inside the signed package and already carry Sigstore attestation;
-the index ships inside the signed package and is never fetched. Signing these
-would add subjects to rotate and revoke without moving the security boundary.
-Revisit if the index ever becomes network-fetched, which would change the
-trust chain above.
+the original packaged index needs no additional signature.
+
+### Amendment: independently refreshed catalogs (2026-09-25)
+
+The [runtime catalog plan](../runtime-updates-plan.md) deliberately crosses
+the boundary identified above. Separately signed, network-fetched PHP and
+Node catalogs are now approved as a future distribution path. This does not
+retroactively make unsigned remote metadata trustworthy. Refresh remains
+disabled until a package ships a pinned public key and isolated verifier and
+the [catalog v1 publication contract](../runtime-catalog-v1.md) is operational.
+
+The added trust chain is:
+
+```text
+signed Paddock package -> pinned public key/fingerprint
+  -> detached signature over remote catalog bytes
+    -> exact artifact URL and SHA-256
+      -> verified runtime archive
+```
+
+The existing release signing subkey signs each catalog locally during manual
+promotion. No private key enters CI. Each PHP and Node catalog has an
+independent monotonic revision; clients retain the highest accepted revision
+and digest to reject replay or conflicting equal revisions. The stable
+discovery URL is mutable, but archived revisions and runtime release assets
+are immutable. On verification or network failure, retain the last trusted
+catalog and fall back to package metadata where appropriate. A compromised
+signing subkey requires revocation plus a Paddock package update carrying the
+new trust anchor; the network endpoint cannot rotate its own trusted key.
 
 ### Secrets, environments, and permissions
 
@@ -92,9 +118,10 @@ documented as such.
   most recent regardless.
 - Release notes state PHP patch versions, extension changes, the builder
   version and its SHA-256, and the signing fingerprint used.
-- Rollback is `pacman -U` of the retained previous package. Because the index
-  is packaged, a package rollback also rolls the runtime index back
-  coherently; no separate index rollback exists.
+- For the original packaged-only design, rollback is `pacman -U` of the
+  retained previous package, which also rolls back its bundled index. Once
+  independent refresh is enabled, the accepted remote catalog revision lives
+  in user state and cannot be rolled back by downgrading the package.
 - The README documents verification: import by fingerprint, verify the package
   signature, and `gh attestation verify` for build provenance.
 

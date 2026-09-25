@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "revision": 2,
+  "artifacts": [
+    {
+      "node": "24.20.0",
+      "major": "24",
+      "architecture": "x86_64",
+      "url": "https://nodejs.org/download/release/v24.20.0/node-v24.20.0-linux-x64.tar.xz",
+      "sha256": "2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2"
+    }
+  ]
+}
