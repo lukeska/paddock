@@ -1,9 +1,9 @@
 # Runtime catalog v1: publication contract
 
-This is the format for independently refreshed runtime metadata. Unit 2 of
-[the implementation plan](runtime-updates-plan.md) adds local signature
-verification and fetching; Unit 6 adds promotion tooling and activates the
-public distribution surface.
+This is the format for independently refreshed runtime metadata. The client
+verifier and the [manual promotion command](../release/PROMOTION.md) are
+implemented. Publishing the first signed catalogs and enabling default
+background refresh still require maintainer acceptance on an Omarchy VM.
 
 ## Distribution
 
@@ -17,7 +17,7 @@ repository's dedicated `gh-pages` branch (root publishing source, with
 | Node | `https://lukeska.github.io/paddock/runtime-catalogs/node.json` | same URL with `.sig` appended |
 
 GitHub Pages must be explicitly configured before enabling client refresh;
-these URLs are a contract, **not currently advertised as live**. The
+these URLs are a contract until the first signed promotion is complete. The
 `gh-pages` branch is not a package source and carries no signing key. A Pages
 deployment is not an authenticity signal: clients trust only a detached
 signature verified against the public key shipped in the Paddock package.

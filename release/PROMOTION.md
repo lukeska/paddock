@@ -128,34 +128,63 @@ custom pacman repository is operated. The *packaged* runtime index needs no
 separate signature; independently refreshed catalogs have a separate manual
 promotion process described below.
 
-## Future independent runtime-catalog promotion
+## Independent runtime-catalog promotion
 
 The [catalog v1 contract](../docs/runtime-catalog-v1.md) selects a dedicated
-`gh-pages` branch and signed, revisioned PHP and Node catalogs. This section
-is a publication contract, **not yet an executable procedure**: catalog
-refresh stays disabled until Unit 6 of the
-[implementation plan](../docs/runtime-updates-plan.md) adds the promotion
-tool and VM acceptance checks.
+`gh-pages` branch. `release/catalog.py` prepares canonical bytes, re-downloads
+each archive, checks its hash and architecture coverage, verifies PHP's GitHub
+Actions attestation (trusted workflow and hosted runner), and compares Node
+archives with the official version's `SHASUMS256.txt` over HTTPS. It rejects
+patch regression and changing a published patch's URL or hash. The tool never
+signs or handles a private key; it verifies signatures against the packaged
+public certificate and pinned primary fingerprint in an isolated keyring.
 
-For each runtime kind, the maintainer must:
+For an initial promotion, create a clean `gh-pages` checkout of
+`github.com/lukeska/paddock`, configure Pages to publish from its root, and
+include `.nojekyll`. For subsequent revisions, supply the current stable
+catalog as `--current`. Do this once for PHP and once for Node; each has its
+own revision sequence. The candidate is a reviewed packaged-format index
+(for example, `resources/artifacts.json` or `resources/node-artifacts.json`).
 
-1. Start from the highest published revision, increment it, and build one
-   canonical catalog file. Never reuse a revision for changed bytes.
-2. Verify every candidate's source, archive checksum, architecture, patch
-   version, immutable URL, and build provenance. Re-download public artifact
-   URLs and check their pinned hashes. Do not promote a local PHP build.
-3. Sign the exact catalog bytes locally with the Paddock release signing
-   subkey; verify the detached signature using an isolated keyring and the
-   pinned primary fingerprint. No private key or signing operation runs in CI.
-4. Publish immutable archived catalog and signature copies first. Refuse to
-   replace any existing archive. Then update the stable Pages discovery pair
-   on `gh-pages`. Confirm the served bytes match the just-signed files; allow
-   for Pages deployment lag and never consider a branch push sufficient.
-5. Keep every runtime archive referenced by any published catalog revision.
-   If a signed catalog is wrong, publish a higher corrective revision rather
-   than editing the archive or moving a runtime tag. For signing-key
-   compromise, revoke and ship a package with a new trust anchor before
-   resuming remote refresh.
+```bash
+python release/catalog.py prepare --kind php \
+  --candidate resources/artifacts.json \
+  --output /path/to/signing/php.json
+
+# For subsequent revisions add:
+# --current /path/to/current/php.json
+
+gpg --local-user AB3611DC044DE36844055E9AC1A41BDC59DCEA60 \
+  --detach-sign --output /path/to/signing/php.json.sig \
+  /path/to/signing/php.json
+
+python release/catalog.py verify --kind php \
+  --catalog /path/to/signing/php.json \
+  --signature /path/to/signing/php.json.sig
+
+python release/catalog.py publish --kind php \
+  --catalog /path/to/signing/php.json \
+  --signature /path/to/signing/php.json.sig \
+  --pages-dir /path/to/clean/gh-pages-checkout
+```
+
+Repeat with `--kind node`, its Node candidate, and its own output files. Review
+the provenance lines from `prepare` and the canonical JSON before signing.
+`publish` requires a clean, up-to-date `gh-pages` checkout with this
+repository as `origin`; it refuses an existing archived revision. It pushes
+the immutable archive first, then the stable discovery pair in a second
+commit, and waits for GitHub Pages to serve the exact catalog and signature.
+If Pages delivery times out after a push, inspect it before retrying: the
+archive may already be published and must not be replaced. No private key or
+signing operation belongs in CI.
+
+Keep every referenced runtime archive indefinitely. Correct a bad signed
+revision by publishing a higher revision, never by editing its archive or
+moving a runtime tag. For key compromise, revoke and ship a new package trust
+anchor before resuming remote refresh. The first real promotion still needs
+the Omarchy VM acceptance checklist in the
+[runtime update plan](../docs/runtime-updates-plan.md) before default
+background refresh is enabled.
 
 ## 6. Record the release
 
@@ -168,8 +197,9 @@ referenced by any shipped index, plus the two most recent.
 Reinstall the retained previous package with `pacman -U`. Its bundled index
 rolls back with the package. After independent catalog refresh is enabled,
 the user's highest accepted remote catalog revision remains in durable state;
-package rollback cannot silently downgrade it. Runtime binary rollback will
-be an explicit command implemented in Unit 4.
+package rollback cannot silently downgrade it. Runtime binary rollback is an
+explicit `paddock php rollback VERSION` or `paddock node rollback VERSION`
+command.
 
 ## Never
 

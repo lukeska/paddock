@@ -152,6 +152,13 @@ updates and rollbacks, and use `R` to refresh catalog metadata. Background
 refresh on TUI startup is disabled until the publishing surface is ready; for
 testing, set `PADDOCK_AUTO_REFRESH_CATALOGS=1` to check asynchronously when the
 last successful catalog check is over 24 hours old.
+Refreshing a catalog changes only the list of available patches. Installing a
+patch still requires an explicit CLI or TUI action and never changes a site's
+selected PHP minor or Node major. A Paddock package update is separate: it
+updates the application and bundled offline catalogs, not installed runtimes.
+Catalog signatures are checked against the package-owned release key; key
+rotation or revocation requires a Paddock package update. See the
+[promotion procedure](release/PROMOTION.md).
 
 After `paddock setup`, new terminal sessions also expose project-aware `php`,
 `composer`, `laravel`, `node`, `npm`, and `npx` shims directly. Setup installs

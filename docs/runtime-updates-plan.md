@@ -1,7 +1,8 @@
 # Independently refreshed PHP and Node runtime catalogs
 
-Status: proposed. Implement one unit at a time; this document is the reference
-for scope and acceptance, not a claim that the feature already exists.
+Status: Units 1–5 implemented. Unit 6 promotion tooling is implemented;
+first signed publication and Omarchy VM acceptance remain pending. This
+document is the reference for scope and acceptance.
 
 ## Goal and current behavior
 
