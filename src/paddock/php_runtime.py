@@ -40,8 +40,13 @@ class RuntimeInstaller:
         self.registry = RuntimeRegistry(store)
         self.lock = self.paths.state / "runtime-install.lock"
 
-    def install(self, minor: str, manifest: ArtifactManifest, *, replace_custom: bool = False) -> Path:
+    def install(self, minor: str, manifest: ArtifactManifest, *, replace_custom: bool = False,
+                expected_release: str | None = None) -> Path:
         artifact = manifest.select(minor)
+        if expected_release is not None and artifact.php != expected_release:
+            raise RuntimeInstallError(
+                f"PHP {minor} catalog changed from confirmed {expected_release} to {artifact.php}; confirm again"
+            )
         with exclusive_lock(self.lock):
             current = next((item for item in self.registry.list() if item.version == artifact.minor), None)
             releases = self.paths.data / "runtimes" / "releases"
@@ -84,12 +89,16 @@ class RuntimeInstaller:
             self._switch(artifact.minor, destination, artifact.php, artifact.sha256, current)
             return destination
 
-    def rollback(self, minor: str) -> Path:
+    def rollback(self, minor: str, *, expected_release: str | None = None) -> Path:
         version = normalize_minor(minor)
         with exclusive_lock(self.lock):
             current = self.registry.resolve(version)
             if not current.previous_release or not current.previous_sha256:
                 raise RuntimeInstallError(f"PHP {version} has no retained previous release")
+            if expected_release is not None and current.previous_release != expected_release:
+                raise RuntimeInstallError(
+                    f"PHP {version} rollback target changed from confirmed {expected_release}; confirm again"
+                )
             releases = self.paths.data / "runtimes" / "releases"
             if not self._managed(current.path, current.release, current.sha256, releases):
                 raise RuntimeInstallError(f"PHP {version} active runtime is not managed by Paddock")

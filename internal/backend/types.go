@@ -1,14 +1,15 @@
 package backend
 
 type Snapshot struct {
-	ProtocolVersion int                      `json:"protocol_version"`
-	Dashboard       DashboardSnapshot        `json:"dashboard"`
-	Services        ServiceInstancesSnapshot `json:"services"`
-	Sites           LinkedSitesSnapshot      `json:"sites"`
-	PHP             PHPVersionsSnapshot      `json:"php"`
-	Node            NodeVersionsSnapshot     `json:"node"`
-	Parking         ParkingSnapshot          `json:"parking"`
-	Theme           *ThemePalette            `json:"theme"`
+	ProtocolVersion           int                      `json:"protocol_version"`
+	Dashboard                 DashboardSnapshot        `json:"dashboard"`
+	Services                  ServiceInstancesSnapshot `json:"services"`
+	Sites                     LinkedSitesSnapshot      `json:"sites"`
+	PHP                       PHPVersionsSnapshot      `json:"php"`
+	Node                      NodeVersionsSnapshot     `json:"node"`
+	CatalogAutoRefreshEnabled bool                     `json:"catalog_auto_refresh_enabled"`
+	Parking                   ParkingSnapshot          `json:"parking"`
+	Theme                     *ThemePalette            `json:"theme"`
 }
 
 type PHPVersion struct {
@@ -67,6 +68,12 @@ type NodeInstallResult struct {
 	Summary  string               `json:"summary"`
 	Detail   *string              `json:"detail"`
 	Snapshot NodeVersionsSnapshot `json:"snapshot"`
+}
+
+type RuntimeCatalogRefreshResult struct {
+	PHP    PHPVersionsSnapshot  `json:"php"`
+	Node   NodeVersionsSnapshot `json:"node"`
+	Errors []string             `json:"errors"`
 }
 
 type ParkingSnapshot struct {

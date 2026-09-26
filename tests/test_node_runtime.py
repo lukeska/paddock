@@ -163,3 +163,10 @@ class NodeInstallerTests(NodeFixture):
         self.assertTrue(failed)
         self.assertEqual(old, link.resolve())
         self.assertEqual(registry, self.store.read("node_runtimes"))
+
+    def test_confirmed_node_patch_must_still_match_catalog(self) -> None:
+        installer = NodeInstaller(self.store)
+        with self.assertRaisesRegex(Exception, "confirm again"):
+            installer.install("24", self._manifest("24.20.0"),
+                              expected_release="24.19.0")
+        self.assertEqual({}, self.store.read("node_runtimes")["runtimes"])

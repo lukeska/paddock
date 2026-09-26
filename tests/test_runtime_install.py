@@ -327,3 +327,10 @@ class RuntimeInstallTests(unittest.TestCase):
                 "8.4", ArtifactManifest.load(self.manifest_path)
             )
         self.assertEqual("user file", link.read_text(encoding="utf-8"))
+
+    def test_confirmed_php_patch_must_still_match_catalog(self) -> None:
+        installer = RuntimeInstaller(self.store, FakeRuntimeRunner())
+        with self.assertRaisesRegex(RuntimeInstallError, "confirm again"):
+            installer.install("8.4", ArtifactManifest.load(self.manifest_path),
+                              expected_release="8.4.22")
+        self.assertEqual({}, self.store.read("runtimes")["runtimes"])

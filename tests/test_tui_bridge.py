@@ -19,6 +19,7 @@ from paddock.application import (
     NodeInstallResult,
     NodeVersionView,
     NodeVersionsSnapshot,
+    RuntimeCatalogRefreshResult,
     ParkingOperationResult,
     ParkingSnapshot,
     ServiceInstanceOperationResult,
@@ -51,9 +52,13 @@ class FakeController:
             PhpVersionView("8.4", "8.4.23", "x86_64", True, True, "/php/8.4"),
         ), "x86_64")
 
-    def install_php(self, minor):
+    def install_php(self, minor, expected_release=None):
         self.calls.append(("php", "install", minor))
         return PhpInstallResult(True, f"installed PHP {minor}", None, self.php_versions_snapshot())
+
+    def rollback_php(self, minor, expected_release=None):
+        self.calls.append(("php", "rollback", minor))
+        return PhpInstallResult(True, f"rolled back PHP {minor}", None, self.php_versions_snapshot())
 
     def node_versions_snapshot(self):
         return NodeVersionsSnapshot((
@@ -61,9 +66,17 @@ class FakeController:
             NodeVersionView("22", "22.19.0", "x86_64", True, True, "/node/22"),
         ), "x86_64")
 
-    def install_node(self, major):
+    def install_node(self, major, expected_release=None):
         self.calls.append(("node", "install", major))
         return NodeInstallResult(True, f"installed Node.js {major}", None, self.node_versions_snapshot())
+
+    def rollback_node(self, major, expected_release=None):
+        self.calls.append(("node", "rollback", major))
+        return NodeInstallResult(True, f"rolled back Node.js {major}", None, self.node_versions_snapshot())
+
+    def refresh_runtime_catalogs(self):
+        self.calls.append(("catalogs", "refresh"))
+        return RuntimeCatalogRefreshResult(self.php_versions_snapshot(), self.node_versions_snapshot())
 
     def parking_snapshot(self):
         return ParkingSnapshot(("/home/demo/Code",), ())
@@ -261,6 +274,22 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(responses[0]["ok"])
         self.assertEqual("installed Node.js 24", responses[0]["result"]["summary"])
         self.assertEqual([("node", "install", "24")], controller.calls)
+
+    def test_runtime_rollback_and_refresh_are_dispatched(self):
+        responses, controller = self.invoke(
+            request(1, "php.rollback", {"minor": "8.4"}),
+            request(2, "node.rollback", {"major": "22"}),
+            request(3, "runtime_catalogs.refresh"),
+        )
+        self.assertTrue(all(response["ok"] for response in responses))
+        self.assertEqual([("php", "rollback", "8.4"), ("node", "rollback", "22"),
+                          ("catalogs", "refresh")], controller.calls)
+
+    def test_runtime_refresh_rejects_parameters(self):
+        responses, controller = self.invoke(request(1, "runtime_catalogs.refresh", {"unexpected": True}))
+        self.assertFalse(responses[0]["ok"])
+        self.assertEqual("invalid_params", responses[0]["error"]["code"])
+        self.assertEqual([], controller.calls)
 
     def test_parking_mutations_are_dispatched(self):
         responses, controller = self.invoke(

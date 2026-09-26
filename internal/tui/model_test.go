@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -25,19 +26,44 @@ func TestUnavailableWorkerStateNamesUserSystemd(t *testing.T) {
 type fakeAPI struct {
 	snapshot backend.Snapshot
 	calls    []string
+	targets  []string
 }
 
 func (f *fakeAPI) Snapshot() (backend.Snapshot, error) { return f.snapshot, nil }
 func (f *fakeAPI) SetDashboardActive(bool) (backend.DashboardOperationResult, error) {
 	return backend.DashboardOperationResult{}, nil
 }
-func (f *fakeAPI) InstallPHP(minor string) (backend.PHPInstallResult, error) {
+func (f *fakeAPI) InstallPHP(minor string, expected ...string) (backend.PHPInstallResult, error) {
 	f.calls = append(f.calls, "php-install:"+minor)
+	if len(expected) > 0 {
+		f.targets = append(f.targets, expected[0])
+	}
 	return backend.PHPInstallResult{OK: true, Summary: "Installed PHP " + minor, Snapshot: f.snapshot.PHP}, nil
 }
-func (f *fakeAPI) InstallNode(major string) (backend.NodeInstallResult, error) {
+func (f *fakeAPI) InstallNode(major string, expected ...string) (backend.NodeInstallResult, error) {
 	f.calls = append(f.calls, "node-install:"+major)
+	if len(expected) > 0 {
+		f.targets = append(f.targets, expected[0])
+	}
 	return backend.NodeInstallResult{OK: true, Summary: "Installed Node.js " + major, Snapshot: f.snapshot.Node}, nil
+}
+func (f *fakeAPI) RollbackPHP(minor string, expected ...string) (backend.PHPInstallResult, error) {
+	f.calls = append(f.calls, "php-rollback:"+minor)
+	if len(expected) > 0 {
+		f.targets = append(f.targets, expected[0])
+	}
+	return backend.PHPInstallResult{OK: true, Summary: "Rolled back PHP " + minor, Snapshot: f.snapshot.PHP}, nil
+}
+func (f *fakeAPI) RollbackNode(major string, expected ...string) (backend.NodeInstallResult, error) {
+	f.calls = append(f.calls, "node-rollback:"+major)
+	if len(expected) > 0 {
+		f.targets = append(f.targets, expected[0])
+	}
+	return backend.NodeInstallResult{OK: true, Summary: "Rolled back Node.js " + major, Snapshot: f.snapshot.Node}, nil
+}
+func (f *fakeAPI) RefreshRuntimeCatalogs() (backend.RuntimeCatalogRefreshResult, error) {
+	f.calls = append(f.calls, "catalog-refresh")
+	return backend.RuntimeCatalogRefreshResult{PHP: f.snapshot.PHP, Node: f.snapshot.Node}, nil
 }
 func (f *fakeAPI) AddParkingPath(path string) (backend.ParkingOperationResult, error) {
 	f.calls = append(f.calls, "parking-add:"+path)
@@ -107,6 +133,7 @@ func (f *fakeAPI) Close() error { return nil }
 
 func sampleSnapshot() backend.Snapshot {
 	node := "22"
+	php85, php84, node24, node22 := "8.5.8", "8.4.23", "24.8.0", "22.19.0"
 	projectConfig := ".paddock/nginx.conf"
 	return backend.Snapshot{
 		ProtocolVersion: backend.ProtocolVersion,
@@ -120,12 +147,12 @@ func sampleSnapshot() backend.Snapshot {
 			Addresses:  []string{"127.0.0.1:6379 → 6379"},
 		}}},
 		PHP: backend.PHPVersionsSnapshot{Architecture: "x86_64", Versions: []backend.PHPVersion{
-			{Minor: "8.5", Release: "8.5.8", Architecture: "x86_64", Available: true},
-			{Minor: "8.4", Release: "8.4.23", Architecture: "x86_64", Available: true, Installed: true},
+			{Minor: "8.5", Release: "8.5.8", Architecture: "x86_64", Available: true, AvailableRelease: &php85},
+			{Minor: "8.4", Release: "8.4.23", Architecture: "x86_64", Available: true, Installed: true, InstalledRelease: &php84, AvailableRelease: &php84},
 		}},
 		Node: backend.NodeVersionsSnapshot{Architecture: "x86_64", Versions: []backend.NodeVersion{
-			{Major: "24", Release: "24.8.0", Architecture: "x86_64", Available: true},
-			{Major: "22", Release: "22.19.0", Architecture: "x86_64", Available: true, Installed: true},
+			{Major: "24", Release: "24.8.0", Architecture: "x86_64", Available: true, AvailableRelease: &node24},
+			{Major: "22", Release: "22.19.0", Architecture: "x86_64", Available: true, Installed: true, InstalledRelease: &node22, AvailableRelease: &node22},
 		}},
 		Parking: backend.ParkingSnapshot{Paths: []string{"/home/demo/Code"}},
 		Sites: backend.LinkedSitesSnapshot{Sites: []backend.Site{{
@@ -147,13 +174,18 @@ func TestPHPPageListsAndInstallsAvailableVersions(t *testing.T) {
 	m.loaded, m.snapshot, m.tab, m.width = true, sampleSnapshot(), 3, 80
 	api.snapshot = m.snapshot
 	rendered := ansi.Strip(m.renderPHP())
-	if !strings.Contains(rendered, "PHP 8.5.8") || !strings.Contains(rendered, "[ Install ]") || !strings.Contains(rendered, "✓ Installed") {
+	if !strings.Contains(rendered, "8.5.8") || !strings.Contains(rendered, "[ Install ]") || !strings.Contains(rendered, "Current") {
 		t.Fatalf("PHP runtime states are missing: %q", rendered)
 	}
 	updated, command := m.installSelectedPHP()
 	m = updated.(Model)
+	if m.phpBusy || command != nil || m.runtimeConfirm != "php" {
+		t.Fatal("available PHP did not request confirmation")
+	}
+	updated, command = m.confirmRuntimeAction()
+	m = updated.(Model)
 	if !m.phpBusy || command == nil {
-		t.Fatal("available PHP did not start installation")
+		t.Fatal("confirmed PHP install did not start")
 	}
 	message := executeCommand(command)
 	if message == nil || len(api.calls) == 0 || api.calls[len(api.calls)-1] != "php-install:8.5" {
@@ -173,13 +205,18 @@ func TestNodePageListsAndInstallsAvailableVersions(t *testing.T) {
 	m.loaded, m.snapshot, m.tab, m.width = true, sampleSnapshot(), 4, 80
 	api.snapshot = m.snapshot
 	rendered := ansi.Strip(m.renderNode())
-	if !strings.Contains(rendered, "Node.js 24.8.0") || !strings.Contains(rendered, "[ Install ]") || !strings.Contains(rendered, "✓ Installed") {
+	if !strings.Contains(rendered, "24.8.0") || !strings.Contains(rendered, "[ Install ]") || !strings.Contains(rendered, "Current") {
 		t.Fatalf("Node.js runtime states are missing: %q", rendered)
 	}
 	updated, command := m.installSelectedNode()
 	m = updated.(Model)
+	if m.nodeBusy || command != nil || m.runtimeConfirm != "node" {
+		t.Fatal("available Node.js did not request confirmation")
+	}
+	updated, command = m.confirmRuntimeAction()
+	m = updated.(Model)
 	if !m.nodeBusy || command == nil {
-		t.Fatal("available Node.js did not start installation")
+		t.Fatal("confirmed Node install did not start")
 	}
 	executeCommand(command)
 	if len(api.calls) == 0 || api.calls[len(api.calls)-1] != "node-install:24" {
@@ -190,6 +227,158 @@ func TestNodePageListsAndInstallsAvailableVersions(t *testing.T) {
 	_, command = m.installSelectedNode()
 	if command != nil {
 		t.Fatal("installed Node.js offered another installation")
+	}
+}
+
+func TestRuntimeUpdateConfirmationCancellationAndSpinner(t *testing.T) {
+	api := &fakeAPI{}
+	m := NewWithAPI(api)
+	m.loaded, m.snapshot, m.tab, m.width = true, sampleSnapshot(), 3, 100
+	old, next := "8.4.23", "8.4.24"
+	m.snapshot.PHP.Versions[1].InstalledRelease = &old
+	m.snapshot.PHP.Versions[1].AvailableRelease = &next
+	m.snapshot.PHP.Versions[1].UpdateAvailable = true
+	m.phpCursor = 1
+	api.snapshot = m.snapshot
+	if got := ansi.Strip(m.renderPHP()); !strings.Contains(got, "Update available") || !strings.Contains(got, "[ Update ]") {
+		t.Fatalf("update action missing: %q", got)
+	}
+	updated, command := m.installSelectedPHP()
+	m = updated.(Model)
+	if command != nil || !strings.Contains(ansi.Strip(m.renderPHP()), "8.4.23 → 8.4.24") {
+		t.Fatal("exact patch confirmation missing")
+	}
+	updated, _ = m.handleKey(press(tea.KeyEscape, "esc", 0))
+	m = updated.(Model)
+	if m.runtimeConfirm != "" || len(api.calls) != 0 {
+		t.Fatal("cancellation changed the runtime")
+	}
+	updated, _ = m.installSelectedPHP()
+	m = updated.(Model)
+	updated, command = m.handleKey(press('y', "y", 0))
+	m = updated.(Model)
+	if command == nil || !m.phpBusy || !strings.Contains(ansi.Strip(m.renderPHP()), "⠋ Working") {
+		t.Fatal("confirmed update did not show spinner")
+	}
+	if _, duplicate := m.installSelectedPHP(); duplicate != nil {
+		t.Fatal("duplicate update was accepted")
+	}
+	executeCommand(command)
+	if len(api.calls) != 1 || api.calls[0] != "php-install:8.4" {
+		t.Fatalf("calls = %v", api.calls)
+	}
+	if len(api.targets) != 1 || api.targets[0] != "8.4.24" {
+		t.Fatalf("confirmed target = %v", api.targets)
+	}
+}
+
+func TestRuntimeRollbackOnlyWhenPreviousPatchExists(t *testing.T) {
+	api := &fakeAPI{}
+	m := NewWithAPI(api)
+	m.loaded, m.snapshot, m.tab, m.width = true, sampleSnapshot(), 4, 100
+	current, previous := "24.8.0", "24.7.0"
+	m.snapshot.Node.Versions[0].Installed = true
+	m.snapshot.Node.Versions[0].InstalledRelease = &current
+	m.snapshot.Node.Versions[0].PreviousRelease = &previous
+	if !strings.Contains(ansi.Strip(m.renderNode()), "[ Rollback ]") {
+		t.Fatal("rollback not offered")
+	}
+	updated, _ := m.rollbackSelectedNode()
+	m = updated.(Model)
+	if !strings.Contains(ansi.Strip(m.renderNode()), "24.8.0 → 24.7.0") {
+		t.Fatal("rollback confirmation missing")
+	}
+	updated, command := m.confirmRuntimeAction()
+	m = updated.(Model)
+	executeCommand(command)
+	if len(api.calls) != 1 || api.calls[0] != "node-rollback:24" {
+		t.Fatalf("calls = %v", api.calls)
+	}
+	if len(api.targets) != 1 || api.targets[0] != "24.7.0" {
+		t.Fatalf("confirmed rollback target = %v", api.targets)
+	}
+	m.busy, m.nodeCursor = false, 1
+	updated, command = m.rollbackSelectedNode()
+	if command != nil || updated.(Model).runtimeConfirm != "" {
+		t.Fatal("rollback offered without retained patch")
+	}
+}
+
+func TestRuntimeCatalogRefreshIsAsyncAndKeepsInstalledDataOnFailure(t *testing.T) {
+	api := &fakeAPI{}
+	m := NewWithAPI(api)
+	snapshot := sampleSnapshot()
+	snapshot.CatalogAutoRefreshEnabled = true
+	snapshot.PHP.CatalogSource = "bundled"
+	snapshot.Node.CatalogSource = "bundled"
+	updated, command := m.Update(snapshotMsg{generation: m.generation, snapshot: snapshot})
+	m = updated.(Model)
+	if command == nil || !m.loaded || m.busy || !m.catalogRefreshBusy {
+		t.Fatal("initial render blocked instead of starting a background refresh")
+	}
+	if len(api.calls) != 0 {
+		t.Fatal("refresh ran before command execution")
+	}
+	api.snapshot = snapshot
+	messages := executeCommand(command)
+	if len(api.calls) != 1 || api.calls[0] != "catalog-refresh" {
+		t.Fatalf("calls = %v", api.calls)
+	}
+	updated, _ = m.Update(messages[0])
+	m = updated.(Model)
+	if m.catalogRefreshBusy || len(m.snapshot.PHP.Versions) == 0 {
+		t.Fatal("refresh lost runtime inventory")
+	}
+	updated, _ = m.Update(catalogRefreshMsg{err: errors.New("offline")})
+	m = updated.(Model)
+	if !strings.Contains(m.err, "offline") || len(m.snapshot.Node.Versions) == 0 {
+		t.Fatal("offline refresh hid installed runtimes")
+	}
+	updated, command = m.refreshCatalogs()
+	m = updated.(Model)
+	if command == nil || !m.catalogRefreshBusy {
+		t.Fatal("manual refresh unavailable")
+	}
+}
+
+func TestRuntimeCatalogDueRespectsCheckTimeAndOverrides(t *testing.T) {
+	snapshot := sampleSnapshot()
+	now := time.Now()
+	recent := now.Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+	snapshot.PHP.CatalogCheckedAt = &recent
+	snapshot.Node.CatalogCheckedAt = &recent
+	if catalogsDue(snapshot, now) {
+		t.Fatal("recent catalogs are due")
+	}
+	old := now.Add(-25 * time.Hour).UTC().Format(time.RFC3339Nano)
+	snapshot.Node.CatalogCheckedAt = &old
+	if !catalogsDue(snapshot, now) {
+		t.Fatal("old catalog did not trigger refresh")
+	}
+	snapshot.Node.CatalogSource = "local override"
+	if catalogsDue(snapshot, now) {
+		t.Fatal("local override triggered remote refresh")
+	}
+}
+
+func TestRuntimePagesDistinguishOfflineAndUnknownPatches(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.loaded, m.snapshot, m.tab, m.width = true, sampleSnapshot(), 3, 100
+	m.snapshot.PHP.CatalogSource = "bundled"
+	warning := "cached signature invalid"
+	m.snapshot.PHP.CatalogWarning = &warning
+	m.snapshot.PHP.CatalogStale = true
+	m.snapshot.PHP.Versions[1].Available = false
+	m.snapshot.PHP.Versions[1].AvailableRelease = nil
+	page := ansi.Strip(m.renderPHP())
+	if !strings.Contains(page, "Catalog unavailable") || !strings.Contains(page, "stale") || !strings.Contains(page, warning) {
+		t.Fatalf("offline state missing: %q", page)
+	}
+	m.snapshot.PHP.Versions[1].Available = true
+	m.snapshot.PHP.Versions[1].InstalledRelease = nil
+	page = ansi.Strip(m.renderPHP())
+	if !strings.Contains(page, "Unknown patch") || strings.Contains(page, "[ Update ]") {
+		t.Fatalf("unknown patch was misrepresented: %q", page)
 	}
 }
 
@@ -842,8 +1031,8 @@ func TestMouseCanNavigateTabsAndPrimaryTables(t *testing.T) {
 		t.Fatalf("clicking PHP tab selected tab %d", m.tab)
 	}
 	updated, command := m.handleMouseClick(tea.MouseClickMsg{X: 4, Y: 6, Button: tea.MouseLeft})
-	if command == nil || !updated.(Model).phpBusy {
-		t.Fatal("clicking an available PHP runtime did not start installation")
+	if command != nil || updated.(Model).runtimeConfirm != "php" {
+		t.Fatal("clicking an available PHP runtime did not request confirmation")
 	}
 }
 

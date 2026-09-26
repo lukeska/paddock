@@ -163,8 +163,13 @@ class NodeInstaller:
     def __init__(self, store: StateStore):
         self.store, self.paths, self.registry = store, store.paths, NodeRegistry(store)
 
-    def install(self, major: str, manifest: NodeManifest, *, replace_custom: bool = False) -> Path:
+    def install(self, major: str, manifest: NodeManifest, *, replace_custom: bool = False,
+                expected_release: str | None = None) -> Path:
         artifact = manifest.select(major)
+        if expected_release is not None and artifact.node != expected_release:
+            raise NodeRuntimeError(
+                f"Node {major} catalog changed from confirmed {expected_release} to {artifact.node}; confirm again"
+            )
         with exclusive_lock(self.paths.state / "node-install.lock"):
             current = next((item for item in self.registry.list() if item.version == artifact.major), None)
             releases = self.paths.data / "node-runtimes/releases"
@@ -214,12 +219,16 @@ class NodeInstaller:
             self._switch(artifact.major, release, artifact.node, artifact.sha256, current)
             return release
 
-    def rollback(self, major: str) -> Path:
+    def rollback(self, major: str, *, expected_release: str | None = None) -> Path:
         version = normalize_major(major)
         with exclusive_lock(self.paths.state / "node-install.lock"):
             current = self.registry.resolve(version)
             if not current.previous_release or not current.previous_sha256:
                 raise NodeRuntimeError(f"Node {version} has no retained previous release")
+            if expected_release is not None and current.previous_release != expected_release:
+                raise NodeRuntimeError(
+                    f"Node {version} rollback target changed from confirmed {expected_release}; confirm again"
+                )
             releases = self.paths.data / "node-runtimes/releases"
             if not self._managed(current.path, current.release, current.sha256, releases):
                 raise NodeRuntimeError(f"Node {version} active runtime is not managed by Paddock")

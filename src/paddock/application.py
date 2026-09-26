@@ -377,6 +377,13 @@ class NodeVersionsSnapshot:
 
 
 @dataclass(frozen=True)
+class RuntimeCatalogRefreshResult:
+    php: PhpVersionsSnapshot
+    node: NodeVersionsSnapshot
+    errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class NodeInstallResult:
     ok: bool
     summary: str
@@ -754,7 +761,7 @@ class PaddockController:
                                    selection.warning if selection else None,
                                    _catalog_stale(selection))
 
-    def install_php(self, minor: str) -> PhpInstallResult:
+    def install_php(self, minor: str, expected_release: str | None = None) -> PhpInstallResult:
         """Install one published runtime and return a fresh presentation model."""
         try:
             manifest = self._php_catalog()
@@ -762,9 +769,8 @@ class PaddockController:
                 raise FileNotFoundError(
                     f"no PHP runtime catalog is available for {minor}"
                 )
-            destination = RuntimeInstaller(self.store, self.runner).install(
-                minor, manifest
-            )
+            options = {"expected_release": expected_release} if expected_release else {}
+            destination = RuntimeInstaller(self.store, self.runner).install(minor, manifest, **options)
         except (OSError, RuntimeError, ValueError, StateError) as error:
             return PhpInstallResult(
                 False, f"PHP {minor} could not be installed", str(error),
@@ -775,9 +781,11 @@ class PaddockController:
             self.php_versions_snapshot(),
         )
 
-    def rollback_php(self, minor: str) -> PhpInstallResult:
+    def rollback_php(self, minor: str, expected_release: str | None = None) -> PhpInstallResult:
         try:
-            destination = RuntimeInstaller(self.store, self.runner).rollback(minor)
+            destination = RuntimeInstaller(self.store, self.runner).rollback(
+                minor, expected_release=expected_release
+            )
         except (OSError, RuntimeError, ValueError, StateError) as error:
             return PhpInstallResult(False, f"PHP {minor} could not be rolled back", str(error),
                                     self.php_versions_snapshot())
@@ -812,23 +820,37 @@ class PaddockController:
                                     selection.warning if selection else None,
                                     _catalog_stale(selection))
 
-    def install_node(self, major: str) -> NodeInstallResult:
+    def install_node(self, major: str, expected_release: str | None = None) -> NodeInstallResult:
         try:
             manifest = self._node_catalog()
             if manifest is None: raise FileNotFoundError(f"no Node runtime catalog is available for {major}")
-            destination = NodeInstaller(self.store).install(major, manifest)
+            destination = NodeInstaller(self.store).install(
+                major, manifest, expected_release=expected_release
+            )
         except (OSError, RuntimeError, ValueError, StateError) as error:
             return NodeInstallResult(False, f"Node {major} could not be installed", str(error), self.node_versions_snapshot())
         return NodeInstallResult(True, f"Installed Node {major}", str(destination), self.node_versions_snapshot())
 
-    def rollback_node(self, major: str) -> NodeInstallResult:
+    def rollback_node(self, major: str, expected_release: str | None = None) -> NodeInstallResult:
         try:
-            destination = NodeInstaller(self.store).rollback(major)
+            destination = NodeInstaller(self.store).rollback(major, expected_release=expected_release)
         except (OSError, RuntimeError, ValueError, StateError) as error:
             return NodeInstallResult(False, f"Node {major} could not be rolled back", str(error),
                                      self.node_versions_snapshot())
         return NodeInstallResult(True, f"Rolled back Node {major}", str(destination),
                                  self.node_versions_snapshot())
+
+    def refresh_runtime_catalogs(self) -> RuntimeCatalogRefreshResult:
+        catalog = CatalogStore(self.store.paths)
+        errors = []
+        for kind in ("php", "node"):
+            try:
+                catalog.refresh(kind)
+            except (OSError, RuntimeError, ValueError) as error:
+                errors.append(f"{kind}: {error}")
+        return RuntimeCatalogRefreshResult(
+            self.php_versions_snapshot(), self.node_versions_snapshot(), tuple(errors)
+        )
 
     def add_parking_path(self, path: str) -> ParkingOperationResult:
         try:

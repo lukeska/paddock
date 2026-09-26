@@ -405,6 +405,19 @@ class DashboardTests(ApplicationFixture, unittest.TestCase):
 
 
 class PhpVersionsSnapshotTests(ApplicationFixture, unittest.TestCase):
+    def test_catalog_refresh_reports_partial_failure_without_losing_inventory(self) -> None:
+        controller = self.controller(StateRunner())
+        with patch("paddock.application.CatalogStore.refresh") as refresh_call:
+            def refresh(kind):
+                if kind == "php":
+                    raise RuntimeError("offline")
+            refresh_call.side_effect = refresh
+            result = controller.refresh_runtime_catalogs()
+        self.assertEqual(("php: offline",), result.errors)
+        self.assertTrue(result.php.versions)
+        self.assertTrue(result.node.versions)
+        self.assertEqual(["php", "node"], [call.args[0] for call in refresh_call.call_args_list])
+
     def test_prefers_the_user_php_catalog(self) -> None:
         architecture = normalized_architecture()
         user_catalog = self.store.paths.config / "artifacts.json"

@@ -45,22 +45,22 @@ def sites() -> dict[str, object]:
 
 def snapshot(state: str = "active") -> dict[str, object]:
     return {
-        "protocol_version": 7,
+        "protocol_version": 8,
         "dashboard": dashboard(state),
         "services": {"instances": []},
         "sites": sites(),
         "php": {
             "architecture": "x86_64",
             "versions": [
-                {"minor": "8.5", "release": "8.5.8", "architecture": "x86_64", "installed": True, "available": True, "path": "/php/8.5"},
-                {"minor": "8.4", "release": "8.4.23", "architecture": "x86_64", "installed": False, "available": True, "path": None},
+                {"minor": "8.5", "release": "8.5.8", "architecture": "x86_64", "installed": True, "available": True, "path": "/php/8.5", "installed_release": "8.5.8", "available_release": "8.5.8"},
+                {"minor": "8.4", "release": "8.4.23", "architecture": "x86_64", "installed": False, "available": True, "path": None, "available_release": "8.4.23"},
             ],
         },
         "node": {
             "architecture": "x86_64",
             "versions": [
-                {"major": "24", "release": "24.8.0", "architecture": "x86_64", "installed": False, "available": True, "path": None},
-                {"major": "22", "release": "22.19.0", "architecture": "x86_64", "installed": True, "available": True, "path": "/node/22"},
+                {"major": "24", "release": "24.8.0", "architecture": "x86_64", "installed": False, "available": True, "path": None, "available_release": "24.8.0"},
+                {"major": "22", "release": "22.19.0", "architecture": "x86_64", "installed": True, "available": True, "path": "/node/22", "installed_release": "22.19.0", "available_release": "22.19.0"},
             ],
         },
         "parking": {"paths": ["/home/demo/Code"], "conflicts": []},

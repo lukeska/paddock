@@ -147,6 +147,11 @@ reporting PHP and Node failures separately. The remote catalog endpoints are
 not published yet, so refresh will fail until catalog promotion is enabled;
 the bundled catalogs continue to work offline. See the
 [runtime catalog contract](docs/runtime-catalog-v1.md).
+The PHP and Node TUI tabs show installed and available patches, allow explicit
+updates and rollbacks, and use `R` to refresh catalog metadata. Background
+refresh on TUI startup is disabled until the publishing surface is ready; for
+testing, set `PADDOCK_AUTO_REFRESH_CATALOGS=1` to check asynchronously when the
+last successful catalog check is over 24 hours old.
 
 After `paddock setup`, new terminal sessions also expose project-aware `php`,
 `composer`, `laravel`, `node`, `npm`, and `npx` shims directly. Setup installs

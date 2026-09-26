@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+import os
 import sys
 import traceback
 from typing import IO, Any
@@ -21,9 +22,10 @@ from .omarchy_theme import ThemeError, load_palette
 
 # 6 adds parking-folder discovery and management.
 # 7 adds the per-site Laravel scheduler worker.
+# 8 adds patch-aware runtime actions and signed catalog refresh.
 # The bridge and the Go client ship in one package, so both
 # sides check for equality and move together.
-PROTOCOL_VERSION = 7
+PROTOCOL_VERSION = 8
 WORKERS = {"queue", "reverb", "scheduler"}
 
 
@@ -46,6 +48,12 @@ def _required_bool(params: dict[str, object], name: str) -> bool:
     if not isinstance(value, bool):
         raise RequestError("invalid_params", f"{name} must be a boolean")
     return value
+
+
+def _optional_string(params: dict[str, object], name: str) -> str | None:
+    if name not in params:
+        return None
+    return _required_string(params, name)
 
 
 def _worker(params: dict[str, object]) -> str:
@@ -92,6 +100,7 @@ def dispatch(
             "sites": asdict(controller.linked_sites_snapshot()),
             "php": asdict(controller.php_versions_snapshot()),
             "node": asdict(controller.node_versions_snapshot()),
+            "catalog_auto_refresh_enabled": os.environ.get("PADDOCK_AUTO_REFRESH_CATALOGS") == "1",
             "parking": asdict(controller.parking_snapshot()),
             "theme": _theme(palette_path),
         }
@@ -110,12 +119,28 @@ def dispatch(
         return asdict(controller.set_dashboard_active(active))
 
     if method == "php.install":
-        _only(params, {"minor"})
-        return asdict(controller.install_php(_required_string(params, "minor")))
+        _only(params, {"minor", "expected_release"})
+        return asdict(controller.install_php(_required_string(params, "minor"),
+                                             _optional_string(params, "expected_release")))
+
+    if method == "php.rollback":
+        _only(params, {"minor", "expected_release"})
+        return asdict(controller.rollback_php(_required_string(params, "minor"),
+                                              _optional_string(params, "expected_release")))
 
     if method == "node.install":
-        _only(params, {"major"})
-        return asdict(controller.install_node(_required_string(params, "major")))
+        _only(params, {"major", "expected_release"})
+        return asdict(controller.install_node(_required_string(params, "major"),
+                                              _optional_string(params, "expected_release")))
+
+    if method == "node.rollback":
+        _only(params, {"major", "expected_release"})
+        return asdict(controller.rollback_node(_required_string(params, "major"),
+                                               _optional_string(params, "expected_release")))
+
+    if method == "runtime_catalogs.refresh":
+        _only(params, set())
+        return asdict(controller.refresh_runtime_catalogs())
 
     if method == "parking.add":
         _only(params, {"path"})

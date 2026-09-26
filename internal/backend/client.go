@@ -14,7 +14,7 @@ import (
 // Moves with tui_bridge.PROTOCOL_VERSION. Both sides check for equality
 // rather than a minimum, because the bridge and this client ship in the
 // same package and a mismatch means a broken install, not an old peer.
-const ProtocolVersion = 7
+const ProtocolVersion = 8
 
 type rpcError struct {
 	Code    string `json:"code"`
@@ -134,15 +134,49 @@ func (c *Client) SetDashboardActive(active bool) (DashboardOperationResult, erro
 	return result, err
 }
 
-func (c *Client) InstallPHP(minor string) (PHPInstallResult, error) {
+func (c *Client) InstallPHP(minor string, expected ...string) (PHPInstallResult, error) {
 	var result PHPInstallResult
-	err := c.call("php.install", map[string]interface{}{"minor": minor}, &result)
+	params := map[string]interface{}{"minor": minor}
+	if len(expected) > 0 {
+		params["expected_release"] = expected[0]
+	}
+	err := c.call("php.install", params, &result)
 	return result, err
 }
 
-func (c *Client) InstallNode(major string) (NodeInstallResult, error) {
+func (c *Client) InstallNode(major string, expected ...string) (NodeInstallResult, error) {
 	var result NodeInstallResult
-	err := c.call("node.install", map[string]interface{}{"major": major}, &result)
+	params := map[string]interface{}{"major": major}
+	if len(expected) > 0 {
+		params["expected_release"] = expected[0]
+	}
+	err := c.call("node.install", params, &result)
+	return result, err
+}
+
+func (c *Client) RollbackPHP(minor string, expected ...string) (PHPInstallResult, error) {
+	var result PHPInstallResult
+	params := map[string]interface{}{"minor": minor}
+	if len(expected) > 0 {
+		params["expected_release"] = expected[0]
+	}
+	err := c.call("php.rollback", params, &result)
+	return result, err
+}
+
+func (c *Client) RollbackNode(major string, expected ...string) (NodeInstallResult, error) {
+	var result NodeInstallResult
+	params := map[string]interface{}{"major": major}
+	if len(expected) > 0 {
+		params["expected_release"] = expected[0]
+	}
+	err := c.call("node.rollback", params, &result)
+	return result, err
+}
+
+func (c *Client) RefreshRuntimeCatalogs() (RuntimeCatalogRefreshResult, error) {
+	var result RuntimeCatalogRefreshResult
+	err := c.call("runtime_catalogs.refresh", map[string]interface{}{}, &result)
 	return result, err
 }
 

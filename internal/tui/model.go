@@ -26,8 +26,11 @@ const (
 type API interface {
 	Snapshot() (backend.Snapshot, error)
 	SetDashboardActive(active bool) (backend.DashboardOperationResult, error)
-	InstallPHP(minor string) (backend.PHPInstallResult, error)
-	InstallNode(major string) (backend.NodeInstallResult, error)
+	InstallPHP(minor string, expected ...string) (backend.PHPInstallResult, error)
+	InstallNode(major string, expected ...string) (backend.NodeInstallResult, error)
+	RollbackPHP(minor string, expected ...string) (backend.PHPInstallResult, error)
+	RollbackNode(major string, expected ...string) (backend.NodeInstallResult, error)
+	RefreshRuntimeCatalogs() (backend.RuntimeCatalogRefreshResult, error)
 	AddParkingPath(path string) (backend.ParkingOperationResult, error)
 	RemoveParkingPath(path string) (backend.ParkingOperationResult, error)
 	CreateService(kind, label string, port *int, autostart bool) (backend.ServiceOperationResult, error)
@@ -48,68 +51,76 @@ type API interface {
 }
 
 type Model struct {
-	api            API
-	python         string
-	snapshot       backend.Snapshot
-	loaded         bool
-	width          int
-	height         int
-	tab            int
-	cursor         int
-	worker         int
-	detailOpen     bool
-	detailSite     string
-	detailCursor   int
-	serviceCursor  int
-	phpCursor      int
-	nodeCursor     int
-	parkingCursor  int
-	serviceDetail  bool
-	serviceID      string
-	serviceAction  int
-	serviceForm    string
-	serviceField   int
-	serviceType    int
-	serviceLabel   string
-	servicePort    string
-	serviceBoot    bool
-	serviceConfirm bool
-	serviceBusy    bool
-	phpBusy        bool
-	phpInstalling  string
-	nodeBusy       bool
-	nodeInstalling string
-	parkingForm    bool
-	parkingPath    string
-	parkingMatches []string
-	parkingConfirm bool
-	parkingBusy    bool
-	openURL        func(string) error
-	launchCommand  func(string, ...string) error
-	copyText       func(string) error
-	filtering      bool
-	filter         string
-	logs           []string
-	logsOpen       bool
-	logOffset      int
-	logKind        string
-	logServiceID   string
-	logSite        string
-	logWorker      string
-	busy           bool
-	dashboardBusy  bool
-	dashboardGoal  bool
-	spinnerFrame   int
-	status         string
-	toastID        int
-	errorID        int
-	logTitle       string
-	err            string
-	errorOpen      bool
-	errorOffset    int
-	generation     int
-	terminalDark   bool
-	styles         styles
+	api                  API
+	python               string
+	snapshot             backend.Snapshot
+	loaded               bool
+	width                int
+	height               int
+	tab                  int
+	cursor               int
+	worker               int
+	detailOpen           bool
+	detailSite           string
+	detailCursor         int
+	serviceCursor        int
+	phpCursor            int
+	nodeCursor           int
+	parkingCursor        int
+	serviceDetail        bool
+	serviceID            string
+	serviceAction        int
+	serviceForm          string
+	serviceField         int
+	serviceType          int
+	serviceLabel         string
+	servicePort          string
+	serviceBoot          bool
+	serviceConfirm       bool
+	serviceBusy          bool
+	phpBusy              bool
+	phpInstalling        string
+	nodeBusy             bool
+	nodeInstalling       string
+	runtimeConfirm       string
+	runtimeAction        string
+	runtimeVersion       string
+	runtimeFrom          string
+	runtimeTo            string
+	catalogRefreshBusy   bool
+	autoRefreshAttempted bool
+	catalogRefreshError  string
+	parkingForm          bool
+	parkingPath          string
+	parkingMatches       []string
+	parkingConfirm       bool
+	parkingBusy          bool
+	openURL              func(string) error
+	launchCommand        func(string, ...string) error
+	copyText             func(string) error
+	filtering            bool
+	filter               string
+	logs                 []string
+	logsOpen             bool
+	logOffset            int
+	logKind              string
+	logServiceID         string
+	logSite              string
+	logWorker            string
+	busy                 bool
+	dashboardBusy        bool
+	dashboardGoal        bool
+	spinnerFrame         int
+	status               string
+	toastID              int
+	errorID              int
+	logTitle             string
+	err                  string
+	errorOpen            bool
+	errorOffset          int
+	generation           int
+	terminalDark         bool
+	styles               styles
 }
 
 type connectedMsg struct {
@@ -140,6 +151,10 @@ type nodeInstallMsg struct {
 	generation int
 	result     backend.NodeInstallResult
 	err        error
+}
+type catalogRefreshMsg struct {
+	result backend.RuntimeCatalogRefreshResult
+	err    error
 }
 type parkingMutationMsg struct {
 	generation int
@@ -275,6 +290,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampPHPCursor()
 		m.clampNodeCursor()
 		m.clampParkingCursor()
+		if !m.autoRefreshAttempted {
+			m.autoRefreshAttempted = true
+			if msg.snapshot.CatalogAutoRefreshEnabled && catalogsDue(msg.snapshot, time.Now()) {
+				m.catalogRefreshBusy = true
+				return m, refreshRuntimeCatalogs(m.api)
+			}
+		}
 	case mutationMsg:
 		if msg.generation != m.generation {
 			return m, nil
@@ -379,6 +401,25 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.generation++
 		m.busy = true
 		return m, tea.Batch(load(m.api, m.generation), toast)
+	case catalogRefreshMsg:
+		m.catalogRefreshBusy = false
+		if msg.err != nil {
+			m.catalogRefreshError = msg.err.Error()
+			m.err = "Runtime catalog refresh failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.snapshot.PHP, m.snapshot.Node = msg.result.PHP, msg.result.Node
+		m.clampPHPCursor()
+		m.clampNodeCursor()
+		m.catalogRefreshError = strings.Join(msg.result.Errors, "; ")
+		if m.catalogRefreshError != "" {
+			m.err = "Runtime catalog refresh failed: " + m.catalogRefreshError
+		} else {
+			m.err = ""
+			m.status = "Runtime catalogs refreshed"
+			m.toastID++
+			return m, dismissToast(m.toastID)
+		}
 	case parkingMutationMsg:
 		if msg.generation != m.generation {
 			return m, nil
@@ -522,6 +563,9 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.errorOpen || m.logsOpen {
+		return m, nil
+	}
+	if m.runtimeConfirm != "" {
 		return m, nil
 	}
 	if tab, ok := m.tabAt(msg.X, msg.Y); ok {
@@ -862,6 +906,15 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.runtimeConfirm != "" {
+		switch key {
+		case "y", "Y", "enter":
+			return m.confirmRuntimeAction()
+		case "n", "N", "esc":
+			m.runtimeConfirm = ""
+		}
+		return m, nil
+	}
 	if m.serviceForm != "" {
 		return m.handleServiceFormKey(key)
 	}
@@ -922,6 +975,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, load(m.api, m.generation)
 		}
 		return m, nil
+	}
+	if key == "R" && (m.tab == 3 || m.tab == 4) {
+		return m.refreshCatalogs()
 	}
 	switch key {
 	case "tab":
@@ -998,6 +1054,12 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.installSelectedPHP()
 		} else if m.tab == 4 {
 			return m.installSelectedNode()
+		}
+	case "b":
+		if m.tab == 3 {
+			return m.rollbackSelectedPHP()
+		} else if m.tab == 4 {
+			return m.rollbackSelectedNode()
 		}
 	case "a":
 		if m.tab == 2 {
@@ -1898,55 +1960,216 @@ func (m *Model) clampPHPCursor() {
 }
 
 func (m Model) renderPHP() string {
+	if m.runtimeConfirm == "php" {
+		return m.renderRuntimeConfirmation("PHP")
+	}
 	versions := m.snapshot.PHP.Versions
 	if len(versions) == 0 {
 		return m.styles.section.Render("PHP runtimes") + "\n\n" +
+			m.catalogLine(m.snapshot.PHP.CatalogSource, m.snapshot.PHP.CatalogCheckedAt,
+				m.snapshot.PHP.CatalogWarning, m.snapshot.PHP.CatalogStale) + "\n\n" +
 			m.styles.muted.Render("No PHP versions are available for this architecture.")
 	}
 	tableWidth := max(40, m.width-8)
-	releaseWidth := max(12, tableWidth-39)
-	header := "  " + siteCell("Version", releaseWidth) + "  " + siteCell("Architecture", 14) + "  Status"
-	lines := []string{m.styles.section.Render("PHP runtimes"), "", m.styles.muted.Render(truncate(header, tableWidth))}
+	header := "  " + siteCell("Minor", 9) + "  " + siteCell("Installed", 11) + "  " +
+		siteCell("Available", 11) + "  " + siteCell("Status", 19) + "  Action"
+	lines := []string{m.styles.section.Render("PHP runtimes"), m.catalogLine(m.snapshot.PHP.CatalogSource,
+		m.snapshot.PHP.CatalogCheckedAt, m.snapshot.PHP.CatalogWarning, m.snapshot.PHP.CatalogStale),
+		m.styles.muted.Render(truncate(header, tableWidth))}
 	for index, version := range versions {
-		marker, status := "  ", "Unavailable"
-		if version.Installed {
-			status = "✓ Installed"
-		} else if version.Available {
-			status = "[ Install ]"
-		}
+		marker := "  "
+		status := runtimeStatus(version.Installed, version.Available, version.UpdateAvailable, version.InstalledRelease != nil)
+		action := runtimeAction(version.Installed, version.Available, version.UpdateAvailable)
 		if m.phpBusy && version.Minor == m.phpInstalling {
 			frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-			status = frames[m.spinnerFrame%len(frames)] + " Installing"
+			action = frames[m.spinnerFrame%len(frames)] + " Working"
 		}
 		if index == m.phpCursor {
 			marker = "› "
 		}
-		line := marker + siteCell("PHP "+version.Release, releaseWidth) + "  " +
-			siteCell(version.Architecture, 14) + "  " + status
+		line := marker + siteCell(version.Minor, 9) + "  " +
+			siteCell(patchLabel(version.InstalledRelease, version.Installed), 11) + "  " +
+			siteCell(patchLabel(version.AvailableRelease, version.Available), 11) + "  " +
+			siteCell(status, 19) + "  " + action
 		line = truncate(line, tableWidth)
 		if index == m.phpCursor {
 			line = m.styles.selected.Width(tableWidth).Render(line)
 		}
 		lines = append(lines, line)
 	}
+	if m.phpCursor < len(versions) && versions[m.phpCursor].PreviousRelease != nil {
+		lines = append(lines, "", m.styles.muted.Render("b [ Rollback ] to "+*versions[m.phpCursor].PreviousRelease))
+	}
 	return strings.Join(lines, "\n")
 }
 
 func (m Model) installSelectedPHP() (tea.Model, tea.Cmd) {
-	if m.api == nil || m.busy || m.phpCursor < 0 || m.phpCursor >= len(m.snapshot.PHP.Versions) {
+	if m.api == nil || m.busy || m.catalogRefreshBusy || m.phpCursor < 0 || m.phpCursor >= len(m.snapshot.PHP.Versions) {
 		return m, nil
 	}
 	version := m.snapshot.PHP.Versions[m.phpCursor]
-	if version.Installed || !version.Available {
+	if !version.Available || (version.Installed && !version.UpdateAvailable) || version.AvailableRelease == nil {
 		return m, nil
 	}
-	m.busy, m.phpBusy, m.phpInstalling, m.err, m.status = true, true, version.Minor, "", ""
+	m.runtimeConfirm, m.runtimeAction, m.runtimeVersion = "php", "install", version.Minor
+	m.runtimeFrom, m.runtimeTo = patchLabel(version.InstalledRelease, version.Installed), *version.AvailableRelease
+	if !version.Installed {
+		m.runtimeFrom = "not installed"
+	}
+	return m, nil
+}
+
+func (m Model) startPHP(rollback bool) (tea.Model, tea.Cmd) {
+	minor := m.runtimeVersion
+	target := m.runtimeTo
+	m.runtimeConfirm = ""
+	m.busy, m.phpBusy, m.phpInstalling, m.err, m.status = true, true, minor, "", ""
 	m.generation++
 	generation, api := m.generation, m.api
 	return m, tea.Batch(func() tea.Msg {
-		result, err := api.InstallPHP(version.Minor)
+		var result backend.PHPInstallResult
+		var err error
+		if rollback {
+			result, err = api.RollbackPHP(minor, target)
+		} else {
+			result, err = api.InstallPHP(minor, target)
+		}
 		return phpInstallMsg{generation, result, err}
 	}, spinnerTick(generation))
+}
+
+func (m Model) rollbackSelectedPHP() (tea.Model, tea.Cmd) {
+	if m.api == nil || m.busy || m.catalogRefreshBusy || m.phpCursor < 0 || m.phpCursor >= len(m.snapshot.PHP.Versions) {
+		return m, nil
+	}
+	version := m.snapshot.PHP.Versions[m.phpCursor]
+	if version.PreviousRelease == nil || version.InstalledRelease == nil {
+		return m, nil
+	}
+	m.runtimeConfirm, m.runtimeAction, m.runtimeVersion = "php", "rollback", version.Minor
+	m.runtimeFrom, m.runtimeTo = *version.InstalledRelease, *version.PreviousRelease
+	return m, nil
+}
+
+func (m Model) renderRuntimeConfirmation(label string) string {
+	action := "Install"
+	if m.runtimeAction == "rollback" {
+		action = "Rollback"
+	} else if m.runtimeFrom != "not installed" {
+		action = "Update"
+	}
+	return m.styles.section.Render(action+" "+label+" "+m.runtimeVersion+"?") + "\n\n" +
+		m.runtimeFrom + " → " + m.runtimeTo + "\n\n" +
+		m.styles.worker.Render("[ Confirm "+action+" ]") + m.styles.muted.Render("  y/enter confirm · n/esc cancel")
+}
+
+func patchLabel(value *string, available bool) string {
+	if value != nil {
+		return *value
+	}
+	if available {
+		return "unknown"
+	}
+	return "—"
+}
+
+func runtimeStatus(installed, available, update, known bool) string {
+	if !available {
+		return "Catalog unavailable"
+	}
+	if !installed {
+		return "Not installed"
+	}
+	if !known {
+		return "Unknown patch"
+	}
+	if update {
+		return "Update available"
+	}
+	return "Current"
+}
+
+func runtimeAction(installed, available, update bool) string {
+	if !available {
+		return ""
+	}
+	if !installed {
+		return "[ Install ]"
+	}
+	if update {
+		return "[ Update ]"
+	}
+	return ""
+}
+
+func (m Model) catalogLine(source string, checked, warning *string, stale bool) string {
+	line := "Catalog: " + source
+	if stale {
+		line += " · stale"
+	}
+	if warning != nil {
+		line += " · " + *warning
+	}
+	if checked != nil {
+		line += " · checked " + *checked
+	}
+	if m.catalogRefreshBusy {
+		line += " · refreshing…"
+	}
+	if m.catalogRefreshError != "" {
+		line += " · refresh failed: " + m.catalogRefreshError
+	}
+	return m.styles.muted.Render(truncate(line, max(40, m.width-8)))
+}
+
+func catalogsDue(snapshot backend.Snapshot, now time.Time) bool {
+	checks := []struct {
+		source  string
+		checked *string
+	}{
+		{snapshot.PHP.CatalogSource, snapshot.PHP.CatalogCheckedAt},
+		{snapshot.Node.CatalogSource, snapshot.Node.CatalogCheckedAt},
+	}
+	for _, check := range checks {
+		if check.source == "local override" {
+			continue
+		}
+		checked := check.checked
+		if checked == nil {
+			return true
+		}
+		last, err := time.Parse(time.RFC3339Nano, *checked)
+		if err != nil || now.Sub(last) >= 24*time.Hour {
+			return true
+		}
+	}
+	return false
+}
+
+func refreshRuntimeCatalogs(api API) tea.Cmd {
+	return func() tea.Msg {
+		result, err := api.RefreshRuntimeCatalogs()
+		return catalogRefreshMsg{result, err}
+	}
+}
+
+func (m Model) refreshCatalogs() (tea.Model, tea.Cmd) {
+	if m.api == nil || m.busy || m.catalogRefreshBusy {
+		return m, nil
+	}
+	m.catalogRefreshBusy = true
+	m.catalogRefreshError = ""
+	return m, refreshRuntimeCatalogs(m.api)
+}
+
+func (m Model) confirmRuntimeAction() (tea.Model, tea.Cmd) {
+	if m.runtimeConfirm == "" || m.busy || m.catalogRefreshBusy {
+		return m, nil
+	}
+	if m.runtimeConfirm == "php" {
+		return m.startPHP(m.runtimeAction == "rollback")
+	}
+	return m.startNode(m.runtimeAction == "rollback")
 }
 
 func (m *Model) clampNodeCursor() {
@@ -1959,53 +2182,93 @@ func (m *Model) clampNodeCursor() {
 }
 
 func (m Model) renderNode() string {
+	if m.runtimeConfirm == "node" {
+		return m.renderRuntimeConfirmation("Node.js")
+	}
 	versions := m.snapshot.Node.Versions
 	if len(versions) == 0 {
 		return m.styles.section.Render("Node.js runtimes") + "\n\n" +
+			m.catalogLine(m.snapshot.Node.CatalogSource, m.snapshot.Node.CatalogCheckedAt,
+				m.snapshot.Node.CatalogWarning, m.snapshot.Node.CatalogStale) + "\n\n" +
 			m.styles.muted.Render("No Node.js LTS versions are available for this architecture.")
 	}
 	tableWidth := max(40, m.width-8)
-	releaseWidth := max(12, tableWidth-39)
-	header := "  " + siteCell("Version", releaseWidth) + "  " + siteCell("Architecture", 14) + "  Status"
-	lines := []string{m.styles.section.Render("Node.js runtimes"), "", m.styles.muted.Render(truncate(header, tableWidth))}
+	header := "  " + siteCell("Major", 9) + "  " + siteCell("Installed", 11) + "  " +
+		siteCell("Available", 11) + "  " + siteCell("Status", 19) + "  Action"
+	lines := []string{m.styles.section.Render("Node.js runtimes"), m.catalogLine(m.snapshot.Node.CatalogSource,
+		m.snapshot.Node.CatalogCheckedAt, m.snapshot.Node.CatalogWarning, m.snapshot.Node.CatalogStale),
+		m.styles.muted.Render(truncate(header, tableWidth))}
 	for index, version := range versions {
-		marker, status := "  ", "Unavailable"
-		if version.Installed {
-			status = "✓ Installed"
-		} else if version.Available {
-			status = "[ Install ]"
-		}
+		marker := "  "
+		status := runtimeStatus(version.Installed, version.Available, version.UpdateAvailable, version.InstalledRelease != nil)
+		action := runtimeAction(version.Installed, version.Available, version.UpdateAvailable)
 		if m.nodeBusy && version.Major == m.nodeInstalling {
 			frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-			status = frames[m.spinnerFrame%len(frames)] + " Installing"
+			action = frames[m.spinnerFrame%len(frames)] + " Working"
 		}
 		if index == m.nodeCursor {
 			marker = "› "
 		}
-		line := marker + siteCell("Node.js "+version.Release, releaseWidth) + "  " +
-			siteCell(version.Architecture, 14) + "  " + status
+		line := marker + siteCell(version.Major, 9) + "  " +
+			siteCell(patchLabel(version.InstalledRelease, version.Installed), 11) + "  " +
+			siteCell(patchLabel(version.AvailableRelease, version.Available), 11) + "  " +
+			siteCell(status, 19) + "  " + action
 		line = truncate(line, tableWidth)
 		if index == m.nodeCursor {
 			line = m.styles.selected.Width(tableWidth).Render(line)
 		}
 		lines = append(lines, line)
 	}
+	if m.nodeCursor < len(versions) && versions[m.nodeCursor].PreviousRelease != nil {
+		lines = append(lines, "", m.styles.muted.Render("b [ Rollback ] to "+*versions[m.nodeCursor].PreviousRelease))
+	}
 	return strings.Join(lines, "\n")
 }
 
 func (m Model) installSelectedNode() (tea.Model, tea.Cmd) {
-	if m.api == nil || m.busy || m.nodeCursor < 0 || m.nodeCursor >= len(m.snapshot.Node.Versions) {
+	if m.api == nil || m.busy || m.catalogRefreshBusy || m.nodeCursor < 0 || m.nodeCursor >= len(m.snapshot.Node.Versions) {
 		return m, nil
 	}
 	version := m.snapshot.Node.Versions[m.nodeCursor]
-	if version.Installed || !version.Available {
+	if !version.Available || (version.Installed && !version.UpdateAvailable) || version.AvailableRelease == nil {
 		return m, nil
 	}
-	m.busy, m.nodeBusy, m.nodeInstalling, m.err, m.status = true, true, version.Major, "", ""
+	m.runtimeConfirm, m.runtimeAction, m.runtimeVersion = "node", "install", version.Major
+	m.runtimeFrom, m.runtimeTo = patchLabel(version.InstalledRelease, version.Installed), *version.AvailableRelease
+	if !version.Installed {
+		m.runtimeFrom = "not installed"
+	}
+	return m, nil
+}
+
+func (m Model) rollbackSelectedNode() (tea.Model, tea.Cmd) {
+	if m.api == nil || m.busy || m.catalogRefreshBusy || m.nodeCursor < 0 || m.nodeCursor >= len(m.snapshot.Node.Versions) {
+		return m, nil
+	}
+	version := m.snapshot.Node.Versions[m.nodeCursor]
+	if version.PreviousRelease == nil || version.InstalledRelease == nil {
+		return m, nil
+	}
+	m.runtimeConfirm, m.runtimeAction, m.runtimeVersion = "node", "rollback", version.Major
+	m.runtimeFrom, m.runtimeTo = *version.InstalledRelease, *version.PreviousRelease
+	return m, nil
+}
+
+func (m Model) startNode(rollback bool) (tea.Model, tea.Cmd) {
+	major := m.runtimeVersion
+	target := m.runtimeTo
+	m.runtimeConfirm = ""
+	m.busy, m.nodeBusy, m.nodeInstalling, m.err, m.status = true, true, major, "", ""
 	m.generation++
 	generation, api := m.generation, m.api
 	return m, tea.Batch(func() tea.Msg {
-		result, err := api.InstallNode(version.Major)
+		var result backend.NodeInstallResult
+		var err error
+		if rollback {
+			result, err = api.RollbackNode(major, target)
+		} else {
+			result, err = api.InstallNode(major, target)
+		}
 		return nodeInstallMsg{generation, result, err}
 	}, spinnerTick(generation))
 }
@@ -2642,10 +2905,13 @@ func (m Model) renderFooter() string {
 		}
 	}
 	if m.tab == 3 {
-		help = "↑/↓ select · enter install · tab sections · r refresh · q quit"
+		help = "↑/↓ select · enter install/update · b rollback · R refresh catalogs · q quit"
 	}
 	if m.tab == 4 {
-		help = "↑/↓ select · enter install · tab sections · r refresh · q quit"
+		help = "↑/↓ select · enter install/update · b rollback · R refresh catalogs · q quit"
+	}
+	if m.runtimeConfirm != "" {
+		help = "y/enter confirm · n/esc cancel"
 	}
 	if m.tab == 5 {
 		help = "↑/↓ select · a add folder · d remove · tab sections · q quit"
