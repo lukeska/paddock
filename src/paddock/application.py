@@ -742,6 +742,7 @@ class PaddockController:
                 update_available=(minor in installed and installed[minor].release is not None
                                   and minor in published
                                   and _semantic_version(published[minor]) > _semantic_version(installed[minor].release)),
+                previous_release=installed[minor].previous_release if minor in installed else None,
             )
             for minor in sorted(
                 set(published) | set(installed), key=_semantic_version, reverse=True
@@ -774,6 +775,15 @@ class PaddockController:
             self.php_versions_snapshot(),
         )
 
+    def rollback_php(self, minor: str) -> PhpInstallResult:
+        try:
+            destination = RuntimeInstaller(self.store, self.runner).rollback(minor)
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return PhpInstallResult(False, f"PHP {minor} could not be rolled back", str(error),
+                                    self.php_versions_snapshot())
+        return PhpInstallResult(True, f"Rolled back PHP {minor}", str(destination),
+                                self.php_versions_snapshot())
+
     def node_versions_snapshot(self) -> NodeVersionsSnapshot:
         architecture = normalized_architecture()
         published: dict[str, str] = {}
@@ -794,6 +804,7 @@ class PaddockController:
             update_available=(major in installed and installed[major].release is not None
                               and major in published
                               and _semantic_version(published[major]) > _semantic_version(installed[major].release)),
+            previous_release=installed[major].previous_release if major in installed else None,
         ) for major in sorted(set(published) | set(installed), key=int, reverse=True))
         return NodeVersionsSnapshot(versions, architecture,
                                     selection.source if selection else "unavailable",
@@ -809,6 +820,15 @@ class PaddockController:
         except (OSError, RuntimeError, ValueError, StateError) as error:
             return NodeInstallResult(False, f"Node {major} could not be installed", str(error), self.node_versions_snapshot())
         return NodeInstallResult(True, f"Installed Node {major}", str(destination), self.node_versions_snapshot())
+
+    def rollback_node(self, major: str) -> NodeInstallResult:
+        try:
+            destination = NodeInstaller(self.store).rollback(major)
+        except (OSError, RuntimeError, ValueError, StateError) as error:
+            return NodeInstallResult(False, f"Node {major} could not be rolled back", str(error),
+                                     self.node_versions_snapshot())
+        return NodeInstallResult(True, f"Rolled back Node {major}", str(destination),
+                                 self.node_versions_snapshot())
 
     def add_parking_path(self, path: str) -> ParkingOperationResult:
         try:

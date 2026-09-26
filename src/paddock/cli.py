@@ -64,6 +64,7 @@ OVERVIEW: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     ("PHP", (
         ("php list", "List the installed PHP runtimes"),
         ("php install VERSION", "Install a Paddock-built PHP runtime"),
+        ("php rollback VERSION", "Restore the previous PHP patch"),
         ("php catalog PATH", "Use a local PHP artifact catalog"),
         ("php remove VERSION", "Remove an installed PHP runtime"),
         ("php use VERSION", "Select the PHP version for this project"),
@@ -72,6 +73,7 @@ OVERVIEW: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("laravel -- ARGS", "Run the global Laravel Installer"),
         ("node list", "List installed Node.js runtimes"),
         ("node install VERSION", "Install a checksum-pinned Node.js runtime"),
+        ("node rollback VERSION", "Restore the previous Node.js patch"),
         ("node catalog PATH", "Use a local Node.js artifact catalog"),
         ("node use VERSION", "Select Node.js for this project"),
         ("node -- ARGS", "Run Node.js with the version selected here"),
@@ -140,6 +142,7 @@ def overview() -> str:
 PHP_DETAIL = """Subcommands:
   paddock php list             List the installed runtimes and their paths
   paddock php install VERSION  Install the Paddock-built runtime for VERSION
+  paddock php rollback VERSION Restore the previous patch for VERSION
   paddock php catalog PATH     Use a local PHP artifact catalog
   paddock php remove VERSION   Remove the installed runtime for VERSION
   paddock php use VERSION      Record VERSION in ./.paddock.json
@@ -426,12 +429,19 @@ def run(argv: list[str] | None = None) -> int:
             print(f"PHP {forwarded[1]} selected in {path.parent}")
             return 0
         if not explicit_execution and forwarded[:1] == ["install"]:
-            if len(forwarded) != 2:
-                raise ValueError("Usage: paddock php install VERSION")
+            if len(forwarded) not in (2, 3) or (len(forwarded) == 3 and forwarded[2] != "--replace-custom"):
+                raise ValueError("Usage: paddock php install VERSION [--replace-custom]")
             destination = RuntimeInstaller(store).install(
-                forwarded[1], CatalogStore(store.paths).effective("php").manifest
+                forwarded[1], CatalogStore(store.paths).effective("php").manifest,
+                replace_custom=len(forwarded) == 3,
             )
             print(f"Installed PHP {forwarded[1]} at {destination}")
+            return 0
+        if not explicit_execution and forwarded[:1] == ["rollback"]:
+            if len(forwarded) != 2:
+                raise ValueError("Usage: paddock php rollback VERSION")
+            destination = RuntimeInstaller(store).rollback(forwarded[1])
+            print(f"Rolled back PHP {forwarded[1]} to {destination}")
             return 0
         if not explicit_execution and forwarded[:1] == ["catalog"]:
             if len(forwarded) != 2:
@@ -459,9 +469,15 @@ def run(argv: list[str] | None = None) -> int:
             registry.resolve(forwarded[1]); path = write_node_selection(Path.cwd(), forwarded[1])
             print(f"Node {forwarded[1]} selected in {path.parent}"); return 0
         if not explicit_execution and forwarded[:1] == ["install"]:
-            if len(forwarded) != 2: raise ValueError("Usage: paddock node install VERSION")
-            destination = NodeInstaller(store).install(forwarded[1], CatalogStore(store.paths).effective("node").manifest)
+            if len(forwarded) not in (2, 3) or (len(forwarded) == 3 and forwarded[2] != "--replace-custom"):
+                raise ValueError("Usage: paddock node install VERSION [--replace-custom]")
+            destination = NodeInstaller(store).install(forwarded[1], CatalogStore(store.paths).effective("node").manifest,
+                                                       replace_custom=len(forwarded) == 3)
             print(f"Installed Node {forwarded[1]} at {destination}"); return 0
+        if not explicit_execution and forwarded[:1] == ["rollback"]:
+            if len(forwarded) != 2: raise ValueError("Usage: paddock node rollback VERSION")
+            destination = NodeInstaller(store).rollback(forwarded[1])
+            print(f"Rolled back Node {forwarded[1]} to {destination}"); return 0
         if not explicit_execution and forwarded[:1] == ["catalog"]:
             if len(forwarded) != 2: raise ValueError("Usage: paddock node catalog PATH")
             source = Path(forwarded[1]).expanduser().resolve()

@@ -10,7 +10,7 @@ depends=('python' 'python-yaml' 'nginx' 'dnsmasq' 'mkcert'
 makedepends=('go')
 install=paddock.install
 source=("$pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
-sha256sums=('af5030ca099dba930502f94ea7a1f398a25b2942dd0d1f44cbb799e574dcc4af')
+sha256sums=('c163331b2118a6e519ae072cdcf0a2d1c2467791b5581afd77225e14f8248e81')
 
 prepare() {
   cd "$srcdir/$pkgname-$pkgver"

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from paddock.execution import plan_node
 from paddock.node_runtime import NodeInstaller, NodeManifest, NodeRegistry
@@ -57,6 +59,23 @@ class NodeSelectionTests(NodeFixture):
 
 
 class NodeInstallerTests(NodeFixture):
+    def _manifest(self, version: str) -> NodeManifest:
+        payload = Path(self.temporary.name) / f"node-v{version}-linux-x64"
+        (payload / "bin").mkdir(parents=True)
+        node = payload / "bin/node"
+        node.write_text(f"#!/bin/sh\necho v{version}\n", encoding="utf-8")
+        node.chmod(0o755)
+        archive = Path(self.temporary.name) / f"node-{version}.tar.xz"
+        with tarfile.open(archive, "w:xz") as output:
+            output.add(payload, arcname=payload.name)
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        manifest = Path(self.temporary.name) / f"manifest-{version}.json"
+        manifest.write_text(json.dumps({"schema_version": 1, "artifacts": [{
+            "node": version, "major": "24", "architecture": "x86_64",
+            "url": archive.as_uri(), "sha256": digest,
+        }]}), encoding="utf-8")
+        return NodeManifest.load(manifest)
+
     def test_verified_official_shape_installs_and_activates(self) -> None:
         payload = Path(self.temporary.name) / "payload" / "node-v24.20.0-linux-x64"
         (payload / "bin").mkdir(parents=True)
@@ -77,3 +96,70 @@ class NodeInstallerTests(NodeFixture):
         self.assertEqual(destination / "bin/node", NodeRegistry(self.store).resolve("24").path)
         self.assertEqual("24.20.0", NodeRegistry(self.store).resolve("24").release)
         self.assertEqual(destination, (self.paths.data / "node-runtimes/active/24").resolve())
+
+    def test_update_noop_downgrade_and_rollback(self) -> None:
+        installer = NodeInstaller(self.store)
+        old_manifest = self._manifest("24.20.0")
+        old = installer.install("24", old_manifest)
+        self.assertEqual(old, installer.install("24", old_manifest))
+        new = installer.install("24", self._manifest("24.21.0"))
+        self.assertEqual("24.20.0", installer.registry.resolve("24").previous_release)
+        with self.assertRaisesRegex(Exception, "older than installed"):
+            installer.install("24", old_manifest)
+        self.assertEqual(old, installer.rollback("24"))
+        self.assertEqual("24.21.0", installer.registry.resolve("24").previous_release)
+        self.assertEqual(old, (self.paths.data / "node-runtimes/active/24").resolve())
+        self.assertTrue(new.is_dir())
+
+    def test_registry_failure_restores_node_link_and_record(self) -> None:
+        installer = NodeInstaller(self.store)
+        old = installer.install("24", self._manifest("24.20.0"))
+        registry = self.store.read("node_runtimes")
+        with patch.object(installer.registry, "register", side_effect=OSError("disk full")):
+            with self.assertRaisesRegex(Exception, "disk full"):
+                installer.install("24", self._manifest("24.21.0"))
+        self.assertEqual(old, (self.paths.data / "node-runtimes/active/24").resolve())
+        self.assertEqual(registry, self.store.read("node_runtimes"))
+
+    def test_custom_node_requires_explicit_replacement(self) -> None:
+        custom = self.project / "node"
+        custom.write_text("#!/bin/sh\n", encoding="utf-8")
+        custom.chmod(0o755)
+        installer = NodeInstaller(self.store)
+        installer.registry.register("24", custom, "0" * 64)
+        manifest = self._manifest("24.20.0")
+        with self.assertRaisesRegex(Exception, "replace-custom"):
+            installer.install("24", manifest)
+        self.assertEqual(custom, installer.registry.resolve("24").path)
+        installer.install("24", manifest, replace_custom=True)
+        self.assertIsNone(installer.registry.resolve("24").previous_release)
+
+    def test_activation_refuses_regular_file_without_overwriting_it(self) -> None:
+        link = self.paths.data / "node-runtimes/active/24"
+        link.parent.mkdir(parents=True)
+        link.write_text("user file", encoding="utf-8")
+        with self.assertRaisesRegex(Exception, "not a symlink"):
+            NodeInstaller(self.store).install("24", self._manifest("24.20.0"))
+        self.assertEqual("user file", link.read_text(encoding="utf-8"))
+
+    def test_failed_link_swap_restores_previous_node(self) -> None:
+        installer = NodeInstaller(self.store)
+        old = installer.install("24", self._manifest("24.20.0"))
+        registry = self.store.read("node_runtimes")
+        link = self.paths.data / "node-runtimes/active/24"
+        original_replace = os.replace
+        failed = False
+
+        def fail_once(source, destination):
+            nonlocal failed
+            if not failed and Path(destination) == link:
+                failed = True
+                raise OSError("link swap failed")
+            return original_replace(source, destination)
+
+        with patch("paddock.node_runtime.os.replace", side_effect=fail_once):
+            with self.assertRaisesRegex(Exception, "link swap failed"):
+                installer.install("24", self._manifest("24.21.0"))
+        self.assertTrue(failed)
+        self.assertEqual(old, link.resolve())
+        self.assertEqual(registry, self.store.read("node_runtimes"))

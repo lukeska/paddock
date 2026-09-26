@@ -13,7 +13,7 @@ from urllib.request import urlopen
 
 from .artifacts import Artifact, ArtifactManifest
 from .atomic import atomic_write, exclusive_lock
-from .runtimes import RuntimeRegistry, file_sha256, normalize_minor
+from .runtimes import Runtime, RuntimeRegistry, file_sha256, normalize_minor
 from .state import StateStore
 
 
@@ -40,12 +40,32 @@ class RuntimeInstaller:
         self.registry = RuntimeRegistry(store)
         self.lock = self.paths.state / "runtime-install.lock"
 
-    def install(self, minor: str, manifest: ArtifactManifest) -> Path:
+    def install(self, minor: str, manifest: ArtifactManifest, *, replace_custom: bool = False) -> Path:
         artifact = manifest.select(minor)
         with exclusive_lock(self.lock):
-            archive = self._download(artifact)
+            current = next((item for item in self.registry.list() if item.version == artifact.minor), None)
             releases = self.paths.data / "runtimes" / "releases"
             active = self.paths.data / "runtimes" / "active"
+            if current is not None:
+                if not self._managed(current.path, current.release, current.sha256, releases):
+                    if not replace_custom:
+                        raise RuntimeInstallError(
+                            f"PHP {artifact.minor} is custom or has an unknown patch; "
+                            "use --replace-custom to replace it explicitly"
+                        )
+                elif ((current.release, current.sha256) == (artifact.php, artifact.sha256)
+                      and (active / artifact.minor).is_symlink()
+                      and (active / artifact.minor).resolve() == current.path.parent.parent):
+                    return current.path.parent.parent
+                elif self._patch_key(artifact.php) < self._patch_key(current.release):
+                    raise RuntimeInstallError(
+                        f"PHP {artifact.php} is older than installed {current.release}; use rollback instead"
+                    )
+                elif current.release == artifact.php and current.sha256 != artifact.sha256:
+                    raise RuntimeInstallError(
+                        f"PHP {artifact.php} catalog hash differs from the installed release"
+                    )
+            archive = self._download(artifact)
             releases.mkdir(parents=True, exist_ok=True, mode=0o700)
             active.mkdir(parents=True, exist_ok=True, mode=0o700)
             destination = releases / f"php-{artifact.php}-{artifact.sha256[:12]}"
@@ -61,13 +81,88 @@ class RuntimeInstaller:
                     shutil.rmtree(staging, ignore_errors=True)
             else:
                 self._validate(destination, artifact)
-            self._activate(artifact.minor, destination, active)
-            self._write_fpm_config(artifact.minor, destination)
-            self._control_service("restart", artifact.minor)
-            self.registry.register(
-                artifact.minor, destination / "bin" / "php", artifact.sha256, artifact.php
-            )
+            self._switch(artifact.minor, destination, artifact.php, artifact.sha256, current)
             return destination
+
+    def rollback(self, minor: str) -> Path:
+        version = normalize_minor(minor)
+        with exclusive_lock(self.lock):
+            current = self.registry.resolve(version)
+            if not current.previous_release or not current.previous_sha256:
+                raise RuntimeInstallError(f"PHP {version} has no retained previous release")
+            releases = self.paths.data / "runtimes" / "releases"
+            if not self._managed(current.path, current.release, current.sha256, releases):
+                raise RuntimeInstallError(f"PHP {version} active runtime is not managed by Paddock")
+            destination = releases / f"php-{current.previous_release}-{current.previous_sha256[:12]}"
+            if not destination.is_dir():
+                raise RuntimeInstallError(f"PHP {current.previous_release} release is missing")
+            artifact = Artifact(current.previous_release, version, "", "", current.previous_sha256)
+            self._validate(destination, artifact)
+            self._switch(version, destination, artifact.php, artifact.sha256, current)
+            return destination
+
+    @staticmethod
+    def _patch_key(value: str) -> tuple[int, ...]:
+        return tuple(int(part) for part in value.split("."))
+
+    @staticmethod
+    def _managed(path: Path, release: str | None, digest: str, releases: Path) -> bool:
+        return bool(release and path == releases / f"php-{release}-{digest[:12]}" / "bin/php"
+                    and path.is_file())
+
+    def _switch(self, minor: str, destination: Path, release: str, digest: str,
+                current: Runtime | None) -> None:
+        active = self.paths.data / "runtimes/active"
+        config = self.paths.state / "fpm" / f"php-{minor}.conf"
+        old_config = config.read_bytes() if config.exists() else None
+        old_link = active / minor
+        if old_link.exists() and not old_link.is_symlink():
+            raise RuntimeInstallError(f"PHP {minor} activation path is not a symlink: {old_link}")
+        old_target = old_link.readlink() if old_link.is_symlink() else None
+        old_registry = self.store.read("runtimes")
+        changed = False
+        try:
+            # Validate the candidate configuration before changing the active link.
+            self._write_fpm_config(minor, destination)
+            changed = True
+            self._activate(minor, destination, active)
+            self._control_service("restart", minor)
+            self._control_service("is-active", minor)
+            previous_release = None
+            previous_sha256 = None
+            if current and self._managed(current.path, current.release, current.sha256,
+                                         self.paths.data / "runtimes/releases"):
+                if (current.release, current.sha256) == (release, digest):
+                    previous_release, previous_sha256 = current.previous_release, current.previous_sha256
+                else:
+                    previous_release, previous_sha256 = current.release, current.sha256
+            self.registry.register(
+                minor, destination / "bin/php", digest, release,
+                previous_release, previous_sha256,
+            )
+        except (Exception, KeyboardInterrupt) as error:
+            recovery = []
+            try:
+                if old_target is not None:
+                    self._activate(minor, old_target, active)
+                elif changed:
+                    old_link.unlink(missing_ok=True)
+                if old_config is not None:
+                    atomic_write(config, old_config)
+                else:
+                    config.unlink(missing_ok=True)
+                self.store.write("runtimes", old_registry)
+            except Exception as rollback_error:
+                recovery.append(f"state restore failed: {rollback_error}")
+            if changed:
+                try:
+                    self._control_service("restart" if old_target else "stop", minor)
+                except Exception as rollback_error:
+                    recovery.append(f"service restore failed: {rollback_error}")
+            detail = f"PHP {minor} activation failed: {error}"
+            if recovery:
+                detail += "; rollback incomplete: " + "; ".join(recovery)
+            raise RuntimeInstallError(detail) from error
 
     def reproject(self) -> list[str]:
         """Rewrite the FPM configuration of every registered runtime.

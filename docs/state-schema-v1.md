@@ -34,7 +34,11 @@ records also carry a nullable exact `release` patch version. Older records
 without it are migrated once: Paddock probes only binaries whose paths match
 its managed release directory and recorded hash prefix. A mismatch or an
 external/custom binary becomes `release: null`, displayed as an unknown patch
-rather than borrowing the catalog's patch number. A service record
+rather than borrowing the catalog's patch number. A runtime record
+may also carry nullable `previous_release` and `previous_sha256` fields,
+which identify a retained managed patch eligible for an explicit rollback.
+The previous pair is written only after the new patch has activated and passed
+validation. A service record
 contains its lowercase name, registry-qualified container image, published
 loopback port, and data volume name.
 

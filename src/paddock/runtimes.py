@@ -23,6 +23,8 @@ class Runtime:
     path: Path
     sha256: str
     release: str | None = None
+    previous_release: str | None = None
+    previous_sha256: str | None = None
 
 
 class RuntimeRegistry:
@@ -48,12 +50,14 @@ class RuntimeRegistry:
                 },
             })["runtimes"]
         return [
-            Runtime(version, Path(record["path"]), record["sha256"], record.get("release"))
+            Runtime(version, Path(record["path"]), record["sha256"], record.get("release"),
+                    record.get("previous_release"), record.get("previous_sha256"))
             for version, record in sorted(records.items(), key=lambda item: _version_key(item[0]))
         ]
 
     def register(self, version: str, executable: Path, sha256: str | None = None,
-                 release: str | None = None) -> Runtime:
+                 release: str | None = None, previous_release: str | None = None,
+                 previous_sha256: str | None = None) -> Runtime:
         version = normalize_minor(version)
         path = executable.expanduser().resolve(strict=True)
         if not path.is_file() or not os.access(path, os.X_OK):
@@ -69,11 +73,13 @@ class RuntimeRegistry:
                 "version": version,
                 "sha256": digest,
                 "release": release,
+                "previous_release": previous_release,
+                "previous_sha256": previous_sha256,
             }
             return {"schema_version": value["schema_version"], "runtimes": records}
 
         self.store.update("runtimes", add)
-        return Runtime(version, path, digest, release)
+        return Runtime(version, path, digest, release, previous_release, previous_sha256)
 
     def remove(self, version: str) -> None:
         version = normalize_minor(version)

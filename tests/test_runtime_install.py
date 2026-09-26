@@ -11,6 +11,7 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from paddock.artifacts import ArtifactManifest, ManifestError
 from paddock.paths import Paths
@@ -69,12 +70,12 @@ class RuntimeInstallTests(unittest.TestCase):
         self.temporary.cleanup()
 
     @staticmethod
-    def _make_archive(path: Path) -> None:
+    def _make_archive(path: Path, version: str = "8.4.23") -> None:
         with tarfile.open(path, "w:gz") as archive:
             for name in ("runtime/bin/php", "runtime/bin/php-fpm"):
                 info = tarfile.TarInfo(name)
                 info.mode = 0o755
-                content = b"fake runtime"
+                content = f"fake runtime {version}".encode()
                 info.size = len(content)
                 archive.addfile(info, io.BytesIO(content))
 
@@ -205,3 +206,124 @@ class RuntimeInstallTests(unittest.TestCase):
             RuntimeInstaller(self.store, FakeRuntimeRunner()).install(
                 "8.4", ArtifactManifest.load(self.manifest_path)
             )
+
+    def _candidate(self, version: str) -> ArtifactManifest:
+        archive = self.base / f"php-{version}.tar.gz"
+        self._make_archive(archive, version)
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        manifest = self.base / f"manifest-{version}.json"
+        manifest.write_text(json.dumps({"schema_version": 1, "artifacts": [{
+            "php": version, "minor": "8.4", "architecture": "x86_64",
+            "url": archive.as_uri(), "sha256": digest,
+        }]}), encoding="utf-8")
+        return ArtifactManifest.load(manifest)
+
+    def test_patch_update_noop_downgrade_and_rollback(self) -> None:
+        class VersionedRunner(FakeRuntimeRunner):
+            def __call__(self, command, **kwargs):
+                if command[0] != "systemctl":
+                    self.version = "8.4.24" if "8.4.24" in Path(command[0]).read_text() else "8.4.23"
+                return super().__call__(command, **kwargs)
+
+        runner = VersionedRunner()
+        installer = RuntimeInstaller(self.store, runner)
+        old = installer.install("8.4", ArtifactManifest.load(self.manifest_path))
+        calls = len(runner.calls)
+        self.assertEqual(old, installer.install("8.4", ArtifactManifest.load(self.manifest_path)))
+        self.assertEqual(calls, len(runner.calls))
+        new = installer.install("8.4", self._candidate("8.4.24"))
+        self.assertEqual("8.4.23", installer.registry.resolve("8.4").previous_release)
+        with self.assertRaisesRegex(RuntimeInstallError, "older than installed"):
+            installer.install("8.4", ArtifactManifest.load(self.manifest_path))
+        self.assertEqual(old, installer.rollback("8.4"))
+        self.assertEqual("8.4.24", installer.registry.resolve("8.4").previous_release)
+        self.assertEqual(old, (self.store.paths.data / "runtimes/active/8.4").resolve())
+        self.assertTrue(new.is_dir())
+
+    def test_failed_restart_restores_link_config_and_registry(self) -> None:
+        class FailingRunner(FakeRuntimeRunner):
+            def __init__(self):
+                super().__init__()
+                self.fail_once = False
+
+            def __call__(self, command, **kwargs):
+                if command[0] != "systemctl":
+                    self.version = "8.4.24" if "8.4.24" in Path(command[0]).read_text() else "8.4.23"
+                if self.fail_once and command[:2] == ["systemctl", "restart"]:
+                    self.fail_once = False
+                    self.calls.append(command)
+                    return subprocess.CompletedProcess(command, 1, "", "failed")
+                return super().__call__(command, **kwargs)
+
+        runner = FailingRunner()
+        installer = RuntimeInstaller(self.store, runner)
+        old = installer.install("8.4", ArtifactManifest.load(self.manifest_path))
+        registry = self.store.read("runtimes")
+        config = (self.store.paths.state / "fpm/php-8.4.conf").read_bytes()
+        runner.fail_once = True
+        with self.assertRaisesRegex(RuntimeInstallError, "activation failed"):
+            installer.install("8.4", self._candidate("8.4.24"))
+        self.assertEqual(old, (self.store.paths.data / "runtimes/active/8.4").resolve())
+        self.assertEqual(registry, self.store.read("runtimes"))
+        self.assertEqual(config, (self.store.paths.state / "fpm/php-8.4.conf").read_bytes())
+        self.assertEqual(3, sum(c[:2] == ["systemctl", "restart"] for c in runner.calls))
+
+    def test_registry_failure_restores_previous_php(self) -> None:
+        class VersionedRunner(FakeRuntimeRunner):
+            def __call__(self, command, **kwargs):
+                if command[0] != "systemctl":
+                    self.version = "8.4.24" if "8.4.24" in Path(command[0]).read_text() else "8.4.23"
+                return super().__call__(command, **kwargs)
+
+        installer = RuntimeInstaller(self.store, VersionedRunner())
+        old = installer.install("8.4", ArtifactManifest.load(self.manifest_path))
+        registry = self.store.read("runtimes")
+        with patch.object(installer.registry, "register", side_effect=OSError("disk full")):
+            with self.assertRaisesRegex(RuntimeInstallError, "disk full"):
+                installer.install("8.4", self._candidate("8.4.24"))
+        self.assertEqual(old, (self.store.paths.data / "runtimes/active/8.4").resolve())
+        self.assertEqual(registry, self.store.read("runtimes"))
+
+    def test_invalid_candidate_config_restores_old_php_without_restart(self) -> None:
+        class VersionedRunner(FakeRuntimeRunner):
+            def __call__(self, command, **kwargs):
+                if command[0] != "systemctl":
+                    self.version = "8.4.24" if "8.4.24" in Path(command[0]).read_text() else "8.4.23"
+                if "-t" in command and self.version == "8.4.24":
+                    self.calls.append(command)
+                    return subprocess.CompletedProcess(command, 1, "", "bad config")
+                return super().__call__(command, **kwargs)
+
+        runner = VersionedRunner()
+        installer = RuntimeInstaller(self.store, runner)
+        old = installer.install("8.4", ArtifactManifest.load(self.manifest_path))
+        config = (self.store.paths.state / "fpm/php-8.4.conf").read_bytes()
+        calls = len([c for c in runner.calls if c[:2] == ["systemctl", "restart"]])
+        with self.assertRaisesRegex(RuntimeInstallError, "bad config"):
+            installer.install("8.4", self._candidate("8.4.24"))
+        self.assertEqual(old, (self.store.paths.data / "runtimes/active/8.4").resolve())
+        self.assertEqual(config, (self.store.paths.state / "fpm/php-8.4.conf").read_bytes())
+        self.assertEqual(calls, len([c for c in runner.calls if c[:2] == ["systemctl", "restart"]]))
+
+    def test_custom_php_requires_explicit_replacement(self) -> None:
+        custom = self.base / "custom/php"
+        custom.parent.mkdir(parents=True)
+        custom.write_text("custom", encoding="utf-8")
+        custom.chmod(0o755)
+        RuntimeInstaller(self.store, FakeRuntimeRunner()).registry.register("8.4", custom)
+        installer = RuntimeInstaller(self.store, FakeRuntimeRunner())
+        with self.assertRaisesRegex(RuntimeInstallError, "replace-custom"):
+            installer.install("8.4", ArtifactManifest.load(self.manifest_path))
+        self.assertEqual(custom, installer.registry.resolve("8.4").path)
+        installer.install("8.4", ArtifactManifest.load(self.manifest_path), replace_custom=True)
+        self.assertIsNone(installer.registry.resolve("8.4").previous_release)
+
+    def test_activation_refuses_regular_file_without_overwriting_it(self) -> None:
+        link = self.store.paths.data / "runtimes/active/8.4"
+        link.parent.mkdir(parents=True)
+        link.write_text("user file", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeInstallError, "not a symlink"):
+            RuntimeInstaller(self.store, FakeRuntimeRunner()).install(
+                "8.4", ArtifactManifest.load(self.manifest_path)
+            )
+        self.assertEqual("user file", link.read_text(encoding="utf-8"))

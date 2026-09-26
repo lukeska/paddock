@@ -136,8 +136,9 @@ def validate_runtimes(raw: Any) -> dict[str, Any]:
             raise SchemaError("runtime versions must be non-empty strings")
         record = _object(record_raw, f"runtime {version}")
         required = {"path", "version", "sha256"}
-        if required - set(record) or set(record) - (required | {"release"}):
-            _exact_keys(record, required | ({"release"} if "release" in record else set()), f"runtime {version}")
+        optional = {"release", "previous_release", "previous_sha256"}
+        if required - set(record) or set(record) - (required | optional):
+            raise SchemaError(f"runtime {version} has invalid fields")
         if record["version"] != version:
             raise SchemaError(f"runtime {version} has a mismatched version field")
         for field in ("path", "sha256"):
@@ -152,6 +153,16 @@ def validate_runtimes(raw: Any) -> dict[str, Any]:
             expected = ".".join(release.split(".")[:2]) if "." in version else release.split(".")[0]
             if expected != version:
                 raise SchemaError(f"runtime {version}.release does not match its minor or major")
+        previous = record.get("previous_release")
+        previous_hash = record.get("previous_sha256")
+        if (previous is None) != (previous_hash is None):
+            raise SchemaError(f"runtime {version} previous release and hash must appear together")
+        if previous is not None:
+            if not isinstance(previous, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", previous):
+                raise SchemaError(f"runtime {version}.previous_release must be a patch version")
+            expected = ".".join(previous.split(".")[:2]) if "." in version else previous.split(".")[0]
+            if expected != version or not isinstance(previous_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", previous_hash):
+                raise SchemaError(f"runtime {version} has invalid previous release metadata")
     return value
 
 

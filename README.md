@@ -109,6 +109,7 @@ The site name defaults to the linked site containing the current directory.
 | --- | --- |
 | `paddock php list` | List installed PHP minors, exact patches (when known), and paths. |
 | `paddock php install VERSION` | Install the published runtime for a PHP minor, such as `8.5`. |
+| `paddock php rollback VERSION` | Restore the retained previous patch for a PHP minor. |
 | `paddock php remove VERSION` | Remove an installed PHP runtime. |
 | `paddock php use VERSION` | Select PHP for the current project in `.paddock.json`. |
 | `paddock php catalog PATH` | Install a local PHP artifact catalog as the user-level catalog override. |
@@ -119,6 +120,10 @@ The site name defaults to the linked site containing the current directory.
 PHP selection uses the nearest `.paddock.json` while walking up from the
 current directory, then falls back to the containing linked site and finally
 the configured default runtime.
+Installing an already-current patch is a no-op; an older catalog patch cannot
+silently downgrade an installed runtime. A custom or unknown runtime requires
+`paddock php install VERSION --replace-custom` before replacement. The previous
+managed patch is retained for rollback. Sites remain on their selected minor.
 
 ### Node.js
 
@@ -126,10 +131,15 @@ the configured default runtime.
 | --- | --- |
 | `paddock node list` | List installed Node.js majors, exact patches (when known), and paths. |
 | `paddock node install VERSION` | Install a checksum-verified Node.js runtime by major version. |
+| `paddock node rollback VERSION` | Restore the retained previous patch for a Node.js major. |
 | `paddock node catalog PATH` | Install a local Node.js artifact catalog as the user-level override. |
 | `paddock node remove VERSION` | Remove an installed Node.js runtime. |
 | `paddock node use VERSION` | Select Node.js for the current project in `.paddock.json`. |
 | `paddock node -- ARGS` | Run Node.js with the version selected for the current directory. Example: `paddock node -- --version`. |
+
+Node updates likewise keep sites on their selected major. Rebuild frontend
+assets yourself if a Node patch changes the resulting build. To replace a
+custom or unknown Node runtime, use `paddock node install VERSION --replace-custom`.
 
 `paddock runtimes status` shows the effective PHP and Node catalog sources.
 `paddock runtimes refresh` verifies and caches independently signed catalogs,
