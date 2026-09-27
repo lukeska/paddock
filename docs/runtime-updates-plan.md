@@ -1,22 +1,21 @@
 # Independently refreshed PHP and Node runtime catalogs
 
-Status: Units 1–5 implemented. Unit 6 promotion tooling is implemented;
-first signed publication and Omarchy VM acceptance remain pending. This
-document is the reference for scope and acceptance.
+Status (2026-09-27): Units 1–5 are implemented. Unit 6 promotion tooling,
+signed revision-1 publication, and the first Omarchy VM refresh and TUI patch
+upgrade are complete. The remaining Unit 6 manual acceptance cases are listed
+below. This document is the reference for scope and acceptance.
 
 ## Goal and current behavior
 
-Paddock should discover new PHP and Node patch releases without requiring a new
-Paddock package, tell the user exactly what is installed and available, and
-update a selected minor/major only on request. A site's PHP minor (for example,
-8.4) and Node major (for example, 24) must not change during a patch update.
+Paddock discovers new PHP and Node patch releases without requiring a new
+Paddock package, tells the user exactly what is installed and available, and
+updates a selected minor/major only on request. A site's PHP minor (for example,
+8.4) and Node major (for example, 24) do not change during a patch update.
 
-Today `resources/artifacts.json` and `resources/node-artifacts.json` are shipped
-with the package. The TUI marks an installed minor/major as simply installed
-and displays the catalog's patch number even when the installed patch is older.
-The PHP and Node installers already pin archive SHA-256 values and retain
-release directories, but their activation and registry writes are not a fully
-transactional upgrade/rollback operation.
+`resources/artifacts.json` and `resources/node-artifacts.json` remain bundled
+offline fallbacks. The signed, independently refreshed catalogs take precedence
+when accepted. The TUI distinguishes installed and available patches, and the
+installers retain the previous managed release for explicit rollback.
 
 Non-goals for this feature: automatic runtime installation, automatic site
 major/minor changes, automatic asset rebuilds, a Paddock package updater, and
@@ -177,10 +176,27 @@ Done when the signed catalog can be promoted independently of an application
 tag and the full manual scenario passes. No automatically scheduled runtime
 installation is added.
 
+Acceptance so far: the revision-1 PHP and Node catalogs were promoted and
+served by GitHub Pages; a fresh Omarchy VM accepted both signatures and used
+the refreshed catalogs; and older PHP 8.5.8 and Node 24.19.0 fixtures were
+upgraded through the TUI to PHP 8.5.10 and Node 24.20.0. The VM retained both
+previous patches for rollback. The disposable fixture and repeatable procedure
+are in [`tests/runtime-upgrade/README.md`](../tests/runtime-upgrade/README.md).
+
+Still to check manually: offline refresh and fallback, two sites sharing a PHP
+minor during an update, CLI/FPM agreement and a served site after update, Node
+asset rebuild, rollback and re-upgrade of each runtime, deliberately broken
+PHP candidate handling, and TUI error presentation. These are acceptance
+checks, not prerequisites for catalog signature verification or metadata
+refresh. Background metadata refresh is now enabled by default on TUI startup
+when the last successful check is over 24 hours old; runtime installation
+remains explicit.
+
 ## Delivery order
 
 Units 1–3 can ship as read-only discovery. Unit 4 enables patch changes only
 after its transactional tests pass. Unit 5 exposes those operations in the
-TUI. Unit 6 completes the independent publication path and VM acceptance;
-remote refresh must remain disabled by default until the signed publication
-surface and key material from Units 1, 2, and 6 are ready.
+TUI. Unit 6 completes the independent publication path and VM acceptance. The
+signed publication surface and packaged verification key are ready, so remote
+metadata refresh is enabled by default; the remaining manual cases above do
+not change that trust boundary.
