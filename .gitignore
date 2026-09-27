@@ -14,6 +14,8 @@ experiments/phase-0/install/package/pkg/
 experiments/phase-0/install/package/src/
 release/dist/
 release/work/
+release/dist-fixture/
+release/work-fixture/
 .spc.cache.php
 log/
 /plans/

@@ -100,7 +100,7 @@ def dispatch(
             "sites": asdict(controller.linked_sites_snapshot()),
             "php": asdict(controller.php_versions_snapshot()),
             "node": asdict(controller.node_versions_snapshot()),
-            "catalog_auto_refresh_enabled": os.environ.get("PADDOCK_AUTO_REFRESH_CATALOGS") == "1",
+            "catalog_auto_refresh_enabled": os.environ.get("PADDOCK_AUTO_REFRESH_CATALOGS") != "0",
             "parking": asdict(controller.parking_snapshot()),
             "theme": _theme(palette_path),
         }

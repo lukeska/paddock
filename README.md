@@ -143,15 +143,14 @@ custom or unknown Node runtime, use `paddock node install VERSION --replace-cust
 
 `paddock runtimes status` shows the effective PHP and Node catalog sources.
 `paddock runtimes refresh` verifies and caches independently signed catalogs,
-reporting PHP and Node failures separately. The remote catalog endpoints are
-not published yet, so refresh will fail until catalog promotion is enabled;
-the bundled catalogs continue to work offline. See the
-[runtime catalog contract](docs/runtime-catalog-v1.md).
+reporting PHP and Node failures separately. Signed revision-1 catalogs are
+published for both runtimes, and the bundled catalogs continue to work offline.
+See the [runtime catalog contract](docs/runtime-catalog-v1.md).
 The PHP and Node TUI tabs show installed and available patches, allow explicit
-updates and rollbacks, and use `R` to refresh catalog metadata. Background
-refresh on TUI startup is disabled until the publishing surface is ready; for
-testing, set `PADDOCK_AUTO_REFRESH_CATALOGS=1` to check asynchronously when the
-last successful catalog check is over 24 hours old.
+updates and rollbacks, and use `R` to refresh catalog metadata. The TUI checks
+for catalog changes asynchronously on startup when the last successful check
+is over 24 hours old. Set `PADDOCK_AUTO_REFRESH_CATALOGS=0` to disable this
+background check; manual refresh remains available.
 Refreshing a catalog changes only the list of available patches. Installing a
 patch still requires an explicit CLI or TUI action and never changes a site's
 selected PHP minor or Node major. A Paddock package update is separate: it
@@ -159,6 +158,8 @@ updates the application and bundled offline catalogs, not installed runtimes.
 Catalog signatures are checked against the package-owned release key; key
 rotation or revocation requires a Paddock package update. See the
 [promotion procedure](release/PROMOTION.md).
+For a repeatable patch-update test on a disposable Omarchy VM, use the
+[runtime upgrade fixture](tests/runtime-upgrade/README.md).
 
 After `paddock setup`, new terminal sessions also expose project-aware `php`,
 `composer`, `laravel`, `node`, `npm`, and `npx` shims directly. Setup installs

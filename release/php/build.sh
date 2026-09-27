@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repository=$(cd -- "$script_dir/../.." && pwd)
-versions_file="$script_dir/versions.json"
+versions_file=${PADDOCK_RELEASE_VERSIONS_FILE:-"$script_dir/versions.json"}
 selection=${1:-all}
 architecture=$(uname -m)
 source_date_epoch=${SOURCE_DATE_EPOCH:-1786924800}

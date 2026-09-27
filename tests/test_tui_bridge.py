@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from paddock.application import (
     DashboardOperationResult,
@@ -194,7 +196,8 @@ class BridgeTests(unittest.TestCase):
         return [json.loads(line) for line in output.getvalue().splitlines()], controller
 
     def test_snapshot_has_all_application_surfaces(self):
-        responses, _ = self.invoke(request(7, "snapshot.get"))
+        with mock.patch.dict(os.environ, {}, clear=True):
+            responses, _ = self.invoke(request(7, "snapshot.get"))
         response = responses[0]
         self.assertEqual(7, response["id"])
         self.assertTrue(response["ok"])
@@ -206,6 +209,12 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual("24.8.0", response["result"]["node"]["versions"][0]["release"])
         self.assertEqual(["/home/demo/Code"], response["result"]["parking"]["paths"])
         self.assertIsNone(response["result"]["theme"])
+        self.assertTrue(response["result"]["catalog_auto_refresh_enabled"])
+
+    def test_runtime_auto_refresh_can_be_disabled(self):
+        with mock.patch.dict(os.environ, {"PADDOCK_AUTO_REFRESH_CATALOGS": "0"}):
+            responses, _ = self.invoke(request(7, "snapshot.get"))
+        self.assertFalse(responses[0]["result"]["catalog_auto_refresh_enabled"])
 
     def test_snapshot_carries_the_validated_omarchy_palette(self):
         with tempfile.TemporaryDirectory() as temporary:

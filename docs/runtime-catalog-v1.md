@@ -2,12 +2,15 @@
 
 This is the format for independently refreshed runtime metadata. The client
 verifier and the [manual promotion command](../release/PROMOTION.md) are
-implemented. Publishing the first signed catalogs and enabling default
-background refresh still require maintainer acceptance on an Omarchy VM.
+implemented. Signed revision-1 PHP and Node catalogs have been published and
+accepted by a manual refresh on an Omarchy VM. Older PHP and Node patches
+were also upgraded through the TUI using the signed catalogs. Background
+catalog checks are enabled by default when opening the TUI; they never
+install runtime updates automatically.
 
 ## Distribution
 
-The stable, mutable *discovery* URLs will be served by GitHub Pages from the
+The stable, mutable *discovery* URLs are served by GitHub Pages from the
 repository's dedicated `gh-pages` branch (root publishing source, with
 `.nojekyll`):
 
@@ -16,8 +19,7 @@ repository's dedicated `gh-pages` branch (root publishing source, with
 | PHP | `https://lukeska.github.io/paddock/runtime-catalogs/php.json` | same URL with `.sig` appended |
 | Node | `https://lukeska.github.io/paddock/runtime-catalogs/node.json` | same URL with `.sig` appended |
 
-GitHub Pages must be explicitly configured before enabling client refresh;
-these URLs are a contract until the first signed promotion is complete. The
+GitHub Pages is configured and serves both signed revision-1 catalogs. The
 `gh-pages` branch is not a package source and carries no signing key. A Pages
 deployment is not an authenticity signal: clients trust only a detached
 signature verified against the public key shipped in the Paddock package.
