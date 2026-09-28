@@ -107,6 +107,7 @@ type Model struct {
 	logServiceID         string
 	logSite              string
 	logWorker            string
+	logRequestID         int
 	busy                 bool
 	dashboardBusy        bool
 	dashboardGoal        bool
@@ -167,15 +168,19 @@ type serviceMutationMsg struct {
 	err        error
 }
 type serviceLogsMsg struct {
-	id     string
-	label  string
-	result backend.ServiceLogsResult
-	err    error
+	id        string
+	label     string
+	result    backend.ServiceLogsResult
+	err       error
+	requestID int
+	refresh   bool
 }
 type logsMsg struct {
 	site, worker string
 	lines        []string
 	err          error
+	requestID    int
+	refresh      bool
 }
 type tickMsg time.Time
 type toastExpiredMsg int
@@ -472,21 +477,28 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.busy = true
 		return m, tea.Batch(load(m.api, m.generation), dismissToast(m.toastID))
 	case serviceLogsMsg:
+		if msg.requestID != m.logRequestID {
+			return m, nil
+		}
 		m.busy = false
 		if msg.err != nil {
-			m.logsOpen = false
+			if !msg.refresh {
+				m.logsOpen = false
+			}
 			m.err = msg.err.Error()
 			return m, nil
 		}
 		if !msg.result.OK {
-			m.logsOpen = false
+			if !msg.refresh {
+				m.logsOpen = false
+			}
 			m.err = msg.result.Summary
 			if msg.result.Detail != nil {
 				m.err += ": " + *msg.result.Detail
 			}
 			return m, nil
 		}
-		m.logs, m.logsOpen, m.logOffset, m.err = msg.result.Lines, true, 0, ""
+		m.setLogLines(msg.result.Lines, msg.refresh)
 		m.logKind, m.logServiceID, m.logSite, m.logWorker = "service", msg.id, "", ""
 		m.logTitle = msg.label + " logs"
 	case spinnerTickMsg:
@@ -520,13 +532,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.toastID++
 		return m, dismissToast(m.toastID)
 	case logsMsg:
+		if msg.requestID != m.logRequestID {
+			return m, nil
+		}
 		m.busy = false
 		if msg.err != nil {
-			m.logsOpen = false
+			if !msg.refresh {
+				m.logsOpen = false
+			}
 			m.err = msg.err.Error()
 			return m, nil
 		}
-		m.logs, m.logsOpen, m.logOffset, m.err = msg.lines, true, 0, ""
+		m.setLogLines(msg.lines, msg.refresh)
 		m.logKind, m.logServiceID, m.logSite, m.logWorker = "worker", "", msg.site, msg.worker
 		m.logTitle = fmt.Sprintf("%s logs for %s.test", title(msg.worker), msg.site)
 	case toastExpiredMsg:
@@ -543,6 +560,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		command := tick()
 		if m.api != nil && !m.busy {
+			if m.logsOpen {
+				updated, refresh := m.refreshLogsWithMode(true)
+				return updated, tea.Batch(command, refresh)
+			}
 			m.generation++
 			m.busy = true
 			return m, tea.Batch(command, load(m.api, m.generation))
@@ -778,6 +799,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "esc", "q", "l":
 			m.logsOpen = false
+			m.logRequestID++
+			m.busy = false
 		case "j", "down":
 			if m.logOffset < max(0, len(m.logs)-m.logHeight()) {
 				m.logOffset++
@@ -1208,32 +1231,43 @@ func (m Model) openServiceLogs(service backend.ServiceInstance) (tea.Model, tea.
 		return m, nil
 	}
 	m.busy = true
+	m.logRequestID++
+	requestID := m.logRequestID
 	api := m.api
 	return m, func() tea.Msg {
 		result, err := api.ServiceLogs(service.ID, 200)
-		return serviceLogsMsg{service.ID, service.Label, result, err}
+		return serviceLogsMsg{id: service.ID, label: service.Label, result: result, err: err, requestID: requestID}
 	}
 }
 
 func (m Model) refreshLogs() (tea.Model, tea.Cmd) {
+	return m.refreshLogsWithMode(false)
+}
+
+func (m Model) refreshLogsWithMode(automatic bool) (tea.Model, tea.Cmd) {
 	if m.api == nil || m.busy {
 		return m, nil
 	}
-	m.busy, m.status = true, ""
+	m.busy = true
+	if !automatic {
+		m.status = ""
+	}
+	m.logRequestID++
+	requestID := m.logRequestID
 	api := m.api
 	if m.logKind == "service" && m.logServiceID != "" {
 		id := m.logServiceID
 		label := strings.TrimSuffix(m.logTitle, " logs")
 		return m, func() tea.Msg {
 			result, err := api.ServiceLogs(id, 200)
-			return serviceLogsMsg{id, label, result, err}
+			return serviceLogsMsg{id: id, label: label, result: result, err: err, requestID: requestID, refresh: true}
 		}
 	}
 	if m.logKind == "worker" && m.logSite != "" && m.logWorker != "" {
 		site, worker := m.logSite, m.logWorker
 		return m, func() tea.Msg {
 			result, err := api.Logs(site, worker, 200)
-			return logsMsg{site, worker, result.Lines, err}
+			return logsMsg{site: site, worker: worker, lines: result.Lines, err: err, requestID: requestID, refresh: true}
 		}
 	}
 	m.busy = false
@@ -1628,9 +1662,11 @@ func (m Model) openDetailLogs(worker string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.busy = true
+	m.logRequestID++
+	requestID := m.logRequestID
 	return m, func() tea.Msg {
 		result, err := m.api.Logs(site.Name, worker, 200)
-		return logsMsg{site.Name, worker, result.Lines, err}
+		return logsMsg{site: site.Name, worker: worker, lines: result.Lines, err: err, requestID: requestID}
 	}
 }
 
@@ -1814,9 +1850,11 @@ func (m Model) openLogs() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.busy = true
+	m.logRequestID++
+	requestID := m.logRequestID
 	return m, func() tea.Msg {
 		result, err := m.api.Logs(site.Name, worker, 200)
-		return logsMsg{site.Name, worker, result.Lines, err}
+		return logsMsg{site: site.Name, worker: worker, lines: result.Lines, err: err, requestID: requestID}
 	}
 }
 
@@ -2841,6 +2879,17 @@ func workerLabel(name string, available bool, state string, autostart bool) stri
 	return fmt.Sprintf("%s: %s%s", title(name), state, boot)
 }
 
+func (m *Model) setLogLines(lines []string, refresh bool) {
+	following := !refresh || m.logOffset >= max(0, len(m.logs)-m.logHeight())
+	m.logs, m.logsOpen, m.err = lines, true, ""
+	last := max(0, len(lines)-m.logHeight())
+	if following {
+		m.logOffset = last
+	} else {
+		m.logOffset = min(m.logOffset, last)
+	}
+}
+
 func (m Model) renderLogs() string {
 	height := m.logHeight()
 	start := min(m.logOffset, max(0, len(m.logs)-height))
@@ -2849,7 +2898,7 @@ func (m Model) renderLogs() string {
 	if len(lines) == 0 {
 		lines = []string{"No journal lines were returned."}
 	}
-	titleLine := m.styles.section.Render(m.logTitle) + m.styles.muted.Render("  j/k scroll · r refresh · c copy · esc close")
+	titleLine := m.styles.section.Render(m.logTitle) + m.styles.muted.Render("  auto-refresh 5s · j/k scroll · r refresh · c copy · esc close")
 	return titleLine + "\n\n" + m.styles.log.Render(strings.Join(lines, "\n"))
 }
 

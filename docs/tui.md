@@ -78,9 +78,11 @@ and remove workflows. Removing an entry never deletes the folder or projects.
 - `r` refreshes immediately; the UI also refreshes every five seconds.
 - `q` or `ctrl+c` exits.
 
-An open log view has its own controls: `r` fetches the latest 200 lines without
-closing it, `c` copies every returned line to the Wayland clipboard, and
-up/down or `j`/`k` scrolls.
+An open log view refreshes its latest 200 lines every five seconds, including
+queue, Reverb, scheduler, and supporting-service logs. It follows the newest
+lines until you scroll up, then preserves your position. `r` fetches immediately
+without closing the view, and `c` copies every currently displayed line to the
+Wayland clipboard. Closing the view stops log polling.
 
 Successful actions show a confirmation toast on a row below the keyboard
 instructions. It disappears automatically after three seconds; a previous

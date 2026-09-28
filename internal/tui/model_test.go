@@ -1217,6 +1217,81 @@ func TestOpenLogsCanBeCopiedAndRefreshed(t *testing.T) {
 	}
 }
 
+func TestOpenWorkerLogsRefreshOnTickAndStopAfterClose(t *testing.T) {
+	api := &fakeAPI{}
+	m := NewWithAPI(api)
+	m.loaded, m.height = true, 14
+	m.logsOpen, m.logKind, m.logSite, m.logWorker = true, "worker", "linguine", "queue"
+	m.logRequestID = 1
+	m.logs = []string{"old"}
+	updated, command := m.Update(tickMsg(time.Now()))
+	m = updated.(Model)
+	if command == nil || !m.busy {
+		t.Fatal("open logs did not start a background refresh")
+	}
+	batch, ok := command().(tea.BatchMsg)
+	if !ok || len(batch) != 2 {
+		t.Fatalf("expected next tick and log refresh, got %T", command())
+	}
+	message := batch[1]()
+	if got := api.calls[len(api.calls)-1]; got != "logs:linguine:queue:200" {
+		t.Fatalf("background request = %q", got)
+	}
+	updated, _ = m.handleKey(press(tea.KeyEscape, "esc", 0))
+	m = updated.(Model)
+	if m.logsOpen || m.busy {
+		t.Fatal("closing logs did not stop the pending refresh")
+	}
+	updated, _ = m.Update(message)
+	m = updated.(Model)
+	if m.logsOpen || m.busy || len(m.logs) != 1 || m.logs[0] != "old" {
+		t.Fatal("late log response reopened or replaced the closed view")
+	}
+}
+
+func TestLogRefreshFollowsTailButPreservesScrollAndErrors(t *testing.T) {
+	m := NewWithAPI(&fakeAPI{})
+	m.height = 14 // Three visible log lines.
+	m.setLogLines([]string{"1", "2", "3", "4", "5"}, false)
+	if m.logOffset != 2 {
+		t.Fatalf("initial log offset = %d, want latest lines", m.logOffset)
+	}
+	m.setLogLines([]string{"1", "2", "3", "4", "5", "6"}, true)
+	if m.logOffset != 3 {
+		t.Fatalf("following log offset = %d", m.logOffset)
+	}
+	m.logOffset = 1
+	m.setLogLines([]string{"1", "2", "3", "4", "5", "6", "7"}, true)
+	if m.logOffset != 1 {
+		t.Fatalf("scrolled log offset changed to %d", m.logOffset)
+	}
+	m.logRequestID, m.busy = 3, true
+	updated, _ := m.Update(logsMsg{site: "linguine", worker: "scheduler", err: errors.New("offline"), requestID: 3, refresh: true})
+	m = updated.(Model)
+	if !m.logsOpen || m.busy || len(m.logs) != 7 || !strings.Contains(m.err, "offline") {
+		t.Fatal("failed refresh closed the view or discarded existing lines")
+	}
+}
+
+func TestOpenServiceLogsRefreshOnTick(t *testing.T) {
+	api := &fakeAPI{}
+	m := NewWithAPI(api)
+	m.logsOpen, m.logKind, m.logServiceID, m.logTitle = true, "service", "redis-a1", "Cache logs"
+	m.logRequestID = 2
+	updated, command := m.Update(tickMsg(time.Now()))
+	m = updated.(Model)
+	batch := command().(tea.BatchMsg)
+	message := batch[1]()
+	if got := api.calls[len(api.calls)-1]; got != "service-logs:redis-a1:200" {
+		t.Fatalf("background service request = %q", got)
+	}
+	updated, _ = m.Update(message)
+	m = updated.(Model)
+	if !m.logsOpen || m.busy {
+		t.Fatal("service log refresh did not complete in the open view")
+	}
+}
+
 func TestBusyStateNeverAddsAFlashingWorkingRow(t *testing.T) {
 	m := NewWithAPI(&fakeAPI{})
 	m.loaded, m.snapshot, m.busy = true, sampleSnapshot(), true
